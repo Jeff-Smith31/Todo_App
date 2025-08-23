@@ -37,9 +37,12 @@ jobs:
 
       - name: Deploy Frontend Infra (CloudFormation)
         run: |
-          if [ -z "${{ vars.HOSTED_ZONE_ID }}" ]; then
-            echo "ERROR: Repository variable HOSTED_ZONE_ID is required (Route53 Hosted Zone ID for ${DOMAIN_NAME})." >&2
-            exit 1
+          HZ="${{ vars.HOSTED_ZONE_ID }}"
+          if [ -z "$HZ" ]; then
+            HZ="Z08471201NA2PN7ERBIB7"
+            echo "Using default Route53 Hosted Zone ID for ${DOMAIN_NAME}: $HZ"
+          else
+            echo "Using repository variable HOSTED_ZONE_ID: $HZ"
           fi
           aws cloudformation deploy \
             --stack-name ${STACK_NAME} \
@@ -49,7 +52,7 @@ jobs:
             --parameter-overrides \
               DomainName=${DOMAIN_NAME} \
               IncludeWww=true \
-              HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
+              HostedZoneId=$HZ
 
       - name: Read stack outputs
         id: out

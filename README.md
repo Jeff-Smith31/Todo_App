@@ -134,7 +134,7 @@ One-time AWS setup:
 1) Ensure a public Route53 hosted zone exists for ticktocktasks.com in your AWS account.
 2) In your GitHub repo settings:
    - Secrets: set AWS_ROLE_TO_ASSUME to the IAM Role ARN used for deployments (OIDC trust, same as backend).
-   - Variables: set HOSTED_ZONE_ID to your Route53 hosted zone ID for ticktocktasks.com.
+   - Variables: HOSTED_ZONE_ID is optional; the workflow defaults to Z08471201NA2PN7ERBIB7 (Route53 Hosted Zone ID for ticktocktasks.com). Set it only if you need to override.
 
 Deploy via GitHub Actions:
 - Push to main changing any of: index.html, app.js, styles.css, sw.js, icons/, manifest.json, manifest.webmanifest.
