@@ -69,6 +69,7 @@ jobs:
           BUCKET=${{ steps.out.outputs.bucket }}
           # Whitelist only the static assets we want to publish (index.html and sw.js are uploaded separately below with no-cache)
           aws s3 sync . s3://$BUCKET/ \
+            --no-follow-symlinks \
             --exclude "*" \
             --include "icons/*" \
             --include "app.js" \
