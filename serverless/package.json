@@ -1,0 +1,15 @@
+{
+  "name": "tictock-serverless",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "handler.mjs",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.637.0",
+    "@aws-sdk/lib-dynamodb": "^3.637.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "joi": "^17.13.3",
+    "uuid": "^9.0.1"
+  }
+}

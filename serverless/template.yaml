@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: TickTock Tasks - Serverless Backend (Auth + Tasks)
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    MemorySize: 256
+    Timeout: 10
+    Architectures:
+      - x86_64
+
+Parameters:
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT secret used to sign tokens
+
+Resources:
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      TableName: !Sub ${AWS::StackName}-Users
+
+  TasksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: id
+          KeyType: RANGE
+      TableName: !Sub ${AWS::StackName}-Tasks
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: handler.handler
+      Environment:
+        Variables:
+          USERS_TABLE: !Ref UsersTable
+          TASKS_TABLE: !Ref TasksTable
+          JWT_SECRET: !Ref JwtSecret
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TasksTable
+      Events:
+        HttpApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            PayloadFormatVersion: '2.0'
+            Path: /{proxy+}
+            Method: ANY
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowMethods: ['GET','POST','PUT','DELETE','OPTIONS']
+        AllowOrigins: ['*']
+        AllowHeaders: ['Content-Type','Authorization']
+
+Outputs:
+  ApiUrl:
+    Description: Base URL of the API Gateway
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  UsersTableName:
+    Description: Users table name
+    Value: !Ref UsersTable
+  TasksTableName:
+    Description: Tasks table name
+    Value: !Ref TasksTable

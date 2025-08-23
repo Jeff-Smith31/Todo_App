@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TickTock Tasks</title>
+  <meta name="description" content="TickTock Tasks - smart recurring to-do app with reminders and local storage.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#4f46e5">
+  <link rel="icon" href="icons/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img src="icons/logo.svg" alt="TickTock Tasks logo" class="logo">
+      <div class="titles">
+        <h1>TickTock Tasks</h1>
+        <p class="subtitle">Never miss a beat – smart recurring reminders</p>
+      </div>
+    </div>
+    <div class="actions">
+      <div class="auth">
+        <input id="auth-email" type="email" placeholder="email" aria-label="Email">
+        <input id="auth-password" type="password" placeholder="password" aria-label="Password">
+        <button id="btn-login" class="btn">Login</button>
+        <button id="btn-register" class="btn">Sign up</button>
+        <button id="btn-logout" class="btn" style="display:none">Logout</button>
+      </div>
+      <span id="origin-chip" class="chip" title="This is your current origin"></span>
+      <button id="btn-permission" class="btn primary">Enable Notifications</button>
+      <button id="btn-install" class="btn">Install App</button>
+      <button id="btn-backend" class="btn">Set Backend</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <h2>Create / Edit Task</h2>
+      <form id="task-form" autocomplete="off">
+        <input type="hidden" id="task-id">
+        <div class="grid">
+          <label>
+            <span>Title</span>
+            <input id="title" type="text" placeholder="e.g., Water the plants" required>
+          </label>
+          <label>
+            <span>Notes</span>
+            <input id="notes" type="text" placeholder="Optional notes">
+          </label>
+        </div>
+        <div class="grid">
+          <label>
+            <span>How often</span>
+            <select id="frequency" required>
+              <option value="1">Daily</option>
+              <option value="7">Weekly</option>
+              <option value="30">Monthly (approx)</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </label>
+          <label id="custom-days-wrap" class="hidden">
+            <span>Every N days</span>
+            <input id="custom-days" type="number" min="1" value="2">
+          </label>
+        </div>
+        <div class="grid">
+          <label>
+            <span>Next due date</span>
+            <input id="next-due" type="date" required>
+          </label>
+          <label>
+            <span>Reminder time</span>
+            <input id="remind-at" type="time" value="09:00" required>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn primary" id="btn-save">Save Task</button>
+          <button type="button" class="btn" id="btn-reset">Reset</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="list-header">
+        <h2>Your Tasks</h2>
+        <div class="filters">
+          <select id="filter-status">
+            <option value="all">All</option>
+            <option value="today">Due Today</option>
+            <option value="overdue">Overdue</option>
+            <option value="priority">Priority</option>
+          </select>
+          <input id="search" type="search" placeholder="Search tasks…">
+        </div>
+      </div>
+
+      <ul id="task-list" class="task-list"></ul>
+      <p id="empty" class="empty">No tasks yet. Add your first task above!</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Made with care. Data stored locally on your device.</p>
+  </footer>
+
+  <template id="task-item-template">
+    <li class="task-item">
+      <label class="checkbox">
+        <input type="checkbox" class="toggle">
+        <span class="checkmark"></span>
+      </label>
+      <div class="task-main">
+        <div class="row1">
+          <span class="title"></span>
+          <span class="badge priority hidden">PRIORITY</span>
+          <span class="badge overdue hidden">OVERDUE</span>
+          <span class="badge due-today hidden">DUE TODAY</span>
+        </div>
+        <div class="row2">
+          <span class="notes"></span>
+        </div>
+        <div class="row3 meta"></div>
+      </div>
+      <div class="item-actions">
+        <button class="btn icon edit" title="Edit" aria-label="Edit">✏️</button>
+        <button class="btn icon delete" title="Delete" aria-label="Delete">🗑️</button>
+      </div>
+    </li>
+  </template>
+
+  <script>
+    // Set your backend URL here when running the Docker backend
+    // Example for LAN: http://YOUR-LAN-IP:8080
+    window.BACKEND_URL = localStorage.getItem('tt_backend_url') || '';
+    // Show current origin in UI
+    (function(){
+      try {
+        var chip = document.getElementById('origin-chip');
+        if (chip) {
+          var origin = window.location.origin;
+          chip.textContent = origin;
+          var be = localStorage.getItem('tt_backend_url') || '';
+          // Hint if not https for features that require it
+          var hint = 'Current origin: ' + origin + (be ? ('\nBackend: ' + be) : '\nBackend: not set (using local storage)');
+          if (!origin.startsWith('https://')) {
+            hint += '\nFor push and TWA, use HTTPS.';
+          }
+          chip.title = hint;
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>

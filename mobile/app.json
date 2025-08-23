@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "TickTock Tasks",
+    "slug": "tictock-tasks",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "../icons/icon-192.png",
+    "scheme": "tictock",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "../icons/icon-512.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    }
+  }
+}
