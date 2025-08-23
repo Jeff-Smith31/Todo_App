@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, FlatList, SafeAreaView, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import Constants from 'expo-constants';
 import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -86,7 +85,7 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, paddingTop: Constants.statusBarHeight, padding: 16 }}>
+    <SafeAreaView style={{ flex: 1, padding: 16 }}>
       <StatusBar style="auto" />
       <Text style={{ fontSize: 22, fontWeight: '700', marginBottom: 8 }}>TickTock Tasks (Mobile)</Text>
 

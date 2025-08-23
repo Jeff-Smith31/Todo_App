@@ -1,4 +1,5 @@
 {
+  "iconUrl": "http://192.168.1.6:8000/icons/icon-512.png",
   "id": "app.ticktock.tasks",
   "name": "TickTock Tasks",
   "short_name": "TickTock",
@@ -9,7 +10,9 @@
   "background_color": "#0b1020",
   "theme_color": "#4f46e5",
   "description": "Smart recurring to-do app with reminders and local storage.",
-  "categories": ["productivity"],
+  "categories": [
+    "productivity"
+  ],
   "prefer_related_applications": false,
   "icons": [
     {

@@ -40,7 +40,7 @@ Optional configuration:
 You can now run a native mobile app that talks to the AWS serverless backend.
 
 Prerequisites:
-- Node.js 18+ and npm
+- Node.js 20.x LTS and npm (use nvm; this repo includes an .nvmrc)
 - Expo CLI (installed automatically via npm scripts)
 - iOS: Xcode (for simulator) or Expo Go app; Android: Android Studio (emulator) or Expo Go app
 
@@ -56,9 +56,104 @@ Steps:
 
 Notes:
 - The app uses Authorization: Bearer tokens (no cookies), so it works cleanly with API Gateway across devices.
+- If npm start fails due to Node.js version (e.g., v23+), switch to Node.js 20 LTS:
+  - nvm install 20
+  - nvm use 20
+  - or simply run nvm use in this repo (we include an .nvmrc)
+- If you see npm warn EBADENGINE Unsupported engine during npm install, your local Node version isn’t 20.x. Installs will still proceed (engine-strict=false), but for compatibility please use: nvm use 20
+- If you see “PlatformConstants could not be found” or “TurboModuleRegistry invariant violation” after scanning the QR in Expo Go:
+  - Update Expo Go to the latest version from the App Store/Play Store (must match SDK 53).
+  - Clear the bundler cache: npx expo start -c
+  - Ensure the project installs dependencies inside mobile/ and uses the provided metro.config.js (which fixes monorepo module resolution).
+- If you see “Cannot find module 'metro/src/lib/TerminalReporter'” or “Cannot find module 'metro/src/ModuleGraph/worker/importLocationsPlugin'” when starting Expo:
+  - We pin Metro to a compatible version (0.83.x) at the repo root (overrides) and inside mobile to avoid hoisting mismatches.
+  - Clean install in this order:
+    1) rm -rf node_modules && npm install
+    2) rm -rf mobile/node_modules && (cd mobile && npm install)
+  - Then start with a clean cache: (cd mobile && npx expo start -c)
+  - If you still hit errors, also clear the Expo cache directory and try again: rm -rf ~/.expo && (cd mobile && npx expo start -c)
+
+### Alternative: Installable Android app without Expo (TWA)
+If you want an installable app on Android quickly — without Metro/Expo — package the PWA as a native Android APK/AAB using the included Bubblewrap script.
+
+Requirements:
+- Java JDK + Android SDK (Bubblewrap will prompt/verify)
+- Node.js (for npx) or a global @bubblewrap/cli
+- Your site served over HTTPS in production; HTTP can be used on LAN for dev with a flag
+
+Steps (dev on your LAN):
+1) Serve this repo root on your LAN, e.g.:
+   - python3 -m http.server 8000
+   - Note your LAN IP, e.g., http://192.168.1.6:8000
+2) Build the Android app using Bubblewrap via our helper:
+   - bash twa-build.sh http://192.168.1.6:8000 --allow-insecure
+   - Note: The script downloads your manifest and ensures iconUrl is an absolute URL (required by Bubblewrap). This avoids the common error: "cli ERROR Invalid URL: /icons/icon-512.png".
+3) When it finishes, look under ./twa for outputs. The script prints the paths, typically:
+   - APK: twa/app-release-signed.apk (sideload this on your device)
+   - AAB: twa/*.aab (for Play Play Console)
+   - If you previously attempted a build and see JSON errors, remove the existing TWA project and retry:
+     rm -rf twa && bash twa-build.sh http://192.168.1.6:8000 --allow-insecure
+4) Sideload the APK:
+   - Option A: adb install ./twa/app-release-signed.apk
+   - Option B: Transfer the APK to your phone (Drive/AirDrop/etc.) and install (enable Unknown Sources).
+5) Open the installed app, tap the header’s “Set Backend”, and enter the AWS API URL:
+   - https://09h6cvwjjd.execute-api.us-east-1.amazonaws.com
+   This is saved on the device and used for all API calls (e.g., /api/auth/login, /api/tasks).
+
+Steps (production HTTPS origin):
+- bash twa-build.sh https://your-domain.example
+- After installing the APK, set the Backend URL to your AWS API Gateway endpoint:
+  https://09h6cvwjjd.execute-api.us-east-1.amazonaws.com
+
+Tips:
+- Provide a custom manifest: --manifest https://host/manifest.json
+- For production signing, pass keystore flags: --ks FILE --ks-alias ALIAS --ks-pass PASS --key-pass PASS
+  - You can also set env vars instead of flags: TWA_KS, TWA_KS_ALIAS, TWA_KS_PASS, TWA_KEY_PASS
+  - If signing with your keystore fails (wrong password/alias), the script will WARN and automatically fall back to a debug keystore so you still get a signed APK for sideloading.
+- Quick API health check (from your phone’s browser or with curl):
+  https://09h6cvwjjd.execute-api.us-east-1.amazonaws.com/healthz
+
+iOS alternatives:
+- Add to Home Screen: open your deployed HTTPS site in Safari, tap Share → Add to Home Screen (full‑screen PWA experience).
+- Native RN build: If you want a native binary later, we can add Expo Application Services (EAS) for .ipa/.apk builds. This needs an Expo account and Apple certs for iOS.
 
 ## 4) Backend (AWS Serverless + GitHub Actions)
 A new serverless backend is included under serverless/ using AWS SAM, API Gateway (HTTP API), Lambda (Node.js 20), and DynamoDB.
+
+## 5) Frontend Deployment (AWS S3 + CloudFront + ACM + Route53)
+Host the PWA at https://ticktocktasks.com (and https://www.ticktocktasks.com) using an S3 bucket behind CloudFront with an ACM certificate.
+
+What you get:
+- Private S3 bucket for site content (accessed only by CloudFront Origin Access Control).
+- ACM certificate (us-east-1) for ticktocktasks.com and www.ticktocktasks.com with DNS validation.
+- CloudFront distribution with custom domain aliases, compression, HTTPS-only, and SPA routing (404/403 -> /index.html).
+- Route53 A/AAAA alias records for apex and www.
+- GitHub Actions that deploy infra, upload site files, and invalidate CloudFront on every push to main affecting web assets.
+
+One-time AWS setup:
+1) Ensure a public Route53 hosted zone exists for ticktocktasks.com in your AWS account.
+2) In your GitHub repo settings:
+   - Secrets: set AWS_ROLE_TO_ASSUME to the IAM Role ARN used for deployments (OIDC trust, same as backend).
+   - Variables: set HOSTED_ZONE_ID to your Route53 hosted zone ID for ticktocktasks.com.
+
+Deploy via GitHub Actions:
+- Push to main changing any of: index.html, app.js, styles.css, sw.js, icons/, manifest.json, manifest.webmanifest.
+- The workflow .github/workflows/deploy-frontend.yml will:
+  - Deploy the CloudFormation stack (us-east-1) found at infra/frontend/template.yaml.
+  - Sync the site to S3 with long-cache headers for static assets and no-cache for index.html and sw.js.
+  - Invalidate CloudFront (paths: /*).
+- First run will create/validate the ACM certificate automatically via DNS records in your hosted zone.
+
+Manual run (optional):
+- You can also run the steps locally if you have AWS CLI access:
+  - aws cloudformation deploy --stack-name tictock-frontend --template-file infra/frontend/template.yaml --capabilities CAPABILITY_NAMED_IAM --region us-east-1 --parameter-overrides DomainName=ticktocktasks.com IncludeWww=true HostedZoneId=YOUR_ZONE_ID
+  - Retrieve outputs: aws cloudformation describe-stacks --stack-name tictock-frontend --region us-east-1
+  - Sync content: aws s3 sync . s3://<BucketName>/ (apply cache headers as in the workflow)
+  - Invalidate: aws cloudfront create-invalidation --distribution-id <DistributionId> --paths '/*'
+
+Notes:
+- The backend CORS is permissive by default; you may later restrict to https://ticktocktasks.com from serverless/template.yaml if desired.
+- CloudFront cache policy uses AWS Managed-CachingOptimized; index.html/sw.js are uploaded with no-cache to ensure fresh app shell.
 
 What you get:
 - Endpoints: /api/auth/register, /api/auth/login, /api/auth/me, /api/tasks (GET/POST), /api/tasks/:id (PUT/DELETE), /healthz
@@ -93,71 +188,6 @@ Security/Production notes:
 - Rotate JWT_SECRET and protect it as a secret.
 - Consider custom domains + ACM cert for API Gateway if you want a pretty URL.
 - Web Push endpoints were not moved to serverless in this pass; the mobile app does not require Web Push.
-
-## 5) Android App (Trusted Web Activity)
-Use the provided one‑shot script. Serve your site over HTTPS first.
-
-Prerequisites:
-- Node.js (for npx) or a global `bubblewrap` CLI
-- Java JDK and Android SDK/Studio
-- Your app must be reachable over HTTPS (production requirement for TWA and Web Push)
-
-Build in one command (HTTPS recommended):
-- bash twa-build.sh https://192.168.1.6
-  - Optional directory: --dir my-twa
-  - Verbose logs: DEBUG=bubblewrap:* bash twa-build.sh https://192.168.1.6
-
-Dev-only init from HTTP (if you’re serving with python on 8000):
-- bash twa-build.sh http://192.168.1.6:8000 --allow-insecure
-  - You can also point directly to a manifest: --manifest http://192.168.1.6:8000/manifest.json
-  - The build script downloads the manifest to a local file before calling Bubblewrap to avoid ENOENT errors when some CLIs mis-handle HTTP URLs.
-  - Note: Final TWA should target a trusted HTTPS origin before release/testing on Android.
-
-What the script does:
-- Verifies the Web Manifest is reachable at /manifest.webmanifest, falling back to /manifest.json.
-- Allows HTTP manifest when --allow-insecure is used (development only).
-- Runs bubblewrap init (first run) then bubblewrap build.
-- Prints paths to the generated APK/AAB.
-
-Install on device:
-- Sideload the APK on Android (enable "install from unknown sources").
-- For Play Store, use the AAB and follow Play Console requirements.
-
-Tip: If build fails to fetch the manifest, ensure your site is HTTPS and that either /manifest.webmanifest or /manifest.json is accessible. Icons in the manifest should be PNG (192x192 and 512x512).
-
-Android signing troubleshooting (apksigner / keystore errors):
-- Symptom: apksigner sign fails with "Failed to load signer" or "Wrong password?" when trying to sign using twa/android.keystore.
-- Fast remedies:
-  1) Use the build script’s signing fallback with your own keystore:
-     - bash twa-build.sh https://192.168.1.6 --ks /path/to/your.keystore --ks-alias yourAlias --ks-pass yourStorePass --key-pass yourKeyPass
-  2) Or let the script auto-generate and use a debug keystore if Bubblewrap didn’t produce a signed APK:
-     - bash twa-build.sh https://192.168.1.6
-     - If a signed APK is missing but an unsigned-aligned APK exists, the script creates android-debug.keystore and signs the APK for you.
-  3) If you want Bubblewrap to recreate its keystore interactively:
-     - Remove the existing TWA keystore and re-run init/update in the twa directory:
-       - rm -f twa/android.keystore
-       - (cd twa && npx @bubblewrap/cli update --manifest=https://192.168.1.6/manifest.webmanifest)
-     - When prompted, provide new passwords and note them for future builds.
-
-Note about HTTPS backend certificate:
-- This repo auto-generates a self-signed dev certificate inside the backend container for localhost and 192.168.1.6. If your laptop has a different IP, set CERT_HOSTS in docker-compose.yml or environment (comma-separated), then rerun backend-up.sh to regenerate the cert.
-- Your browser will need to trust/accept the self-signed certificate the first time you visit https://192.168.1.6:8443.
-
-Android and self-signed certificates (important):
-- Chrome on Android (and thus TWA) will not trust self-signed certificates. As a result, the Android app cannot call your backend if it’s using the auto-generated self-signed cert.
-- You have two options:
-  A) Recommended – use a trusted HTTPS certificate
-    - Provide your own trusted cert/key to the backend by mounting files and pointing env vars to them (via docker-compose.yml or environment):
-      - HTTPS_CERT_PATH=/certs/your-cert.pem
-      - HTTPS_KEY_PATH=/certs/your-key.pem
-      - Then mount your certs folder into the container (e.g., add a volume: - ./certs:/certs:ro) and rerun backend-up.sh
-    - Or place the backend behind a reverse proxy or a tunnel that terminates TLS with a valid cert (e.g., Caddy/Nginx with a public DNS name, Cloudflare Tunnel, or ngrok). Point the frontend to that HTTPS origin.
-  B) Dev fallback – run over HTTP (no TLS) on your LAN
-    - This is only for local development and testing. Serve both frontend and backend over HTTP to avoid TLS issues:
-      1. Disable the backend redirect by setting REDIRECT_HTTP_TO_HTTPS=false (docker-compose already supports this env):
-         - REDIRECT_HTTP_TO_HTTPS=false docker compose up --build -d
-      2. Serve the frontend over HTTP (e.g., python3 -m http.server 8000) and set the backend URL to http://192.168.1.6:8080 in the app.
-      3. Do NOT use this mode with the TWA/Play Store. Before building the Android app, switch to a trusted HTTPS origin as in option A.
 
 ## About the App (what you get)
 - Recurring tasks: daily, weekly, monthly (approx), or custom every N days

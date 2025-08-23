@@ -83,6 +83,22 @@ fi
 # Suppress Node deprecation warnings (e.g., DEP0040 punycode) during CLI runs
 export NODE_OPTIONS="--no-deprecation ${NODE_OPTIONS:-}"
 
+# Derive TWA host from the provided ORIGIN (strip scheme, path, and port)
+ORIGIN_NOPROTO=$(printf '%s' "$ORIGIN" | sed -E 's#^https?://##')
+TWA_HOST_WITH_PORT=${ORIGIN_NOPROTO%%/*}
+TWA_HOST=${TWA_HOST_WITH_PORT%%:*}
+
+patch_twa_manifest() {
+  local file="$1"
+  if [ ! -f "$file" ]; then return 0; fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: jq is required for safe JSON patching. Please install jq (e.g., brew install jq or apt-get install jq) and re-run." >&2
+    exit 8
+  fi
+  tmpfile=$(mktemp)
+  jq --arg host "$TWA_HOST" '(.host = $host) | (.startUrl = "/")' "$file" > "$tmpfile" && mv "$tmpfile" "$file"
+}
+
 # Resolve manifest URL
 pick_manifest_url() {
   local base="$1" # includes scheme and host[:port]
@@ -168,33 +184,123 @@ if ! curl -sSL --fail --max-time 15 -o "$LOCAL_MANIFEST" "$MANIFEST_URL"; then
   echo "Error: Failed to download manifest from $MANIFEST_URL" >&2
   exit 7
 fi
+# Build absolute file:// URL for local manifest (Bubblewrap prefers proper URLs over relative paths)
+ABS_LOCAL_MANIFEST="$(cd "$(dirname "$LOCAL_MANIFEST")" && pwd)/$(basename "$LOCAL_MANIFEST")"
+LOCAL_MANIFEST_FILEURL="file://$ABS_LOCAL_MANIFEST"
 
-# Inject a top-level iconUrl with an absolute URL (Bubblewrap expects it when reading local files)
+# Ensure a top-level iconUrl with an absolute URL (Bubblewrap requires absolute URL when reading local files)
 # Compute base origin (scheme://host[:port]) from MANIFEST_URL
 ORIGIN_FROM_MANIFEST=$(printf '%s' "$MANIFEST_URL" | sed -E 's#^(https?://[^/]+).*$#\1#')
 ICON_URL_DEFAULT="$ORIGIN_FROM_MANIFEST/icons/icon-512.png"
-if ! grep -q '"iconUrl"' "$LOCAL_MANIFEST" >/dev/null 2>&1; then
-  if command -v jq >/dev/null 2>&1; then
+
+if command -v jq >/dev/null 2>&1; then
+  # Read existing iconUrl (if any)
+  CURRENT_ICON=$(jq -r '.iconUrl // ""' "$LOCAL_MANIFEST") || CURRENT_ICON=""
+  if [ -z "$CURRENT_ICON" ]; then
+    # Missing: set to default absolute URL
     tmpfile=$(mktemp)
     jq --arg icon "$ICON_URL_DEFAULT" '.iconUrl = $icon' "$LOCAL_MANIFEST" > "$tmpfile" && mv "$tmpfile" "$LOCAL_MANIFEST"
   else
-    # sed fallback: insert as the first field after the opening brace
-    # This keeps JSON valid by adding a trailing comma after iconUrl
+    # Present: if not absolute (no http/https), normalize to absolute based on origin
+    case "$CURRENT_ICON" in
+      http://*|https://*)
+        : # already absolute; leave as is
+        ;;
+      /*)
+        ABS_ICON="$ORIGIN_FROM_MANIFEST$CURRENT_ICON"
+        tmpfile=$(mktemp)
+        jq --arg icon "$ABS_ICON" '.iconUrl = $icon' "$LOCAL_MANIFEST" > "$tmpfile" && mv "$tmpfile" "$LOCAL_MANIFEST"
+        ;;
+      *)
+        ABS_ICON="$ORIGIN_FROM_MANIFEST/$CURRENT_ICON"
+        tmpfile=$(mktemp)
+        jq --arg icon "$ABS_ICON" '.iconUrl = $icon' "$LOCAL_MANIFEST" > "$tmpfile" && mv "$tmpfile" "$LOCAL_MANIFEST"
+        ;;
+    esac
+  fi
+else
+  # sed fallback: replace existing iconUrl or insert one with the default absolute URL
+  if grep -q '"iconUrl"' "$LOCAL_MANIFEST" >/dev/null 2>&1; then
+    # Replace value after iconUrl": "..." (portable across BSD/GNU sed)
+    sed -i.bak -E "s#(\"iconUrl\"[[:space:]]*:[[:space:]]*)\"[^\"]*\"#\\1\"$ICON_URL_DEFAULT\"#" "$LOCAL_MANIFEST" && rm -f "$LOCAL_MANIFEST.bak"
+  else
+    # Insert as first field
     sed -i.bak '0,/{/s//{ "iconUrl": "'"$ICON_URL_DEFAULT"'",/' "$LOCAL_MANIFEST" && rm -f "$LOCAL_MANIFEST.bak"
   fi
 fi
 
-# If already initialized, skip init and update instead
+# Additional patch: ensure webManifestUrl, fullScopeUrl, and maskableIconUrl are set/absolute in twa-manifest.json
+patch_twa_urls() {
+  local file="$1"
+  [ ! -f "$file" ] && return 0
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: jq is required for safe JSON patching. Please install jq and re-run." >&2
+    exit 8
+  fi
+  local FULL_SCOPE_URL="$ORIGIN_FROM_MANIFEST/"
+  tmpfile=$(mktemp)
+  jq --arg wm "$MANIFEST_URL" \
+     --arg fs "$FULL_SCOPE_URL" \
+     --arg mask "$ICON_URL_DEFAULT" \
+     '(.webManifestUrl = $wm) | (.fullScopeUrl = $fs) | (.maskableIconUrl = $mask)' "$file" > "$tmpfile" && mv "$tmpfile" "$file"
+}
+
+# If already initialized, patch host first, then update; otherwise init then patch
 if [ -f "twa-manifest.json" ] || [ -f "android/gradlew" ]; then
-  echo "Existing Bubblewrap project detected in $(pwd). Running 'bubblewrap update'..."
-  "${BW_CMD[@]}" update --manifest="$LOCAL_MANIFEST"
+  echo "Existing Bubblewrap project detected in $(pwd)."
+  # Pre-patch to avoid 'host cannot be empty' during update
+  patch_twa_manifest "twa-manifest.json"
+  patch_twa_urls "twa-manifest.json"
+  echo "Running 'bubblewrap update'..."
+  set +e
+  "${BW_CMD[@]}" update --manifest="$MANIFEST_URL"
+  UPDATE_STATUS=$?
+  set -e
+  if [ $UPDATE_STATUS -ne 0 ]; then
+    echo "Warning: bubblewrap update failed (status=$UPDATE_STATUS). Re-applying patches and retrying once..." >&2
+    patch_twa_manifest "twa-manifest.json"
+    patch_twa_urls "twa-manifest.json"
+    set +e
+    "${BW_CMD[@]}" update --manifest="$MANIFEST_URL"
+    UPDATE_STATUS=$?
+    set -e
+    if [ $UPDATE_STATUS -ne 0 ]; then
+      echo "Error: bubblewrap update failed again (status=$UPDATE_STATUS). Current twa-manifest.json host field:" >&2
+      grep -n '"host"' twa-manifest.json || true
+      echo "Falling back to 'bubblewrap init' re-initialization..." >&2
+      # Backup current manifest and attempt a fresh init
+      cp -f twa-manifest.json twa-manifest.backup.json || true
+      set +e
+      "${BW_CMD[@]}" init --manifest="$MANIFEST_URL"
+      INIT_STATUS=$?
+      set -e
+      if [ $INIT_STATUS -ne 0 ]; then
+        echo "Error: bubblewrap init failed (status=$INIT_STATUS) after update failures. Proceeding to build with existing project files." >&2
+      else
+        # Re-apply patches after init
+        patch_twa_manifest "twa-manifest.json"
+        patch_twa_urls "twa-manifest.json"
+      fi
+    fi
+  fi
+  # Post-patch in case update overwrote manifest without host
+  patch_twa_manifest "twa-manifest.json"
+  patch_twa_urls "twa-manifest.json"
 else
   echo "Initializing Bubblewrap project in $(pwd)..."
   # Note: bubblewrap init may still prompt for details (packageId, names, keystore).
   # This script ensures the manifest is reachable and prevents the common hangs.
-  "${BW_CMD[@]}" init --manifest="$LOCAL_MANIFEST"
+  "${BW_CMD[@]}" init --manifest="$MANIFEST_URL"
+  # Ensure host and URLs are set after init
+  patch_twa_manifest "twa-manifest.json"
+  patch_twa_urls "twa-manifest.json"
 fi
 
+# Validate TWA manifest JSON before build
+if ! jq . twa-manifest.json >/dev/null 2>&1; then
+  echo "Error: twa-manifest.json is invalid JSON. You can remove the 'twa' directory and re-run the script to reinitialize." >&2
+  exit 9
+fi
 # Build APK/AAB
 echo "Building APK/AAB..."
 set +e
@@ -225,10 +331,14 @@ if [ -z "$APK_PATH" ] && [ -n "$UNSIGNED_APK" ]; then
     echo "Warning: 'apksigner' not found on PATH. Skipping signing fallback." >&2
   else
     OUT_APK="./app-release-signed.apk"
-    if [ -n "$KS_FILE$KS_ALIAS$KS_PASS$KEY_PASS" ]; then
-      echo "Signing with provided keystore: $KS_FILE (alias: $KS_ALIAS)" >&2
-      apksigner sign --ks "$KS_FILE" --ks-key-alias "$KS_ALIAS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KEY_PASS" --out "$OUT_APK" "$UNSIGNED_APK"
-    else
+    # Allow env vars as an alternative to flags
+    KS_FILE=${KS_FILE:-${TWA_KS:-}}
+    KS_ALIAS=${KS_ALIAS:-${TWA_KS_ALIAS:-}}
+    KS_PASS=${KS_PASS:-${TWA_KS_PASS:-}}
+    KEY_PASS=${KEY_PASS:-${TWA_KEY_PASS:-}}
+
+    sign_with_debug_keystore() {
+      OUT_APK="$1"
       # Generate a debug keystore locally
       KS_FILE="./android-debug.keystore"
       KS_ALIAS="androiddebugkey"
@@ -237,13 +347,43 @@ if [ -z "$APK_PATH" ] && [ -n "$UNSIGNED_APK" ]; then
       if [ ! -f "$KS_FILE" ]; then
         if ! command -v keytool >/dev/null 2>&1; then
           echo "Error: 'keytool' is required to generate a debug keystore. Install Java JDK." >&2
-          exit 6
+          return 6
         fi
         echo "Generating debug keystore at $KS_FILE ..." >&2
         keytool -genkeypair -keystore "$KS_FILE" -storepass "$KS_PASS" -keypass "$KEY_PASS" -alias "$KS_ALIAS" -dname "CN=TickTock Dev, OU=, O=TickTock, L=, S=, C=US" -keyalg RSA -keysize 2048 -validity 10000 >/dev/null 2>&1
       fi
       echo "Signing with debug keystore (alias: $KS_ALIAS)" >&2
       apksigner sign --ks "$KS_FILE" --ks-key-alias "$KS_ALIAS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KEY_PASS" --out "$OUT_APK" "$UNSIGNED_APK"
+      return $?
+    }
+
+    OUT_APK="./app-release-signed.apk"
+    if [ -n "$KS_FILE$KS_ALIAS$KS_PASS$KEY_PASS" ]; then
+      echo "Signing with provided keystore: ${KS_FILE:-'(env var)'} (alias: ${KS_ALIAS:-''})" >&2
+      set +e
+      apksigner sign --ks "$KS_FILE" --ks-key-alias "$KS_ALIAS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KEY_PASS" --out "$OUT_APK" "$UNSIGNED_APK"
+      SIGN_STATUS=$?
+      set -e
+      if [ $SIGN_STATUS -ne 0 ]; then
+        echo "Warning: Failed to sign with provided keystore (wrong password/alias or invalid keystore). Falling back to debug keystore..." >&2
+        set +e
+        sign_with_debug_keystore "$OUT_APK"
+        SIGN_STATUS=$?
+        set -e
+        if [ $SIGN_STATUS -ne 0 ]; then
+          echo "Error: Debug signing also failed. Please ensure Java JDK is installed and try again." >&2
+          exit $SIGN_STATUS
+        fi
+      fi
+    else
+      set +e
+      sign_with_debug_keystore "$OUT_APK"
+      SIGN_STATUS=$?
+      set -e
+      if [ $SIGN_STATUS -ne 0 ]; then
+        echo "Error: Debug signing failed. Please ensure Java JDK is installed (keytool) and try again." >&2
+        exit $SIGN_STATUS
+      fi
     fi
 
     # Verify signature

@@ -20,7 +20,7 @@
      application, the package attribute will need to reflect the correct path in order to use
      the abbreviated format. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="A6_8000.B1.C168.D192.twa">
+    package="com.ticktock.trial">
 
     
         <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>

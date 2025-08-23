@@ -1,10 +1,10 @@
 {
-  "packageId": "A6_8000.B1.C168.D192.twa",
-  "host": "jmtasks.com/",
-  "name": "TickTock Tasks",
+  "packageId": "com.ticktock.trial",
+  "host": "192.168.1.6",
+  "name": "TickTockTasks",
   "launcherName": "T3",
   "display": "standalone",
-  "themeColor": "#7CC0FF",
+  "themeColor": "#4F46E5",
   "themeColorDark": "#000000",
   "navigationColor": "#000000",
   "navigationColorDark": "#000000",
@@ -12,7 +12,7 @@
   "navigationDividerColorDark": "#000000",
   "backgroundColor": "#0B1020",
   "enableNotifications": true,
-  "startUrl": "tasks",
+  "startUrl": "/",
   "iconUrl": "http://192.168.1.6:8000/icons/icon-512.png",
   "maskableIconUrl": "http://192.168.1.6:8000/icons/icon-512.png",
   "splashScreenFadeOutDuration": 300,
@@ -20,8 +20,8 @@
     "path": "/Users/jeff/Documents/Python/Todo_App/twa/android.keystore",
     "alias": "android"
   },
-  "appVersionName": "1",
-  "appVersionCode": 1,
+  "appVersionName": "2",
+  "appVersionCode": 2,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "http://192.168.1.6:8000/manifest.webmanifest",
@@ -42,5 +42,5 @@
   "protocolHandlers": [],
   "fileHandlers": [],
   "launchHandlerClientMode": "",
-  "appVersion": "1"
+  "appVersion": "2"
 }

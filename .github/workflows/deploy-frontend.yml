@@ -1,0 +1,95 @@
+name: Deploy Frontend (S3 + CloudFront)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'index.html'
+      - 'app.js'
+      - 'styles.css'
+      - 'sw.js'
+      - 'icons/**'
+      - 'manifest.json'
+      - 'manifest.webmanifest'
+      - 'infra/frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1  # ACM for CloudFront must be in us-east-1
+      STACK_NAME: tictock-frontend
+      DOMAIN_NAME: ticktocktasks.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Deploy Frontend Infra (CloudFormation)
+        run: |
+          if [ -z "${{ vars.HOSTED_ZONE_ID }}" ]; then
+            echo "ERROR: Repository variable HOSTED_ZONE_ID is required (Route53 Hosted Zone ID for ${DOMAIN_NAME})." >&2
+            exit 1
+          fi
+          aws cloudformation deploy \
+            --stack-name ${STACK_NAME} \
+            --template-file infra/frontend/template.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${AWS_REGION} \
+            --parameter-overrides \
+              DomainName=${DOMAIN_NAME} \
+              IncludeWww=true \
+              HostedZoneId=${{ vars.HOSTED_ZONE_ID }}
+
+      - name: Read stack outputs
+        id: out
+        run: |
+          DIST_ID=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text --region ${AWS_REGION})
+          BUCKET=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text --region ${AWS_REGION})
+          echo "dist_id=${DIST_ID}" >> $GITHUB_OUTPUT
+          echo "bucket=${BUCKET}" >> $GITHUB_OUTPUT
+          echo "Bucket: $BUCKET"
+          echo "DistributionId: $DIST_ID"
+
+      - name: Sync static site to S3 (long-cache assets)
+        run: |
+          BUCKET=${{ steps.out.outputs.bucket }}
+          # Sync everything except index.html and sw.js (handled with no-cache metadata later)
+          aws s3 sync . s3://$BUCKET/ \
+            --delete \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "node_modules/*" \
+            --exclude "mobile/*" \
+            --exclude "server/*" \
+            --exclude "serverless/*" \
+            --exclude "twa/*" \
+            --exclude "infra/*" \
+            --exclude "README.md" \
+            --exclude "LICENSE" \
+            --exclude "index.html" \
+            --exclude "sw.js" \
+            --cache-control "public,max-age=31536000,immutable"
+
+      - name: Upload index.html and sw.js with no-cache
+        run: |
+          BUCKET=${{ steps.out.outputs.bucket }}
+          aws s3 cp index.html s3://$BUCKET/index.html --cache-control "no-cache, no-store, must-revalidate" --content-type "text/html; charset=utf-8"
+          if [ -f sw.js ]; then
+            aws s3 cp sw.js s3://$BUCKET/sw.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
+          fi
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID=${{ steps.out.outputs.dist_id }}
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"

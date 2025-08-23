@@ -1,0 +1,20 @@
+{
+  "name": "tictock-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "mobile",
+    "serverless"
+  ],
+  "engines": {
+    "node": "20.x"
+  },
+  "overrides": {
+    "metro": "0.83.0",
+    "metro-cache": "0.83.0",
+    "metro-config": "0.83.0",
+    "metro-core": "0.83.0",
+    "metro-resolver": "0.83.0",
+    "metro-runtime": "0.83.0"
+  }
+}

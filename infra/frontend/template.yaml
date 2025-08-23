@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Frontend hosting for TickTock Tasks - S3 + CloudFront + ACM + Route53
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: ticktocktasks.com
+    Description: The primary domain name for the site (apex domain)
+  IncludeWww:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: Whether to include www.<DomainName> as an alternate domain
+  HostedZoneId:
+    Type: String
+    Description: Route53 Hosted Zone ID for the root domain
+
+Conditions:
+  UseWww: !Equals [ !Ref IncludeWww, 'true' ]
+
+Mappings:
+  CloudFront:
+    Global:
+      HostedZoneId: Z2FDTNDATAQYW2  # CloudFront Zone ID for alias
+
+Resources:
+  # Create a certificate in us-east-1 for CloudFront (template must be deployed in us-east-1)
+  SiteCertificate:
+    Type: 'AWS::CertificateManager::Certificate'
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      SubjectAlternativeNames: !If [UseWww, [!Sub 'www.${DomainName}'], []]
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+        - !If
+          - UseWww
+          - { DomainName: !Sub 'www.${DomainName}', HostedZoneId: !Ref HostedZoneId }
+          - { Ref: 'AWS::NoValue' }
+      Tags:
+        - Key: Project
+          Value: TickTockTasks
+
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${DomainName}-site'
+      BlockPublicAccess:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Project
+          Value: TickTockTasks
+
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${DomainName}-oac'
+        Description: Access S3 bucket privately from CloudFront
+        SigningBehavior: always
+        SigningProtocol: sigv4
+        OriginAccessControlOriginType: s3
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        DefaultRootObject: index.html
+        Aliases: !If
+          - UseWww
+          - [!Ref DomainName, !Sub 'www.${DomainName}']
+          - [!Ref DomainName]
+        ViewerCertificate:
+          AcmCertificateArn: !Ref SiteCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        DefaultCacheBehavior:
+          TargetOriginId: site-s3-origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+        Origins:
+          - Id: site-s3-origin
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            S3OriginConfig: {}
+            OriginAccessControlId: !Ref OriginAccessControl
+        PriceClass: PriceClass_100
+        CustomErrorResponses:
+          # SPA routing: serve index.html for 403/404
+          - ErrorCode: 404
+            ResponsePagePath: /index.html
+            ResponseCode: 200
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 403
+            ResponsePagePath: /index.html
+            ResponseCode: 200
+            ErrorCachingMinTTL: 10
+      Tags:
+        - Key: Project
+          Value: TickTockTasks
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontPrivateAccess
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: 's3:GetObject'
+            Resource: !Sub '${SiteBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  ApexRecordA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: !FindInMap [CloudFront, Global, HostedZoneId]
+
+  ApexRecordAAAA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: !FindInMap [CloudFront, Global, HostedZoneId]
+
+  WwwRecordA:
+    Type: AWS::Route53::RecordSet
+    Condition: UseWww
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub 'www.${DomainName}'
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: !FindInMap [CloudFront, Global, HostedZoneId]
+
+  WwwRecordAAAA:
+    Type: AWS::Route53::RecordSet
+    Condition: UseWww
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub 'www.${DomainName}'
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: !FindInMap [CloudFront, Global, HostedZoneId]
+
+Outputs:
+  BucketName:
+    Description: S3 bucket for site content
+    Value: !Ref SiteBucket
+  DistributionId:
+    Description: CloudFront Distribution ID
+    Value: !Ref Distribution
+  DistributionDomainName:
+    Description: CloudFront domain
+    Value: !GetAtt Distribution.DomainName
