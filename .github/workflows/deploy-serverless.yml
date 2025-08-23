@@ -37,7 +37,7 @@ jobs:
 
       - name: Install backend deps
         working-directory: serverless
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: SAM build
         working-directory: serverless
