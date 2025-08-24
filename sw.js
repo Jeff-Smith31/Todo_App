@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ticktock-cache-v2';
+const CACHE_NAME = 'ticktock-cache-v3';
 const ASSETS = [
   '/',
   '/index.html',
