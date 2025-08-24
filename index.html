@@ -20,26 +20,61 @@
       <img src="icons/logo.svg" alt="TickTock Tasks logo" class="logo">
       <div class="titles">
         <h1>TickTock Tasks</h1>
-        <p class="subtitle">Never miss a beat – smart recurring reminders</p>
       </div>
     </div>
     <div class="actions">
-      <div class="auth">
-        <input id="auth-email" type="email" placeholder="email" aria-label="Email">
-        <input id="auth-password" type="password" placeholder="password" aria-label="Password">
-        <button id="btn-login" class="btn">Login</button>
-        <button id="btn-register" class="btn">Sign up</button>
-        <button id="btn-logout" class="btn" style="display:none">Logout</button>
-      </div>
-      <span id="origin-chip" class="chip" title="This is your current origin"></span>
       <button id="btn-permission" class="btn primary">Enable Notifications</button>
       <button id="btn-install" class="btn">Install App</button>
-      <button id="btn-backend" class="btn">Set Backend</button>
     </div>
   </header>
 
   <main class="container">
-    <section class="panel">
+    <!-- Login Page -->
+    <section id="page-login" class="panel">
+      <h2>Welcome back</h2>
+      <p>Please log in or create an account to continue.</p>
+      <div class="grid">
+        <label>
+          <span>Email</span>
+          <input id="auth-email" type="email" placeholder="you@example.com" aria-label="Email" required>
+        </label>
+        <label>
+          <span>Password</span>
+          <input id="auth-password" type="password" placeholder="********" aria-label="Password" required>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button id="btn-login" class="btn primary">Login</button>
+        <button id="btn-register" class="btn">Sign up</button>
+      </div>
+    </section>
+
+    <!-- Tasks List Page -->
+    <section id="page-tasks" class="panel hidden">
+      <div class="list-header">
+        <h2>Your Tasks</h2>
+        <div class="filters">
+          <select id="filter-status">
+            <option value="all">All</option>
+            <option value="today">Due Today</option>
+            <option value="overdue">Overdue</option>
+            <option value="priority">Priority</option>
+          </select>
+          <input id="search" type="search" placeholder="Search tasks…">
+        </div>
+      </div>
+
+      <div class="form-actions" style="margin-bottom:1rem">
+        <button id="btn-create" class="btn primary">Create Task</button>
+        <button id="btn-logout" class="btn">Logout</button>
+      </div>
+
+      <ul id="task-list" class="task-list"></ul>
+      <p id="empty" class="empty">No tasks yet. Use "Create Task" to add your first one.</p>
+    </section>
+
+    <!-- Task Form Page -->
+    <section id="page-task-form" class="panel hidden">
       <h2>Create / Edit Task</h2>
       <form id="task-form" autocomplete="off">
         <input type="hidden" id="task-id">
@@ -81,31 +116,14 @@
         <div class="form-actions">
           <button type="submit" class="btn primary" id="btn-save">Save Task</button>
           <button type="button" class="btn" id="btn-reset">Reset</button>
+          <button type="button" class="btn" id="btn-cancel">Cancel</button>
         </div>
       </form>
-    </section>
-
-    <section class="panel">
-      <div class="list-header">
-        <h2>Your Tasks</h2>
-        <div class="filters">
-          <select id="filter-status">
-            <option value="all">All</option>
-            <option value="today">Due Today</option>
-            <option value="overdue">Overdue</option>
-            <option value="priority">Priority</option>
-          </select>
-          <input id="search" type="search" placeholder="Search tasks…">
-        </div>
-      </div>
-
-      <ul id="task-list" class="task-list"></ul>
-      <p id="empty" class="empty">No tasks yet. Add your first task above!</p>
     </section>
   </main>
 
   <footer class="footer">
-    <p>Made with care. Data stored locally on your device.</p>
+    <p>© 2025 CodeSmith Consulting. All rights reserved.</p>
   </footer>
 
   <template id="task-item-template">
@@ -133,28 +151,8 @@
     </li>
   </template>
 
-  <script>
-    // Set your backend URL here when running the Docker backend
-    // Example for LAN: http://YOUR-LAN-IP:8080
-    window.BACKEND_URL = localStorage.getItem('tt_backend_url') || '';
-    // Show current origin in UI
-    (function(){
-      try {
-        var chip = document.getElementById('origin-chip');
-        if (chip) {
-          var origin = window.location.origin;
-          chip.textContent = origin;
-          var be = localStorage.getItem('tt_backend_url') || '';
-          // Hint if not https for features that require it
-          var hint = 'Current origin: ' + origin + (be ? ('\nBackend: ' + be) : '\nBackend: not set (using local storage)');
-          if (!origin.startsWith('https://')) {
-            hint += '\nFor push and TWA, use HTTPS.';
-          }
-          chip.title = hint;
-        }
-      } catch (e) {}
-    })();
-  </script>
+  <!-- Optional runtime config file. If present, it sets window.RUNTIME_CONFIG.BACKEND_URL -->
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -89,8 +89,14 @@ app.use(helmet());
 app.use(morgan('dev'));
 app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
+const ORIGINS = (process.env.CORS_ORIGIN || ORIGIN).split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
-  origin: ORIGIN,
+  origin: function(origin, callback) {
+    // Allow requests with no origin like mobile apps or curl
+    if (!origin) return callback(null, true);
+    if (ORIGINS.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 
@@ -294,9 +300,11 @@ app.get('/', (req, res) => {
       <li>Frontend origin (CORS): <code>${origin}</code></li>
       <li>Health check: <a href="/healthz">/healthz</a></li>
     </ul>
-    <p>Next, in the app header on your frontend, click <b>“Set Backend”</b> and enter:<br>
+    <p>Next, set your frontend to use this backend URL:<br>
       <code>${beUrl}</code>
     </p>
+    <p>In production, this is automated by writing <code>config.js</code> to your S3 site via <code>infra/scripts/link-frontend.sh</code>.</p>
+    <p style="margin-top:.75rem;color:#6b7280">© 2025 CodeSmith Consulting. All rights reserved.</p>
   </div>
 </body>
 </html>`);
@@ -333,26 +341,90 @@ async function scanAndNotify() {
   const now = new Date();
   const windowStart = new Date(now.getTime() - SCAN_INTERVAL_MS);
 
-  // Fetch all tasks
-  const rows = db.prepare('SELECT id, user_id, title, notes, every_days, next_due, remind_at FROM tasks').all();
+  const rows = db.prepare('SELECT id, user_id, title, notes, every_days, next_due, remind_at, last_completed FROM tasks').all();
+  const todayYmd = ymdLocal(now);
+
   for (const r of rows) {
     const due = combineDueDateTime(r.next_due, r.remind_at);
+    const baseKey = `${r.next_due}T${r.remind_at}`;
+
+    // 1) Day-of (send once when it's the due date and before due time)
+    if (r.next_due === todayYmd && now < due) {
+      const key = `${baseKey}|day`;
+      const sent = db.prepare('SELECT 1 FROM notifications_sent WHERE task_id=? AND due_key=?').get(r.id, key);
+      if (!sent) {
+        const body = (r.notes ? `${r.notes}\n` : '') + `Due today at ${r.remind_at}`;
+        await sendPushToUser(r.user_id, {
+          type: 'task-day',
+          taskId: r.id,
+          title: `Today: ${r.title}`,
+          body,
+          icon: '/icons/logo.svg',
+          badge: '/icons/logo.svg',
+        });
+        db.prepare('INSERT INTO notifications_sent (task_id, due_key, sent_at) VALUES (?, ?, ?)')
+          .run(r.id, key, new Date().toISOString());
+      }
+    }
+
+    // 2) 1-hour warning
+    const oneHourBefore = new Date(due.getTime() - 60 * 60 * 1000);
+    if (oneHourBefore <= now && oneHourBefore > windowStart && now < due) {
+      const key = `${baseKey}|1h`;
+      const sent = db.prepare('SELECT 1 FROM notifications_sent WHERE task_id=? AND due_key=?').get(r.id, key);
+      if (!sent) {
+        const body = (r.notes ? `${r.notes}\n` : '') + `~1 hour until due (${r.remind_at})`;
+        await sendPushToUser(r.user_id, {
+          type: 'task-hour',
+          taskId: r.id,
+          title: `1 hour left: ${r.title}`,
+          body,
+          icon: '/icons/logo.svg',
+          badge: '/icons/logo.svg',
+        });
+        db.prepare('INSERT INTO notifications_sent (task_id, due_key, sent_at) VALUES (?, ?, ?)')
+          .run(r.id, key, new Date().toISOString());
+      }
+    }
+
+    // 3) Due time (existing behavior)
     if (due <= now && due > windowStart) {
-      const dueKey = `${r.next_due}T${r.remind_at}`;
-      const exists = db.prepare('SELECT 1 FROM notifications_sent WHERE task_id=? AND due_key=?').get(r.id, dueKey);
-      if (exists) continue;
-      // Send push
-      const body = r.notes ? `${r.notes}\nEvery ${r.every_days} day(s)` : `Every ${r.every_days} day(s)`;
-      await sendPushToUser(r.user_id, {
-        type: 'task-due',
-        taskId: r.id,
-        title: r.title,
-        body,
-        icon: '/icons/logo.svg',
-        badge: '/icons/logo.svg',
-      });
-      db.prepare('INSERT INTO notifications_sent (task_id, due_key, sent_at) VALUES (?, ?, ?)')
-        .run(r.id, dueKey, new Date().toISOString());
+      const key = baseKey;
+      const sent = db.prepare('SELECT 1 FROM notifications_sent WHERE task_id=? AND due_key=?').get(r.id, key);
+      if (!sent) {
+        const body = r.notes ? `${r.notes}\nEvery ${r.every_days} day(s)` : `Every ${r.every_days} day(s)`;
+        await sendPushToUser(r.user_id, {
+          type: 'task-due',
+          taskId: r.id,
+          title: r.title,
+          body,
+          icon: '/icons/logo.svg',
+          badge: '/icons/logo.svg',
+        });
+        db.prepare('INSERT INTO notifications_sent (task_id, due_key, sent_at) VALUES (?, ?, ?)')
+          .run(r.id, key, new Date().toISOString());
+      }
+    }
+
+    // 4) Missed (trigger if due is at least one scan window in the past to avoid same-scan with due)
+    if (due <= windowStart) {
+      const key = `${baseKey}|missed`;
+      const sent = db.prepare('SELECT 1 FROM notifications_sent WHERE task_id=? AND due_key=?').get(r.id, key);
+      if (!sent) {
+        const newDue = addDaysYmd(r.next_due, 1);
+        db.prepare('UPDATE tasks SET next_due=?, priority=1 WHERE id=?').run(newDue, r.id);
+        const body = (r.notes ? `${r.notes}\n` : '') + `Missed. New deadline: same time tomorrow`;
+        await sendPushToUser(r.user_id, {
+          type: 'task-missed',
+          taskId: r.id,
+          title: `Missed: ${r.title}`,
+          body,
+          icon: '/icons/logo.svg',
+          badge: '/icons/logo.svg',
+        });
+        db.prepare('INSERT INTO notifications_sent (task_id, due_key, sent_at) VALUES (?, ?, ?)')
+          .run(r.id, key, new Date().toISOString());
+      }
     }
   }
 }
@@ -403,4 +475,18 @@ setInterval(() => { scanAndNotify().catch(() => {}); }, SCAN_INTERVAL_MS);
 function cryptoRandomId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function ymdLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
+}
+
+function addDaysYmd(ymd, n) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+  dt.setDate(dt.getDate() + n);
+  return ymdLocal(dt);
 }

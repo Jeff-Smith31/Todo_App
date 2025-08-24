@@ -14,6 +14,10 @@ Parameters:
   HostedZoneId:
     Type: String
     Description: Route53 Hosted Zone ID for the root domain
+  BackendAlbDnsName:
+    Type: String
+    Default: ""
+    Description: DNS name of the backend ALB (e.g., my-alb-123.us-east-1.elb.amazonaws.com). If empty, /api/* origin is omitted.
 
 Conditions:
   UseWww: !Equals [ !Ref IncludeWww, 'true' ]

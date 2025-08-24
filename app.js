@@ -4,7 +4,7 @@
 
   const STORAGE_KEY = 'ticktock_tasks_v1';
   const SETTINGS_KEY = 'ticktock_settings_v1';
-  const BACKEND_URL = window.BACKEND_URL || localStorage.getItem('tt_backend_url') || '';
+  const BACKEND_URL = (window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.BACKEND_URL) || window.BACKEND_URL || localStorage.getItem('tt_backend_url') || '';
   const API = createApiClient(BACKEND_URL);
 
   /** Data Types
@@ -48,7 +48,7 @@
   let settings = loadSettings();
   let isAuthed = false;
   let deferredPrompt = null; // for PWA install
-  const timers = new Map(); // id -> timeout handle
+  const timers = new Map(); // key -> timeout handle; key format: `${taskId}|day|1h|due`
 
   // Initialization
   document.addEventListener('DOMContentLoaded', init);
@@ -66,29 +66,6 @@
 
     elements.permissionBtn.addEventListener('click', requestNotificationPermission);
 
-    // Backend URL setter button
-    const btnBackend = document.getElementById('btn-backend');
-    if (btnBackend) {
-      btnBackend.addEventListener('click', () => {
-        try {
-          const current = localStorage.getItem('tt_backend_url') || '';
-          const input = prompt('Enter backend URL (e.g., https://192.168.1.6:8443)', current);
-          if (input === null) return; // cancelled
-          const url = String(input).trim().replace(/\/$/, '');
-          const ok = /^(https?:)\/\/[^\s]+$/i.test(url);
-          if (!ok) { alert('Please enter a valid http(s) URL, e.g., https://192.168.1.6:8443'); return; }
-          localStorage.setItem('tt_backend_url', url);
-          alert('Backend URL saved to localStorage. The app will reload to apply it.');
-          window.location.reload();
-        } catch (e) {
-          alert('Could not save backend URL: ' + (e && e.message ? e.message : e));
-        }
-      });
-      // Hint in title
-      const current = localStorage.getItem('tt_backend_url') || '';
-      if (current) btnBackend.title = 'Current backend: ' + current;
-      else btnBackend.title = 'No backend set. Click to configure (uses local storage by default).';
-    }
 
     // Auth
     const btnLogin = document.getElementById('btn-login');
@@ -103,6 +80,8 @@
           await API.login(emailEl.value, passEl.value);
           await syncFromBackend();
           updateAuthUi(true);
+          location.hash = '#/tasks';
+          route();
         } catch (e) { alert(e.message || 'Login failed'); }
       });
       btnRegister.addEventListener('click', async () => {
@@ -110,6 +89,8 @@
           await API.register(emailEl.value, passEl.value);
           await syncFromBackend();
           updateAuthUi(true);
+          location.hash = '#/tasks';
+          route();
         } catch (e) { alert(e.message || 'Registration failed'); }
       });
       btnLogout.addEventListener('click', async () => {
@@ -121,8 +102,19 @@
         tasks = [];
         saveTasks();
         render();
+        location.hash = '#/login';
+        route();
       });
     }
+
+    // Create/cancel task navigation
+    const btnCreate = document.getElementById('btn-create');
+    if (btnCreate) btnCreate.addEventListener('click', () => { resetForm(); location.hash = '#/tasks/new'; route(); });
+    const btnCancel = document.getElementById('btn-cancel');
+    if (btnCancel) btnCancel.addEventListener('click', () => { location.hash = '#/tasks'; route(); });
+
+    // Router events
+    window.addEventListener('hashchange', route);
 
     // PWA install
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -174,11 +166,108 @@
 
     // Show permission button state
     refreshPermissionButton();
+
+    // Initial route
+    if (!location.hash) {
+      location.hash = BACKEND_URL ? '#/login' : '#/tasks';
+    }
+    route();
   }
 
   function onFreqChange(){
     const val = elements.frequency.value;
     elements.customWrap.classList.toggle('hidden', val !== 'custom');
+  }
+
+  // Simple router to separate Login, Tasks list, and Task form pages
+  function route(){
+    const pageLogin = document.getElementById('page-login');
+    const pageTasks = document.getElementById('page-tasks');
+    const pageForm = document.getElementById('page-task-form');
+    const show = (pg) => {
+      if (pageLogin) pageLogin.classList.add('hidden');
+      if (pageTasks) pageTasks.classList.add('hidden');
+      if (pageForm) pageForm.classList.add('hidden');
+      if (pg) pg.classList.remove('hidden');
+      // focus management could be added here if needed
+    };
+
+    const raw = (location.hash || '').replace(/^#/, '');
+    const parts = raw.split('/').filter(Boolean); // e.g., ['tasks','new'] or ['tasks', '<id>', 'edit']
+
+    // Auth guards when using backend
+    if (BACKEND_URL) {
+      if (!isAuthed) {
+        // force to login unless already there
+        if (!(parts[0] === 'login')) {
+          location.hash = '#/login';
+          if (pageLogin) show(pageLogin);
+          return;
+        }
+      } else {
+        // already authed, avoid staying on login
+        if (parts[0] === 'login') {
+          location.hash = '#/tasks';
+          if (pageTasks) show(pageTasks);
+          return;
+        }
+      }
+    }
+
+    // Routes
+    if (parts.length === 0) {
+      // default
+      show(pageTasks);
+      render();
+      return;
+    }
+
+    const [root, p1, p2] = parts;
+    if (root === 'login') {
+      show(pageLogin);
+      return;
+    }
+    if (root === 'tasks') {
+      if (p1 === 'new') {
+        resetForm();
+        show(pageForm);
+        return;
+      }
+      if (p2 === 'edit' && p1) {
+        const id = decodeURIComponent(p1);
+        const t = tasks.find(x => x.id === id);
+        if (t) {
+          elements.id.value = t.id;
+          elements.title.value = t.title;
+          elements.notes.value = t.notes || '';
+          if (t.everyDays === 1 || t.everyDays === 7 || t.everyDays === 30) {
+            elements.frequency.value = String(t.everyDays);
+            elements.customWrap.classList.add('hidden');
+          } else {
+            elements.frequency.value = 'custom';
+            elements.customWrap.classList.remove('hidden');
+            elements.customDays.value = String(t.everyDays);
+          }
+          elements.nextDue.value = t.nextDue;
+          elements.remindAt.value = t.remindAt;
+          show(pageForm);
+          return;
+        }
+        // if task not found, go back to list
+        location.hash = '#/tasks';
+        show(pageTasks);
+        render();
+        return;
+      }
+      // default tasks list
+      show(pageTasks);
+      render();
+      return;
+    }
+
+    // Fallback
+    show(pageTasks);
+    render();
   }
 
   async function onSaveTask(e){
@@ -215,6 +304,8 @@
     render();
     scheduleNotificationForTask(t);
     resetForm();
+    location.hash = '#/tasks';
+    route();
   }
 
   function resetForm(){
@@ -230,22 +321,9 @@
 
   // CRUD helpers
   function editTask(id){
-    const t = tasks.find(x => x.id === id);
-    if (!t) return;
-    elements.id.value = t.id;
-    elements.title.value = t.title;
-    elements.notes.value = t.notes || '';
-    if (t.everyDays === 1 || t.everyDays === 7 || t.everyDays === 30) {
-      elements.frequency.value = String(t.everyDays);
-      elements.customWrap.classList.add('hidden');
-    } else {
-      elements.frequency.value = 'custom';
-      elements.customWrap.classList.remove('hidden');
-      elements.customDays.value = String(t.everyDays);
-    }
-    elements.nextDue.value = t.nextDue;
-    elements.remindAt.value = t.remindAt;
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Navigate to edit page; form will be prefilled by router
+    location.hash = '#/tasks/' + encodeURIComponent(id) + '/edit';
+    route();
   }
 
   async function deleteTask(id){
@@ -396,24 +474,38 @@
     const btnLogin = document.getElementById('btn-login');
     const btnRegister = document.getElementById('btn-register');
     const btnLogout = document.getElementById('btn-logout');
-    if (!emailEl || !passEl || !btnLogin || !btnRegister || !btnLogout) return;
-    emailEl.style.display = authed ? 'none' : 'inline-block';
-    passEl.style.display = authed ? 'none' : 'inline-block';
-    btnLogin.style.display = authed ? 'none' : 'inline-block';
-    btnRegister.style.display = authed ? 'none' : 'inline-block';
-    btnLogout.style.display = authed ? 'inline-block' : 'none';
+    if (emailEl) emailEl.style.display = authed ? 'none' : 'inline-block';
+    if (passEl) passEl.style.display = authed ? 'none' : 'inline-block';
+    if (btnLogin) btnLogin.style.display = authed ? 'none' : 'inline-block';
+    if (btnRegister) btnRegister.style.display = authed ? 'none' : 'inline-block';
+    if (btnLogout) btnLogout.style.display = authed ? 'inline-block' : 'none';
   }
 
   // Missed tasks handling: if due time has passed without completion, move to next day and mark priority
   function handleMissedTasks(){
+    // In local-only mode, roll missed tasks and show a local notification about new deadline.
+    if (BACKEND_URL && isAuthed) return; // backend handles missed
     const now = new Date();
     let changed = false;
     for (const t of tasks){
       const dueDt = parseDueDateTime(t.nextDue, t.remindAt);
       if (dueDt.getTime() < now.getTime()){
-        // Was due in the past and not completed; roll to next day and mark priority
+        // de-dup missed notification by base key
+        const baseKey = `${t.nextDue}T${t.remindAt}|missed`;
+        if (!settings.sent) settings.sent = {};
+        if (!settings.sent[baseKey]){
+          // Show local missed notification if permission is granted
+          try {
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted'){
+              const body = (t.notes ? `${t.notes}\n` : '') + `Missed. New deadline: tomorrow at ${t.remindAt}`;
+              new Notification(`Missed: ${t.title}`, { body, icon: 'icons/logo.svg', badge: 'icons/logo.svg', tag: `task-${t.id}` });
+            }
+          } catch {}
+          settings.sent[baseKey] = true;
+          saveSettings();
+        }
+        // Move to next day and mark priority
         const nextDay = addDays(t.nextDue, 1);
-        if (t.nextDue !== nextDay){ /* always true */ }
         t.nextDue = nextDay;
         t.priority = true;
         changed = true;
@@ -452,8 +544,8 @@
 
   function scheduleAllNotificationsForToday(){
     // clear existing timers
-    for (const [id, h] of timers.entries()){
-      clearTimeout(h); timers.delete(id);
+    for (const [key, h] of timers.entries()){
+      clearTimeout(h); timers.delete(key);
     }
     for (const t of tasks){
       scheduleNotificationForTask(t);
@@ -462,36 +554,93 @@
 
   function scheduleNotificationForTask(t){
     cancelScheduledNotification(t.id);
+    // When connected to backend and authed, backend push will handle all stages.
+    if (BACKEND_URL && isAuthed) return;
     if (!('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
+    scheduleNotificationsForTaskStages(t);
+  }
 
-    // Only schedule if due today
+  function scheduleNotificationsForTaskStages(t){
     const now = new Date();
+    const today = dateToYMD(now);
     const dueDt = parseDueDateTime(t.nextDue, t.remindAt);
-    const ms = dueDt.getTime() - now.getTime();
+    const baseKey = `${t.nextDue}T${t.remindAt}`;
 
-    if (ms <= 0){
-      return; // missed tasks handled at load; will be picked next day
+    if (!settings.sent) settings.sent = {};
+
+    // Helper to schedule with dedup and key in timers map
+    function scheduleAt(when, kind, fireIfPast=false){
+      const sentKey = `${baseKey}|${kind}`;
+      if (settings.sent[sentKey]) return;
+      const delay = when.getTime() - Date.now();
+      const run = () => {
+        if (settings.sent[sentKey]) return;
+        // Show notification
+        let title = t.title;
+        let body;
+        if (kind === 'day') {
+          title = `Today: ${t.title}`;
+          body = (t.notes ? `${t.notes}\n` : '') + `Due today at ${t.remindAt}`;
+        } else if (kind === '1h') {
+          title = `1 hour left: ${t.title}`;
+          body = (t.notes ? `${t.notes}\n` : '') + `~1 hour until due (${t.remindAt})`;
+        } else {
+          // due
+          body = t.notes ? `${t.notes}\nEvery ${t.everyDays} day(s)` : `Every ${t.everyDays} day(s)`;
+        }
+        showTaskNotification(t, title, body);
+        settings.sent[sentKey] = true;
+        saveSettings();
+      };
+      const key = `${t.id}|${baseKey}|${kind}`;
+      if (delay <= 0) {
+        if (fireIfPast) {
+          // fire soon (next tick)
+          const handle = setTimeout(run, 0);
+          timers.set(key, handle);
+        }
+        return;
+      }
+      const handle = setTimeout(run, delay);
+      timers.set(key, handle);
     }
 
-    // only schedule if due date is today
-    if (!isDueTodayRawDateStr(t.nextDue, dateToYMD(now))) return;
+    // Only schedule for today to keep timers bounded
+    if (!isDueTodayRawDateStr(t.nextDue, today)) return;
 
-    const handle = setTimeout(() => {
-      showTaskNotification(t);
-    }, ms);
+    // Day-of: if before due time and not yet sent → fire immediately
+    if (now < dueDt) {
+      scheduleAt(now, 'day', true);
+    }
 
-    timers.set(t.id, handle);
+    // 1-hour before
+    const oneHourBefore = new Date(dueDt.getTime() - 60*60*1000);
+    if (oneHourBefore > now) {
+      scheduleAt(oneHourBefore, '1h');
+    } else if (dueDt > now) {
+      // If we are already within the last hour and not sent yet, fire now
+      scheduleAt(now, '1h', true);
+    }
+
+    // Due-time
+    if (dueDt > now) {
+      scheduleAt(dueDt, 'due');
+    }
   }
 
   function cancelScheduledNotification(id){
-    const h = timers.get(id);
-    if (h){ clearTimeout(h); timers.delete(id); }
+    // cancel all timers for this task id
+    for (const [key, h] of Array.from(timers.entries())){
+      if (key.startsWith(id + '|')) { clearTimeout(h); timers.delete(key); }
+    }
   }
 
-  function showTaskNotification(t){
-    const body = t.notes ? `${t.notes}\nEvery ${t.everyDays} day(s)` : `Every ${t.everyDays} day(s)`;
-    const n = new Notification(t.title, {
+  function showTaskNotification(t, titleOverride, bodyOverride){
+    const defaultBody = t.notes ? `${t.notes}\nEvery ${t.everyDays} day(s)` : `Every ${t.everyDays} day(s)`;
+    const body = bodyOverride || defaultBody;
+    const title = titleOverride || t.title;
+    const n = new Notification(title, {
       body,
       icon: 'icons/logo.svg',
       badge: 'icons/logo.svg',

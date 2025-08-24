@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Free-tier EC2 backend for TickTock Tasks with automatic TLS via Caddy and Route53 DNS"
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: "Base domain for your site (must be in the provided HostedZone). Example: ticktocktasks.com"
+  ApiSubdomain:
+    Type: String
+    Default: api
+    Description: "Subdomain for the backend (api -> api.<DomainName>)"
+  HostedZoneId:
+    Type: String
+    Description: "Route53 Hosted Zone ID for the DomainName"
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "VPC where the instance and security group will be created"
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: "Public subnet for the instance (must provide internet access and auto-assign public IP)"
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues: [t2.micro, t3.micro]
+    Description: "EC2 instance type (free-tier eligible: t2.micro)"
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: ''
+    Description: "Optional SSH key pair name to access the instance (leave empty to skip)"
+  RepoUrl:
+    Type: String
+    Default: https://github.com/example/Todo_App.git
+    Description: "Git repository URL containing this project. Must be accessible by the instance."
+  AllowedOrigins:
+    Type: String
+    Default: https://ticktocktasks.com,https://www.ticktocktasks.com
+    Description: "Comma-separated list of allowed frontend origins for CORS (e.g., your CloudFront domain and custom domain)"
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      Ami: ami-05576a079321f21f8
+    us-east-2:
+      Ami: ami-08fb2ae774d2f6c48
+    us-west-2:
+      Ami: ami-0f3a42250e0e530d1
+    eu-west-1:
+      Ami: ami-089950bc622d39ed8
+
+Conditions:
+  HasKey: !Not [ !Equals [ !Ref KeyName, '' ] ]
+
+Resources:
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow HTTP/HTTPS"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Project
+          Value: TickTockTasks
+
+  BackendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  BackendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [ !Ref BackendRole ]
+
+  BackendEc2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref AWS::Region, Ami]
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref BackendInstanceProfile
+      KeyName: !If [HasKey, !Ref KeyName, !Ref AWS::NoValue]
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref SubnetId
+          GroupSet: [ !Ref BackendSecurityGroup ]
+      Tags:
+        - Key: Name
+          Value: TickTockTasks-Backend
+        - Key: Project
+          Value: TickTockTasks
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          # Install docker, compose plugin, caddy, git, jq
+          (dnf update -y || yum update -y) || true
+          (dnf install -y docker docker-compose-plugin git jq || yum install -y docker git jq) || true
+          # Fallback for compose if plugin missing
+          if ! command -v docker-compose >/dev/null 2>&1; then
+            if ! docker compose version >/dev/null 2>&1; then
+              curl -L "https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose || true
+            fi
+          fi
+          # Caddy for automatic TLS
+          (dnf install -y caddy || yum install -y 'https://dl.cloudsmith.io/public/caddy/stable/rpm/el/8/x86_64/caddy-2.7.6-1.x86_64.rpm') || true
+          systemctl enable --now docker
+          systemctl enable --now caddy || true
+
+          # Clone repo
+          mkdir -p /opt/ticktock
+          if [ ! -d /opt/ticktock/.git ]; then
+            git clone "${RepoUrl}" /opt/ticktock || true
+          fi
+          cd /opt/ticktock
+          chmod +x ./backend-up.sh || true
+
+          # Prepare env and start backend (write .env with first origin), then widen to all AllowedOrigins
+          FRONT_ORIGIN="$(echo "${AllowedOrigins}" | cut -d',' -f1)"
+          export CORS_ORIGIN="${AllowedOrigins}"
+          ./backend-up.sh "$FRONT_ORIGIN" || true
+          if [ -f .env ]; then
+            sed -i "s#^CORS_ORIGIN=.*#CORS_ORIGIN=${AllowedOrigins//#/\#}#" .env || true
+            if grep -q '^REDIRECT_HTTP_TO_HTTPS=' .env; then
+              sed -i 's#^REDIRECT_HTTP_TO_HTTPS=.*#REDIRECT_HTTP_TO_HTTPS=false#' .env || true
+            else
+              echo 'REDIRECT_HTTP_TO_HTTPS=false' >> .env
+            fi
+          fi
+
+          # Start containers
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose up -d || true
+          else
+            docker compose up -d || true
+          fi
+
+          # Configure Caddy with domain and reverse proxy to backend HTTP (Caddy terminates TLS)
+          cat >/etc/caddy/Caddyfile <<CFG
+          ${ApiSubdomain}.${DomainName} {
+            encode gzip
+            reverse_proxy localhost:8080
+          }
+          CFG
+          systemctl restart caddy || true
+
+  ApiRecord:
+    Type: AWS::Route53::RecordSet
+    DependsOn: BackendEc2
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${ApiSubdomain}.${DomainName}'
+      Type: A
+      TTL: '60'
+      ResourceRecords:
+        - !GetAtt BackendEc2.PublicIp
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance ID
+    Value: !Ref BackendEc2
+  ApiDomainName:
+    Description: Backend API domain name
+    Value: !Sub '${ApiSubdomain}.${DomainName}'
+  BackendEndpoint:
+    Description: HTTPS endpoint for backend
+    Value: !Sub 'https://${ApiSubdomain}.${DomainName}'
