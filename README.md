@@ -118,10 +118,10 @@ Required GitHub settings
 - Secrets:
   - AWS_ROLE_TO_ASSUME: IAM Role ARN with permissions for CloudFormation, Route53, ACM, EC2, S3, CloudFront (OIDC trusted for your repo).
 - Variables (Repository → Settings → Variables):
-  - DOMAIN_NAME: your apex domain (example.com)
-  - HOSTED_ZONE_ID: Route53 hosted zone ID for the domain
-  - VPC_ID: ID of a VPC with internet access
-  - SUBNET_ID: Public subnet ID (auto-assign public IP)
+  - DOMAIN_NAME: your apex domain (example.com). If unset, the workflow will try to infer it from the existing frontend stack or Route53 hosted zones.
+  - HOSTED_ZONE_ID: Route53 hosted zone ID for the domain. If unset, the workflow will try to infer it alongside DOMAIN_NAME.
+  - VPC_ID: ID of a VPC with internet access. Optional — if unset, the workflow picks the default VPC in BACKEND_REGION (or the first VPC).
+  - SUBNET_ID: Public subnet ID (auto-assign public IP). Optional — if unset, the workflow chooses a public subnet in the selected VPC (DefaultForAz or MapPublicIpOnLaunch=true; otherwise the first subnet).
   - INCLUDE_WWW: 'true' or 'false' (default 'true')
   - FRONTEND_REGION: default us-east-1 (required for CloudFront ACM)
   - BACKEND_REGION: region for EC2 (defaults to us-east-1 if not set)

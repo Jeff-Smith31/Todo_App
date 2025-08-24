@@ -130,6 +130,80 @@ jobs:
           echo "Resolved DOMAIN_NAME=${MISSING_DOMAIN:-<unset>}" >> $GITHUB_STEP_SUMMARY
           echo "Resolved HOSTED_ZONE_ID=${MISSING_ZONE:-<unset>}" >> $GITHUB_STEP_SUMMARY
 
+      - name: Resolve VPC and Subnet (fallbacks)
+        run: |
+          set -e
+          # If provided explicitly, keep them
+          if [ -n "${VPC_ID:-}" ] && [ -n "${SUBNET_ID:-}" ]; then
+            echo "Using provided VPC_ID and SUBNET_ID" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          # Find default VPC in the backend region
+          VPC=$(aws ec2 describe-vpcs \
+            --region "${BACKEND_REGION}" \
+            --filters "Name=isDefault,Values=true" \
+            --query "Vpcs[0].VpcId" \
+            --output text 2>/dev/null || true)
+
+          # Fallback to the first VPC if no default VPC
+          if [ -z "$VPC" ] || [ "$VPC" = "None" ]; then
+            VPC=$(aws ec2 describe-vpcs \
+              --region "${BACKEND_REGION}" \
+              --query "Vpcs[0].VpcId" \
+              --output text 2>/dev/null || true)
+          fi
+
+          if [ -n "$VPC" ] && [ "$VPC" != "None" ]; then
+            echo "VPC_ID=$VPC" >> "$GITHUB_ENV"
+          fi
+
+          SUB=""
+          if [ -n "$VPC" ] && [ "$VPC" != "None" ]; then
+            # Prefer default subnets for AZs within the VPC
+            SUB=$(aws ec2 describe-subnets \
+              --region "${BACKEND_REGION}" \
+              --filters "Name=vpc-id,Values=$VPC" \
+              --query "Subnets[?DefaultForAz==\`true\`][0].SubnetId" \
+              --output text 2>/dev/null || true)
+
+            # If none, try to find a subnet with MapPublicIpOnLaunch=true
+            if [ -z "$SUB" ] || [ "$SUB" = "None" ]; then
+              IDS=$(aws ec2 describe-subnets \
+                --region "${BACKEND_REGION}" \
+                --filters "Name=vpc-id,Values=$VPC" \
+                --query "Subnets[].SubnetId" \
+                --output text 2>/dev/null || true)
+              for S in $IDS; do
+                MPL=$(aws ec2 describe-subnet-attribute \
+                  --region "${BACKEND_REGION}" \
+                  --subnet-id "$S" \
+                  --attribute mapPublicIpOnLaunch \
+                  --query "MapPublicIpOnLaunch.Value" \
+                  --output text 2>/dev/null || echo "false")
+                if [ "$MPL" = "True" ] || [ "$MPL" = "true" ]; then
+                  SUB="$S"; break;
+                fi
+              done
+            fi
+
+            # Fallback to first subnet in the VPC
+            if [ -z "$SUB" ] || [ "$SUB" = "None" ]; then
+              SUB=$(aws ec2 describe-subnets \
+                --region "${BACKEND_REGION}" \
+                --filters "Name=vpc-id,Values=$VPC" \
+                --query "Subnets[0].SubnetId" \
+                --output text 2>/dev/null || true)
+            fi
+
+            if [ -n "$SUB" ] && [ "$SUB" != "None" ]; then
+              echo "SUBNET_ID=$SUB" >> "$GITHUB_ENV"
+            fi
+          fi
+
+          echo "Resolved VPC_ID=${VPC:-<unset>}" >> $GITHUB_STEP_SUMMARY
+          echo "Resolved SUBNET_ID=${SUB:-<unset>}" >> $GITHUB_STEP_SUMMARY
+
       - name: Validate required variables
         run: |
           set -e
