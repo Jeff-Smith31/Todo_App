@@ -38,6 +38,98 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.FRONTEND_REGION }}
 
+      - name: Resolve Domain and Hosted Zone (fallbacks)
+        run: |
+          set -e
+          # Ensure jq is installed for JSON parsing
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y jq
+          fi
+          # If DOMAIN_NAME/HOSTED_ZONE_ID are not provided as repo variables, try to infer them from the existing frontend stack or Route53
+          MISSING_DOMAIN="${DOMAIN_NAME:-}"
+          MISSING_ZONE="${HOSTED_ZONE_ID:-}"
+          FRONT_STACK="${FRONTEND_STACK_NAME}"
+
+          if [ -z "$MISSING_DOMAIN" ] || [ -z "$MISSING_ZONE" ]; then
+            if aws cloudformation describe-stacks --region "$FRONTEND_REGION" --stack-name "$FRONT_STACK" >/dev/null 2>&1; then
+              DN=$(aws cloudformation describe-stacks \
+                --region "$FRONTEND_REGION" \
+                --stack-name "$FRONT_STACK" \
+                --query "Stacks[0].Parameters[?ParameterKey=='DomainName'].ParameterValue | [0]" \
+                --output text)
+              HZ=$(aws cloudformation describe-stacks \
+                --region "$FRONTEND_REGION" \
+                --stack-name "$FRONT_STACK" \
+                --query "Stacks[0].Parameters[?ParameterKey=='HostedZoneId'].ParameterValue | [0]" \
+                --output text)
+              if [ -z "$MISSING_DOMAIN" ] && [ -n "$DN" ] && [ "$DN" != "None" ]; then
+                echo "DOMAIN_NAME=$DN" >> "$GITHUB_ENV"
+                MISSING_DOMAIN="$DN"
+              fi
+              if [ -z "$MISSING_ZONE" ] && [ -n "$HZ" ] && [ "$HZ" != "None" ]; then
+                echo "HOSTED_ZONE_ID=$HZ" >> "$GITHUB_ENV"
+                MISSING_ZONE="$HZ"
+              fi
+
+              # If still missing DomainName, try derive from BucketName output (<DomainName>-site)
+              if [ -z "$MISSING_DOMAIN" ]; then
+                BUCKET=$(aws cloudformation describe-stacks \
+                  --region "$FRONTEND_REGION" \
+                  --stack-name "$FRONT_STACK" \
+                  --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue | [0]" \
+                  --output text)
+                if [ -n "$BUCKET" ] && [ "$BUCKET" != "None" ]; then
+                  if [ "${BUCKET##*-}" = "site" ]; then
+                    DN2="${BUCKET%-site}"
+                    echo "DOMAIN_NAME=$DN2" >> "$GITHUB_ENV"
+                    MISSING_DOMAIN="$DN2"
+                  fi
+                fi
+              fi
+            fi
+
+            # If we have DomainName but not HostedZoneId, look it up in Route53
+            if [ -z "$MISSING_ZONE" ] && [ -n "$MISSING_DOMAIN" ]; then
+              HZ2=$(aws route53 list-hosted-zones-by-name --dns-name "${MISSING_DOMAIN}." --query "HostedZones[0].Id" --output text 2>/dev/null || true)
+              HZ2=${HZ2#/hostedzone/}
+              if [ -n "$HZ2" ] && [ "$HZ2" != "None" ]; then
+                echo "HOSTED_ZONE_ID=$HZ2" >> "$GITHUB_ENV"
+                MISSING_ZONE="$HZ2"
+              fi
+            fi
+          fi
+
+          # If still missing both or one of them, try to infer from Route53 hosted zones
+          if [ -z "$MISSING_DOMAIN" ] || [ -z "$MISSING_ZONE" ]; then
+            # List public hosted zones
+            ZONES_JSON=$(aws route53 list-hosted-zones --query "HostedZones[?Config.PrivateZone==\`false\`]")
+            COUNT=$(echo "$ZONES_JSON" | jq 'length')
+            if [ "$COUNT" -gt 0 ]; then
+              # Choose the first zone; if only one exists, it's unambiguous
+              Z_NAME=$(echo "$ZONES_JSON" | jq -r '.[0].Name' | sed 's/\.$//')
+              Z_ID=$(echo "$ZONES_JSON" | jq -r '.[0].Id' | sed 's#.*/##')
+              if [ -z "$MISSING_DOMAIN" ] && [ -n "$Z_NAME" ] && [ "$Z_NAME" != "null" ]; then
+                echo "DOMAIN_NAME=$Z_NAME" >> "$GITHUB_ENV"
+                MISSING_DOMAIN="$Z_NAME"
+              fi
+              if [ -z "$MISSING_ZONE" ] && [ -n "$Z_ID" ] && [ "$Z_ID" != "null" ]; then
+                echo "HOSTED_ZONE_ID=$Z_ID" >> "$GITHUB_ENV"
+                MISSING_ZONE="$Z_ID"
+              fi
+              echo "Route53 fallback used. Chosen zone: $Z_NAME ($Z_ID)" >> $GITHUB_STEP_SUMMARY
+              if [ "$COUNT" -gt 1 ]; then
+                echo "Warning: Multiple public hosted zones detected; selected the first. Set repo Variables DOMAIN_NAME and HOSTED_ZONE_ID to override." >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          fi
+
+          # Ensure INCLUDE_WWW default if unset
+          if [ -z "${INCLUDE_WWW:-}" ]; then echo "INCLUDE_WWW=true" >> "$GITHUB_ENV"; fi
+
+          # Summarize resolution
+          echo "Resolved DOMAIN_NAME=${MISSING_DOMAIN:-<unset>}" >> $GITHUB_STEP_SUMMARY
+          echo "Resolved HOSTED_ZONE_ID=${MISSING_ZONE:-<unset>}" >> $GITHUB_STEP_SUMMARY
+
       - name: Validate required variables
         run: |
           set -e
