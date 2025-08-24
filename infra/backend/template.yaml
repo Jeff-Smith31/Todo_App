@@ -147,8 +147,20 @@ Resources:
               curl -L "https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose || true
             fi
           fi
-          # Caddy for automatic TLS
-          (dnf install -y caddy || yum install -y 'https://dl.cloudsmith.io/public/caddy/stable/rpm/el/8/x86_64/caddy-2.7.6-1.x86_64.rpm') || true
+          # Caddy for automatic TLS (robust install across distros)
+          if command -v dnf >/dev/null 2>&1; then
+            ELVER=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | tr -d '"' | cut -d. -f1)
+            [ -z "$ELVER" ] && ELVER=9
+            (dnf install -y dnf-plugins-core || true)
+            (dnf config-manager --add-repo "https://dl.cloudsmith.io/public/caddy/stable/rpm/el/${ELVER}.repo" || true)
+            (dnf install -y caddy || true)
+          else
+            ELVER=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | tr -d '"' | cut -d. -f1)
+            [ -z "$ELVER" ] && ELVER=7
+            (yum install -y yum-utils || true)
+            (yum-config-manager --add-repo "https://dl.cloudsmith.io/public/caddy/stable/rpm/el/${ELVER}.repo" || true)
+            (yum install -y caddy || true)
+          fi
           systemctl enable --now docker
           systemctl enable --now caddy || true
 
@@ -201,6 +213,16 @@ Resources:
           }
           CFG
           systemctl restart caddy || true
+
+          # Wait briefly for Caddy to come up and listen on 80/443
+          for i in $(seq 1 60); do
+            if systemctl is-active --quiet caddy; then
+              if ss -ltn 2>/dev/null | grep -E 'LISTEN.+:(80|443)'; then
+                break
+              fi
+            fi
+            sleep 2
+          done
 
   ApiRecord:
     Condition: CreateApiDns
