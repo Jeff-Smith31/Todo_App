@@ -330,6 +330,7 @@ jobs:
           chmod +x infra/scripts/link-frontend.sh || true
           chmod +x scripts/cors-test.sh || true
           chmod +x scripts/api-smoke.sh || true
+          chmod +x scripts/check-backend.sh || true
 
       - name: Detect existing API DNS record
         run: |
@@ -440,6 +441,34 @@ jobs:
           echo "dig +short ${API_FQDN} -> ${RES}" >> $GITHUB_STEP_SUMMARY
           HC=$(curl -sk -o /dev/null -w "%{http_code}" "https://${API_FQDN}/healthz" || true)
           echo "HTTPS /healthz status: ${HC}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Wait for backend health (retry up to 10 min)
+        run: |
+          set +e
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$BE_URL" ] || [ "$BE_URL" = "None" ]; then
+            echo "No backend endpoint resolved for retry health check." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Waiting for backend to become healthy at $BE_URL ..." >> $GITHUB_STEP_SUMMARY
+            ATTEMPTS=0; MAX_ATTEMPTS=40; SLEEP=15
+            OK=0
+            while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+              CODE=$(curl -sk -o /dev/null -w "%{http_code}" "$BE_URL/healthz" || echo "000")
+              if [ "$CODE" = "200" ]; then OK=1; break; fi
+              ATTEMPTS=$((ATTEMPTS+1))
+              sleep $SLEEP
+            done
+            if [ $OK -eq 1 ]; then
+              echo "Backend healthy (HTTP 200 on /healthz) after $ATTEMPTS attempts." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "Backend still not healthy after $((MAX_ATTEMPTS*SLEEP/60)) minutes. Proceeding but marking as warning." >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          set -e
 
       - name: Link frontend to backend endpoint (write config.js)
         run: |

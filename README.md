@@ -174,6 +174,8 @@ Use these commands to verify the backend is up without logging in:
   - curl -sS http://localhost:8080/api/ping
 - Production (replace domain if needed):
   - curl -sS https://api.ticktocktasks.com/api/ping
+- Repo helper (auto-resolve stack output if URL not provided):
+  - scripts/check-backend.sh https://api.ticktocktasks.com
 
 Expected response:
 - { "ok": true, "service": "ticktock-backend", "time": "<ISO>", "uptimeSec": <number> }
