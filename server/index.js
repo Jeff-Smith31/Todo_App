@@ -444,6 +444,21 @@ async function scanAndNotify() {
 
 setInterval(() => { scanAndNotify().catch(() => {}); }, SCAN_INTERVAL_MS);
 
+// Error handler (last middleware) – logs full error details which go to CloudWatch when running in EC2
+app.use((err, req, res, next) => {
+  try {
+    console.error('Unhandled error', {
+      path: req?.path,
+      method: req?.method,
+      message: err?.message,
+      stack: err?.stack,
+    });
+  } catch (e) {
+    console.error('Unhandled error (stringified):', String(err));
+  }
+  res.status(500).json({ error: 'Internal Server Error' });
+});
+
 // Start servers (HTTPS preferred)
 (function startServers(){
   const hasHttps = HTTPS_CERT_PATH && HTTPS_KEY_PATH && fs.existsSync(HTTPS_CERT_PATH) && fs.existsSync(HTTPS_KEY_PATH);

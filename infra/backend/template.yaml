@@ -90,11 +90,33 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: TickTockBackendCloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                  - logs:DescribeLogGroups
+                Resource: '*'
 
   BackendInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles: [ !Ref BackendRole ]
+
+  BackendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/TickTock/Backend-${DomainName}'
+      RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: TickTockTasks
 
   BackendEc2:
     Type: AWS::EC2::Instance
@@ -137,6 +159,19 @@ Resources:
           fi
           cd /opt/ticktock
           chmod +x ./backend-up.sh || true
+
+          # Configure Docker logging to CloudWatch (awslogs) via override before first start
+          cat > /opt/ticktock/docker-compose.override.yml <<OVR
+          version: '3.8'
+          services:
+            backend:
+              logging:
+                driver: awslogs
+                options:
+                  awslogs-region: ${AWS::Region}
+                  awslogs-group: /TickTock/Backend-${DomainName}
+                  awslogs-create-group: "true"
+          OVR
 
           # Prepare env and start backend (write .env with first origin), then widen to all AllowedOrigins
           FRONT_ORIGIN="$(echo "${AllowedOrigins}" | cut -d',' -f1)"

@@ -327,6 +327,7 @@ jobs:
           chmod +x infra/scripts/deploy-backend.sh || true
           chmod +x infra/scripts/link-frontend.sh || true
           chmod +x scripts/cors-test.sh || true
+          chmod +x scripts/api-smoke.sh || true
 
       - name: Detect existing API DNS record
         run: |
@@ -377,6 +378,22 @@ jobs:
             scripts/cors-test.sh "$BE_URL" "https://${DOMAIN_NAME}" | sed -n '1,60p' >> $GITHUB_STEP_SUMMARY || true
           else
             echo "Warning: Backend endpoint could not be resolved for smoke test." >> $GITHUB_STEP_SUMMARY
+          fi
+          set -e
+
+      - name: API smoke test (register/login/tasks)
+        run: |
+          set +e
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          if [ -n "$BE_URL" ] && [ "$BE_URL" != "None" ]; then
+            echo "API smoke test against ${BE_URL}" >> $GITHUB_STEP_SUMMARY
+            scripts/api-smoke.sh "$BE_URL" | sed -n '1,200p' >> $GITHUB_STEP_SUMMARY || true
+          else
+            echo "Skipping API smoke test: no backend endpoint resolved." >> $GITHUB_STEP_SUMMARY
           fi
           set -e
 
