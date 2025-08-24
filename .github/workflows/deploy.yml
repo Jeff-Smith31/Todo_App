@@ -250,16 +250,19 @@ jobs:
           set -e
           BUCKET='${{ steps.front.outputs.bucket }}'
           if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then echo "Bucket not resolved"; exit 3; fi
-          # Upload site (exclude infra, server, node_modules, etc.)
-          aws s3 sync . "s3://$BUCKET" \
-            --delete \
-            --exclude ".git/*" \
-            --exclude ".github/*" \
-            --exclude "infra/*" \
-            --exclude "mobile/*" \
-            --exclude "node_modules/*" \
-            --exclude "server/*" \
-            --exclude "serverless/*"
+          # Stage only frontend assets into a temporary directory to avoid traversing the whole repo
+          SITE_DIR=$(mktemp -d)
+          cp index.html "$SITE_DIR/"
+          cp styles.css "$SITE_DIR/"
+          cp app.js "$SITE_DIR/"
+          cp sw.js "$SITE_DIR/"
+          cp manifest.json "$SITE_DIR/"
+          cp manifest.webmanifest "$SITE_DIR/"
+          if [ -f config.js ]; then cp config.js "$SITE_DIR/"; fi
+          mkdir -p "$SITE_DIR/icons"
+          cp -r icons/. "$SITE_DIR/icons/"
+          # Sync staged assets to S3 and delete anything else
+          aws s3 sync "$SITE_DIR" "s3://$BUCKET" --delete
 
       - name: Compute AllowedOrigins for backend
         id: origins
