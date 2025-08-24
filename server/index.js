@@ -90,7 +90,8 @@ app.use(morgan('dev'));
 app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
 const ORIGINS = (process.env.CORS_ORIGIN || ORIGIN).split(',').map(s => s.trim()).filter(Boolean);
-app.use(cors({
+// Unified CORS options (ensure preflight is properly handled across environments)
+const corsOptions = {
   origin: function(origin, callback) {
     // Allow requests with no origin like mobile apps or curl
     if (!origin) return callback(null, true);
@@ -98,7 +99,13 @@ app.use(cors({
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-}));
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
+};
+app.use(cors(corsOptions));
+// Explicitly handle preflight requests for all routes
+app.options('*', cors(corsOptions));
 
 // Rate limiter for auth
 const authLimiter = rateLimit({
