@@ -174,7 +174,8 @@ Resources:
             (yum install -y caddy || true)
           fi
           systemctl enable --now docker
-          systemctl enable --now caddy || true
+          # Ensure systemd Caddy is not running; we'll use dockerized Caddy
+          systemctl disable --now caddy || true
 
           # Clone repo
           mkdir -p /opt/ticktock
