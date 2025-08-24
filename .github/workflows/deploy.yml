@@ -347,6 +347,18 @@ jobs:
             echo "CREATE_API_DNS_RECORD=true" >> "$GITHUB_ENV"
           fi
 
+      - name: Choose API subdomain (auto if requested)
+        run: |
+          set -e
+          AS="${API_SUBDOMAIN:-}"
+          if [ -z "$AS" ] || [ "$AS" = "auto" ]; then
+            AS="api-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "API_SUBDOMAIN=$AS" >> "$GITHUB_ENV"
+            echo "Auto-selected API subdomain: $AS" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Using API subdomain from vars: $AS" >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Deploy backend stack (EC2 + Caddy TLS)
         run: |
           # Use repository URL (must be public for EC2 to clone)
@@ -416,7 +428,11 @@ jobs:
               "echo --- sockets ---",
               "ss -ltnp | egrep \":(80|443|8080|8443)\" || true",
               "echo --- caddy logs (last 120) ---",
-              "docker logs --tail=120 ticktock-caddy || true"
+              "docker logs --tail=120 ticktock-caddy || true",
+              "echo --- backend logs (last 120) ---",
+              "docker logs --tail=120 ticktock-backend || true",
+              "echo --- localhost backend health (http://localhost:8080/healthz) ---",
+              "curl -sS --max-time 5 http://localhost:8080/healthz || true"
             ]
           }
           JSON
