@@ -163,3 +163,17 @@ Use token for subsequent API calls:
 Notes:
 - CORS: Native apps and curl typically send no Origin header; the backend permits such requests. If your client does send Origin, ensure it matches one of the AllowedOrigins configured during deployment.
 - Web app continues to use secure HttpOnly cookies with credentials: 'include'. Mobile should prefer Bearer tokens as shown above.
+
+
+## Quick health check (no auth)
+Use these commands to verify the backend is up without logging in:
+
+- Local HTTPS (self-signed dev cert):
+  - curl -sk https://localhost:8443/api/ping
+- Local HTTP (if HTTP is enabled without redirect):
+  - curl -sS http://localhost:8080/api/ping
+- Production (replace domain if needed):
+  - curl -sS https://api.ticktocktasks.com/api/ping
+
+Expected response:
+- { "ok": true, "service": "ticktock-backend", "time": "<ISO>", "uptimeSec": <number> }

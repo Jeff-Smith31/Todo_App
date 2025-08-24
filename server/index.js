@@ -281,7 +281,15 @@ app.delete('/api/push/subscribe', authMiddleware, (req, res) => {
   res.json({ ok: true, removed: result.changes });
 });
 
-// Health
+// Health and ping (no auth)
+app.get('/api/ping', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'ticktock-backend',
+    time: new Date().toISOString(),
+    uptimeSec: Math.round(process.uptime())
+  });
+});
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
 // Friendly landing page so users don't see "Cannot GET /" after accepting the TLS warning
