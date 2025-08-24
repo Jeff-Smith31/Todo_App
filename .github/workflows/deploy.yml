@@ -263,6 +263,16 @@ jobs:
           cp -r icons/. "$SITE_DIR/icons/"
           # Sync staged assets to S3 and delete anything else
           aws s3 sync "$SITE_DIR" "s3://$BUCKET" --delete
+          # Invalidate CloudFront so latest app shell is served
+          DIST_ID='${{ steps.front.outputs.dist_id }}'
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
+            "/index.html" \
+            "/app.js" \
+            "/styles.css" \
+            "/sw.js" \
+            "/manifest.json" \
+            "/manifest.webmanifest" \
+            "/icons/*"
 
       - name: Compute AllowedOrigins for backend
         id: origins
