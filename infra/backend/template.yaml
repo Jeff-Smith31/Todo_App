@@ -24,7 +24,7 @@ Parameters:
     AllowedValues: [t2.micro, t3.micro]
     Description: "EC2 instance type (free-tier eligible: t2.micro)"
   KeyName:
-    Type: AWS::EC2::KeyPair::KeyName
+    Type: String
     Default: ''
     Description: "Optional SSH key pair name to access the instance (leave empty to skip)"
   RepoUrl:
