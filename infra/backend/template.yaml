@@ -207,6 +207,12 @@ Resources:
                 - /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile
               depends_on:
                 - backend
+              logging:
+                driver: awslogs
+                options:
+                  awslogs-region: ${AWS::Region}
+                  awslogs-group: /TickTock/Backend-${DomainName}
+                  awslogs-create-group: "true"
           OVR
 
           # Prepare env and start backend (write .env with first origin), then widen to all AllowedOrigins

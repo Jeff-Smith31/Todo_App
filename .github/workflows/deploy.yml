@@ -391,6 +391,34 @@ jobs:
             aws route53 wait resource-record-sets-changed --id "$CID" || true
           fi
 
+      - name: SSM nudge - restart containers and check ports
+        run: |
+          set -e
+          IID=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$IID" ] || [ "$IID" = "None" ]; then
+            echo "No InstanceId resolved for SSM nudge." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          echo "Sending SSM command to $IID to ensure proxy is running..." >> $GITHUB_STEP_SUMMARY
+          CMD_ID=$(aws ssm send-command \
+            --region "${BACKEND_REGION}" \
+            --instance-ids "$IID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="cd /opt/ticktock; \
+            if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d || true; else docker compose up -d || true; fi; \
+            echo '--- docker ps ---'; docker ps; \
+            echo '--- sockets ---'; ss -ltnp | egrep ':(80|443|8080|8443)' || true; \
+            echo '--- caddy logs (last 120) ---'; docker logs --tail=120 ticktock-caddy || true" \
+            --query "Command.CommandId" --output text)
+          # give it a moment
+          sleep 10
+          OUT=$(aws ssm get-command-invocation --region "${BACKEND_REGION}" --command-id "$CMD_ID" --instance-id "$IID" --query "StandardOutputContent" --output text || true)
+          echo "\nSSM output (docker/ports/logs):\n${OUT}" >> $GITHUB_STEP_SUMMARY || true
+
       - name: Verify DNS resolution and HTTPS health for API
         run: |
           set -e
