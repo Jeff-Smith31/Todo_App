@@ -1,0 +1,142 @@
+name: Deploy Frontend and Backend
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  # Frontend (must be us-east-1 for CloudFront ACM)
+  FRONTEND_REGION: ${{ vars.FRONTEND_REGION || 'us-east-1' }}
+  FRONTEND_STACK_NAME: ${{ vars.FRONTEND_STACK_NAME || 'ttt-frontend' }}
+  DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+  HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID }}
+  INCLUDE_WWW: ${{ vars.INCLUDE_WWW || 'true' }}
+
+  # Backend
+  BACKEND_REGION: ${{ vars.BACKEND_REGION || 'us-east-1' }}
+  BACKEND_STACK_NAME: ${{ vars.BACKEND_STACK_NAME || 'ttt-backend' }}
+  VPC_ID: ${{ vars.VPC_ID }}
+  SUBNET_ID: ${{ vars.SUBNET_ID }}
+  API_SUBDOMAIN: ${{ vars.API_SUBDOMAIN || 'api' }}
+
+jobs:
+  deploy:
+    name: Deploy stacks and link frontend
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write    # for AWS OIDC federation
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (us-east-1)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.FRONTEND_REGION }}
+
+      - name: Validate required variables
+        run: |
+          set -e
+          for v in DOMAIN_NAME HOSTED_ZONE_ID VPC_ID SUBNET_ID; do
+            if [ -z "${!v}" ]; then echo "Missing required repo variable: $v"; exit 2; fi
+          done
+
+      - name: Deploy frontend stack (S3 + CloudFront + ACM + Route53)
+        run: |
+          aws cloudformation deploy \
+            --region "${FRONTEND_REGION}" \
+            --stack-name "${FRONTEND_STACK_NAME}" \
+            --template-file infra/frontend/template.yaml \
+            --parameter-overrides \
+              DomainName="${DOMAIN_NAME}" \
+              HostedZoneId="${HOSTED_ZONE_ID}" \
+              IncludeWww="${INCLUDE_WWW}" \
+            --capabilities CAPABILITY_NAMED_IAM
+
+      - name: Get frontend outputs
+        id: front
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --region "${FRONTEND_REGION}" \
+            --stack-name "${FRONTEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue | [0]" \
+            --output text)
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --region "${FRONTEND_REGION}" \
+            --stack-name "${FRONTEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue | [0]" \
+            --output text)
+          CF_DOMAIN=$(aws cloudformation describe-stacks \
+            --region "${FRONTEND_REGION}" \
+            --stack-name "${FRONTEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue | [0]" \
+            --output text)
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+          echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
+          echo "cf_domain=$CF_DOMAIN" >> "$GITHUB_OUTPUT"
+
+      - name: Sync site to S3 bucket
+        run: |
+          set -e
+          BUCKET='${{ steps.front.outputs.bucket }}'
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then echo "Bucket not resolved"; exit 3; fi
+          # Upload site (exclude infra, server, node_modules, etc.)
+          aws s3 sync . "s3://$BUCKET" \
+            --delete \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "infra/*" \
+            --exclude "mobile/*" \
+            --exclude "node_modules/*" \
+            --exclude "server/*" \
+            --exclude "serverless/*"
+
+      - name: Compute AllowedOrigins for backend
+        id: origins
+        run: |
+          CF_DOMAIN='${{ steps.front.outputs.cf_domain }}'
+          AO="https://${DOMAIN_NAME}"
+          if [ "${INCLUDE_WWW}" = "true" ]; then AO="$AO,https://www.${DOMAIN_NAME}"; fi
+          if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then AO="$AO,https://$CF_DOMAIN"; fi
+          echo "allowed=$AO" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure helper scripts are executable
+        run: |
+          chmod +x infra/scripts/deploy-backend.sh || true
+          chmod +x infra/scripts/link-frontend.sh || true
+
+      - name: Deploy backend stack (EC2 + Caddy TLS)
+        run: |
+          # Use repository URL (must be public for EC2 to clone)
+          REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          ./infra/scripts/deploy-backend.sh \
+            "${BACKEND_STACK_NAME}" \
+            "${DOMAIN_NAME}" \
+            "${HOSTED_ZONE_ID}" \
+            "${VPC_ID}" \
+            "${SUBNET_ID}" \
+            "${{ steps.origins.outputs.allowed }}" \
+            "${API_SUBDOMAIN}" \
+            "$REPO_URL" \
+            "${BACKEND_REGION}"
+
+      - name: Link frontend to backend endpoint (write config.js)
+        run: |
+          ./infra/scripts/link-frontend.sh "${FRONTEND_STACK_NAME}" "${BACKEND_STACK_NAME}" "${FRONTEND_REGION}"
+
+      - name: Output Summary
+        run: |
+          echo "Frontend Bucket: ${{ steps.front.outputs.bucket }}" >> $GITHUB_STEP_SUMMARY
+          echo "CloudFront ID: ${{ steps.front.outputs.dist_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "CloudFront Domain: ${{ steps.front.outputs.cf_domain }}" >> $GITHUB_STEP_SUMMARY
+          echo "Allowed Origins: ${{ steps.origins.outputs.allowed }}" >> $GITHUB_STEP_SUMMARY
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          echo "Backend Endpoint: ${BE_URL}" >> $GITHUB_STEP_SUMMARY

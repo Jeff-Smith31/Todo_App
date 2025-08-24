@@ -103,3 +103,36 @@ Development tips
 
 License
 This project is licensed under the MIT License. See LICENSE for details.
+
+
+
+CI/CD via GitHub Actions (auto-deploy on push)
+- This repo includes .github/workflows/deploy.yml that deploys both stacks automatically on push to main and on manual workflow_dispatch.
+- What it does:
+  - Deploys frontend stack (S3 + CloudFront + ACM + Route53) in us-east-1.
+  - Uploads site assets to S3 (infra, server, node_modules, serverless, .github excluded).
+  - Computes AllowedOrigins (apex, optional www, CloudFront domain) and deploys backend stack (EC2 + Caddy TLS) in your BACKEND_REGION.
+  - Auto-wires the frontend by writing config.js in the site bucket with the backend endpoint.
+
+Required GitHub settings
+- Secrets:
+  - AWS_ROLE_TO_ASSUME: IAM Role ARN with permissions for CloudFormation, Route53, ACM, EC2, S3, CloudFront (OIDC trusted for your repo).
+- Variables (Repository → Settings → Variables):
+  - DOMAIN_NAME: your apex domain (example.com)
+  - HOSTED_ZONE_ID: Route53 hosted zone ID for the domain
+  - VPC_ID: ID of a VPC with internet access
+  - SUBNET_ID: Public subnet ID (auto-assign public IP)
+  - INCLUDE_WWW: 'true' or 'false' (default 'true')
+  - FRONTEND_REGION: default us-east-1 (required for CloudFront ACM)
+  - BACKEND_REGION: region for EC2 (defaults to us-east-1 if not set)
+  - FRONTEND_STACK_NAME: optional, default ttt-frontend
+  - BACKEND_STACK_NAME: optional, default ttt-backend
+  - API_SUBDOMAIN: optional, default api (backend will be api.<DOMAIN_NAME>)
+
+Notes and requirements
+- The EC2 instance clones this repository to /opt/ticktock during UserData. The repository must be public or otherwise accessible from the instance. If your repo is private, either:
+  - Make a public mirror, then set REPO_URL in infra/scripts/deploy-backend.sh when calling it; or
+  - Modify the backend template/UserData to pull a pre-built image or artifact from S3/ECR.
+- CloudFront certificate must be in us-east-1; the workflow sets FRONTEND_REGION to us-east-1 by default.
+- Ensure the selected subnet is public and the security group created by the template allows ports 80/443 (it does by default).
+- After the first full run, the Summary in the workflow will display the S3 bucket, CloudFront ID/domain, AllowedOrigins, and the Backend Endpoint.
