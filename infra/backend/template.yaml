@@ -137,7 +137,7 @@ Resources:
           export CORS_ORIGIN="${AllowedOrigins}"
           ./backend-up.sh "$FRONT_ORIGIN" || true
           if [ -f .env ]; then
-            sed -i "s#^CORS_ORIGIN=.*#CORS_ORIGIN=${AllowedOrigins//#/\#}#" .env || true
+            sed -i "s|^CORS_ORIGIN=.*|CORS_ORIGIN=${AllowedOrigins}|" .env || true
             if grep -q '^REDIRECT_HTTP_TO_HTTPS=' .env; then
               sed -i 's#^REDIRECT_HTTP_TO_HTTPS=.*#REDIRECT_HTTP_TO_HTTPS=false#' .env || true
             else
