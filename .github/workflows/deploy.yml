@@ -326,6 +326,7 @@ jobs:
         run: |
           chmod +x infra/scripts/deploy-backend.sh || true
           chmod +x infra/scripts/link-frontend.sh || true
+          chmod +x scripts/cors-test.sh || true
 
       - name: Detect existing API DNS record
         run: |
@@ -361,7 +362,23 @@ jobs:
 
       - name: Link frontend to backend endpoint (write config.js)
         run: |
-          ./infra/scripts/link-frontend.sh "${FRONTEND_STACK_NAME}" "${BACKEND_STACK_NAME}" "${FRONTEND_REGION}"
+          ./infra/scripts/link-frontend.sh "${FRONTEND_STACK_NAME}" "${BACKEND_STACK_NAME}" "${FRONTEND_REGION}" "${BACKEND_REGION}"
+
+      - name: Smoke test backend CORS/health
+        run: |
+          set +e
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          echo "Testing backend: ${BE_URL} from origin https://${DOMAIN_NAME}" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$BE_URL" ] && [ "$BE_URL" != "None" ]; then
+            scripts/cors-test.sh "$BE_URL" "https://${DOMAIN_NAME}" | sed -n '1,60p' >> $GITHUB_STEP_SUMMARY || true
+          else
+            echo "Warning: Backend endpoint could not be resolved for smoke test." >> $GITHUB_STEP_SUMMARY
+          fi
+          set -e
 
       - name: Output Summary
         run: |
