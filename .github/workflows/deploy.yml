@@ -404,15 +404,26 @@ jobs:
             exit 0
           fi
           echo "Sending SSM command to $IID to ensure proxy is running..." >> $GITHUB_STEP_SUMMARY
+          PARAMS_FILE=$(mktemp)
+          cat > "$PARAMS_FILE" <<JSON
+          {
+            "commands": [
+              "cd /opt/ticktock",
+              "if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d || true; else docker compose up -d || true; fi",
+              "echo --- docker ps ---",
+              "docker ps",
+              "echo --- sockets ---",
+              "ss -ltnp | egrep \":(80|443|8080|8443)\" || true",
+              "echo --- caddy logs (last 120) ---",
+              "docker logs --tail=120 ticktock-caddy || true"
+            ]
+          }
+          JSON
           CMD_ID=$(aws ssm send-command \
             --region "${BACKEND_REGION}" \
             --instance-ids "$IID" \
             --document-name "AWS-RunShellScript" \
-            --parameters commands="cd /opt/ticktock; \
-            if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d || true; else docker compose up -d || true; fi; \
-            echo '--- docker ps ---'; docker ps; \
-            echo '--- sockets ---'; ss -ltnp | egrep ':(80|443|8080|8443)' || true; \
-            echo '--- caddy logs (last 120) ---'; docker logs --tail=120 ticktock-caddy || true" \
+            --parameters file://$PARAMS_FILE \
             --query "Command.CommandId" --output text)
           # give it a moment
           sleep 10
