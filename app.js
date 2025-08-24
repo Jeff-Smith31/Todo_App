@@ -56,7 +56,10 @@
     search: $('#search'),
     permissionBtn: $('#btn-permission'),
     installBtn: $('#btn-install'),
-    template: $('#task-item-template')
+    template: $('#task-item-template'),
+    backendUrlInput: $('#backend-url-input'),
+    backendUrlSave: $('#backend-url-save'),
+    backendStatus: $('#backend-status')
   };
 
   let tasks = loadTasks();
@@ -156,6 +159,10 @@
     }
 
     // Backend mode: check session and sync; otherwise local-only
+    // Also show connectivity diagnostics and allow overriding the backend URL from the login page.
+    setupBackendUrlUi();
+    await updateBackendConnectivityStatus();
+
     if (BACKEND_URL) {
       try {
         const me = await API.me();
@@ -167,7 +174,10 @@
             try { await ensurePushSubscribed(); } catch {}
           }
         }
-      } catch {}
+      } catch (e) {
+        // Leave in login page, but surface connectivity error if any
+        await updateBackendConnectivityStatus(e);
+      }
     }
 
     // Handle missed tasks on load
@@ -787,5 +797,63 @@
       if (btn) { e.preventDefault(); btn.click(); }
     }
   });
+
+  // Connectivity diagnostics and backend URL override UI
+  function setupBackendUrlUi(){
+    const { backendUrlInput, backendUrlSave, backendStatus } = elements;
+    if (backendUrlInput) {
+      backendUrlInput.value = BACKEND_URL || '';
+    }
+    if (backendUrlSave) {
+      backendUrlSave.addEventListener('click', () => {
+        const v = (elements.backendUrlInput?.value || '').trim();
+        try {
+          if (v) {
+            // rudimentary validation
+            const u = new URL(v);
+            if (!/^https:/.test(u.protocol)) {
+              alert('Please use an https:// URL');
+              return;
+            }
+            localStorage.setItem('tt_backend_url', v);
+          } else {
+            localStorage.removeItem('tt_backend_url');
+          }
+        } catch {
+          alert('Invalid URL');
+          return;
+        }
+        location.reload();
+      });
+    }
+    if (backendStatus) {
+      backendStatus.textContent = BACKEND_URL ? `Backend: ${BACKEND_URL}` : 'Local-only mode (no backend set)';
+    }
+  }
+
+  async function updateBackendConnectivityStatus(err){
+    const el = elements.backendStatus;
+    if (!el) return;
+    if (!BACKEND_URL) { el.textContent = 'Local-only mode (no backend set)'; return; }
+    el.textContent = `Checking connectivity to ${BACKEND_URL}…`;
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 6000);
+    try {
+      const res = await fetch(BACKEND_URL.replace(/\/$/, '') + '/api/ping', { credentials: 'include', signal: ctrl.signal });
+      clearTimeout(to);
+      if (res.ok) {
+        const j = await res.json().catch(()=>null);
+        el.textContent = `Backend reachable: ${(j && j.service) ? j.service : 'ok'}`;
+        el.style.color = '#0a0';
+      } else {
+        el.textContent = `Backend responded with HTTP ${res.status}`;
+        el.style.color = '#b00';
+      }
+    } catch (e) {
+      clearTimeout(to);
+      el.textContent = `Cannot reach backend at ${BACKEND_URL}. ${(err?.message || e?.message || '').toString()}`;
+      el.style.color = '#b00';
+    }
+  }
 
 })();
