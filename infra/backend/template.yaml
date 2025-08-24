@@ -172,7 +172,7 @@ Resources:
           cd /opt/ticktock
           chmod +x ./backend-up.sh || true
 
-          # Configure Docker logging to CloudWatch (awslogs) via override before first start
+          # Configure Docker logging and containerized Caddy reverse proxy via override before first start
           cat > /opt/ticktock/docker-compose.override.yml <<OVR
           version: '3.8'
           services:
@@ -183,6 +183,17 @@ Resources:
                   awslogs-region: ${AWS::Region}
                   awslogs-group: /TickTock/Backend-${DomainName}
                   awslogs-create-group: "true"
+            caddy:
+              image: caddy:2
+              container_name: ticktock-caddy
+              restart: unless-stopped
+              ports:
+                - "80:80"
+                - "443:443"
+              volumes:
+                - /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile
+              depends_on:
+                - backend
           OVR
 
           # Prepare env and start backend (write .env with first origin), then widen to all AllowedOrigins
@@ -205,21 +216,25 @@ Resources:
             docker compose up -d || true
           fi
 
-          # Configure Caddy with domain and reverse proxy to backend HTTP (Caddy terminates TLS)
-          cat >/etc/caddy/Caddyfile <<CFG
+          # Configure Caddyfile for containerized Caddy reverse proxy
+          cat >/opt/ticktock/Caddyfile <<CFG
           ${ApiSubdomain}.${DomainName} {
             encode gzip
-            reverse_proxy localhost:8080
+            reverse_proxy backend:8080
           }
           CFG
-          systemctl restart caddy || true
-
-          # Wait briefly for Caddy to come up and listen on 80/443
+          # Ensure systemd Caddy is stopped (free ports 80/443)
+          systemctl stop caddy || true
+          # Restart containers to pick up caddy service/config
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose up -d || true
+          else
+            docker compose up -d || true
+          fi
+          # Wait for Caddy to listen on 80/443
           for i in $(seq 1 60); do
-            if systemctl is-active --quiet caddy; then
-              if ss -ltn 2>/dev/null | grep -E 'LISTEN.+:(80|443)'; then
-                break
-              fi
+            if ss -ltn 2>/dev/null | grep -E 'LISTEN.+:(80|443)'; then
+              break
             fi
             sleep 2
           done
