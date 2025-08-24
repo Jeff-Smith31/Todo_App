@@ -152,13 +152,13 @@ Resources:
             ELVER=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | tr -d '"' | cut -d. -f1)
             [ -z "$ELVER" ] && ELVER=9
             (dnf install -y dnf-plugins-core || true)
-            (dnf config-manager --add-repo "https://dl.cloudsmith.io/public/caddy/stable/rpm/el/${ELVER}.repo" || true)
+            (dnf config-manager --add-repo "https://dl.cloudsmith.io/public/caddy/stable/rpm/el/$${ELVER}.repo" || true)
             (dnf install -y caddy || true)
           else
             ELVER=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | tr -d '"' | cut -d. -f1)
             [ -z "$ELVER" ] && ELVER=7
             (yum install -y yum-utils || true)
-            (yum-config-manager --add-repo "https://dl.cloudsmith.io/public/caddy/stable/rpm/el/${ELVER}.repo" || true)
+            (yum-config-manager --add-repo "https://dl.cloudsmith.io/public/caddy/stable/rpm/el/$${ELVER}.repo" || true)
             (yum install -y caddy || true)
           fi
           systemctl enable --now docker
