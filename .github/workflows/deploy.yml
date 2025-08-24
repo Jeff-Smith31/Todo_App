@@ -363,6 +363,45 @@ jobs:
             "$REPO_URL" \
             "${BACKEND_REGION}"
 
+      - name: Ensure/repair API DNS record (UPSERT A -> EC2 PublicIp)
+        run: |
+          set -e
+          BE_STACK="${BACKEND_STACK_NAME}"
+          BE_REGION="${BACKEND_REGION}"
+          API_FQDN=$(aws cloudformation describe-stacks \
+            --region "$BE_REGION" \
+            --stack-name "$BE_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiDomainName'].OutputValue | [0]" \
+            --output text)
+          PUBLIC_IP=$(aws cloudformation describe-stacks \
+            --region "$BE_REGION" \
+            --stack-name "$BE_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='PublicIp'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$API_FQDN" ] || [ "$API_FQDN" = "None" ] || [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
+            echo "Skipping explicit DNS upsert (missing outputs)." >> $GITHUB_STEP_SUMMARY
+          else
+            CHANGE_FILE=$(mktemp)
+            cat > "$CHANGE_FILE" <<JSON
+          { "Comment": "UPSERT api record for TickTock backend", "Changes": [ { "Action": "UPSERT", "ResourceRecordSet": { "Name": "${API_FQDN}.", "Type": "A", "TTL": 60, "ResourceRecords": [ { "Value": "${PUBLIC_IP}" } ] } } ] }
+          JSON
+            CHG=$(aws route53 change-resource-record-sets --hosted-zone-id "${HOSTED_ZONE_ID}" --change-batch "file://$CHANGE_FILE")
+            CID=$(echo "$CHG" | jq -r '.ChangeInfo.Id')
+            echo "Route53 change submitted: $CID (api -> $PUBLIC_IP)" >> $GITHUB_STEP_SUMMARY
+            aws route53 wait resource-record-sets-changed --id "$CID" || true
+          fi
+
+      - name: Verify DNS resolution and HTTPS health for API
+        run: |
+          set -e
+          API_FQDN="${API_SUBDOMAIN}.${DOMAIN_NAME}"
+          if ! command -v dig >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y dnsutils; fi
+          echo "DNS check for ${API_FQDN}" >> $GITHUB_STEP_SUMMARY
+          RES=$(dig +short "${API_FQDN}")
+          echo "dig +short ${API_FQDN} -> ${RES}" >> $GITHUB_STEP_SUMMARY
+          HC=$(curl -sk -o /dev/null -w "%{http_code}" "https://${API_FQDN}/healthz" || true)
+          echo "HTTPS /healthz status: ${HC}" >> $GITHUB_STEP_SUMMARY
+
       - name: Link frontend to backend endpoint (write config.js)
         run: |
           BACKEND_OVERRIDE_URL="${BACKEND_OVERRIDE_URL}" USE_RELATIVE_API="${USE_RELATIVE_API}" \

@@ -218,6 +218,9 @@ Outputs:
   InstanceId:
     Description: EC2 instance ID
     Value: !Ref BackendEc2
+  PublicIp:
+    Description: EC2 public IP
+    Value: !GetAtt BackendEc2.PublicIp
   ApiDomainName:
     Description: Backend API domain name
     Value: !Sub '${ApiSubdomain}.${DomainName}'
