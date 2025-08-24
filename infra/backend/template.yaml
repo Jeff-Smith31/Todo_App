@@ -40,6 +40,10 @@ Parameters:
     AllowedValues: ['true','false']
     Default: 'true'
     Description: "Whether to create the api.<DomainName> Route53 A record. Set 'false' to reuse existing DNS."
+  LatestAmi:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    Description: "Latest Amazon Linux 2023 AMI via SSM parameter"
 
 Mappings:
   RegionMap:
@@ -70,6 +74,14 @@ Resources:
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8443
+          ToPort: 8443
           CidrIp: 0.0.0.0/0
       SecurityGroupEgress:
         - IpProtocol: -1
@@ -121,7 +133,7 @@ Resources:
   BackendEc2:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: !FindInMap [RegionMap, !Ref AWS::Region, Ami]
+      ImageId: !Ref LatestAmi
       InstanceType: !Ref InstanceType
       IamInstanceProfile: !Ref BackendInstanceProfile
       KeyName: !If [HasKey, !Ref KeyName, !Ref AWS::NoValue]
