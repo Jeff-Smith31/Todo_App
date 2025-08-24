@@ -19,6 +19,8 @@ env:
   VPC_ID: ${{ vars.VPC_ID }}
   SUBNET_ID: ${{ vars.SUBNET_ID }}
   API_SUBDOMAIN: ${{ vars.API_SUBDOMAIN || 'api' }}
+  BACKEND_OVERRIDE_URL: ${{ vars.BACKEND_OVERRIDE_URL || '' }}
+  USE_RELATIVE_API: ${{ vars.USE_RELATIVE_API || '' }}
 
 jobs:
   deploy:
@@ -363,6 +365,7 @@ jobs:
 
       - name: Link frontend to backend endpoint (write config.js)
         run: |
+          BACKEND_OVERRIDE_URL="${BACKEND_OVERRIDE_URL}" USE_RELATIVE_API="${USE_RELATIVE_API}" \
           ./infra/scripts/link-frontend.sh "${FRONTEND_STACK_NAME}" "${BACKEND_STACK_NAME}" "${FRONTEND_REGION}" "${BACKEND_REGION}"
 
       - name: Smoke test backend CORS/health
@@ -394,6 +397,40 @@ jobs:
             scripts/api-smoke.sh "$BE_URL" | sed -n '1,200p' >> $GITHUB_STEP_SUMMARY || true
           else
             echo "Skipping API smoke test: no backend endpoint resolved." >> $GITHUB_STEP_SUMMARY
+          fi
+          set -e
+
+      - name: Publish smoke test outputs to CloudWatch Logs
+        run: |
+          set +e
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          LOG_GROUP="/TickTock/Backend-${DOMAIN_NAME}"
+          LOG_STREAM="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TMP_DIR=$(mktemp -d)
+          CORS_OUT="$TMP_DIR/cors.txt"
+          API_OUT="$TMP_DIR/api.txt"
+          if [ -n "$BE_URL" ] && [ "$BE_URL" != "None" ]; then
+            scripts/cors-test.sh "$BE_URL" "https://${DOMAIN_NAME}" > "$CORS_OUT" 2>&1 || true
+            scripts/api-smoke.sh "$BE_URL" > "$API_OUT" 2>&1 || true
+          else
+            echo "No backend endpoint resolved for smoke logs." > "$CORS_OUT"
+            : > "$API_OUT"
+          fi
+          # Ensure log group/stream exist in backend region
+          aws logs create-log-group --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" >/dev/null 2>&1 || true
+          aws logs create-log-stream --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM" >/dev/null 2>&1 || true
+          SEQ=$(aws logs describe-log-streams --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" --log-stream-name-prefix "$LOG_STREAM" --query "logStreams[0].uploadSequenceToken" --output text 2>/dev/null)
+          TS=$(date +%s%3N)
+          MSG1="CI CORS/health smoke for ${BE_URL} from https://${DOMAIN_NAME}\\n$(sed -n '1,200p' "$CORS_OUT")"
+          MSG2="CI API smoke for ${BE_URL}\\n$(sed -n '1,200p' "$API_OUT")"
+          if [ -n "$SEQ" ] && [ "$SEQ" != "None" ]; then
+            aws logs put-log-events --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM" --sequence-token "$SEQ" --log-events timestamp=$TS,message="$MSG1" timestamp=$((TS+1)),message="$MSG2" >/dev/null 2>&1 || true
+          else
+            aws logs put-log-events --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM" --log-events timestamp=$TS,message="$MSG1" timestamp=$((TS+1)),message="$MSG2" >/dev/null 2>&1 || true
           fi
           set -e
 

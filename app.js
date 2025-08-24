@@ -16,7 +16,10 @@
       return '';
     } catch { return ''; }
   })();
-  const BACKEND_URL = (window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.BACKEND_URL) || window.BACKEND_URL || localStorage.getItem('tt_backend_url') || AUTO_BACKEND_URL || '';
+  const runtimeCfg = window.RUNTIME_CONFIG || {};
+  const hasRuntimeBE = Object.prototype.hasOwnProperty.call(runtimeCfg, 'BACKEND_URL');
+  const runtimeBE = hasRuntimeBE ? runtimeCfg.BACKEND_URL : undefined; // allow empty string intentionally
+  const BACKEND_URL = (runtimeBE ?? window.BACKEND_URL ?? localStorage.getItem('tt_backend_url') ?? AUTO_BACKEND_URL ?? '');
   const API = createApiClient(BACKEND_URL);
 
   /** Data Types
