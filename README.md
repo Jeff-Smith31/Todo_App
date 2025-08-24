@@ -141,3 +141,25 @@ Notes and requirements
 - CloudFront certificate must be in us-east-1; the workflow sets FRONTEND_REGION to us-east-1 by default.
 - Ensure the selected subnet is public and the security group created by the template allows ports 80/443 (it does by default).
 - After the first full run, the Summary in the workflow will display the S3 bucket, CloudFront ID/domain, AllowedOrigins, and the Backend Endpoint.
+
+
+
+Mobile/native clients (Bearer auth)
+- The backend now supports both cookie auth (for web) and Authorization: Bearer tokens (for native clients).
+- Token lifetime is 7 days; on 401, prompt the user to log in again and replace the stored token.
+
+Login to obtain a token (example):
+- curl -sS -X POST "https://api.your-domain.com/api/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"your-password"}'
+
+Response:
+- { "ok": true, "token": "<JWT>", "user": { "id": 1, "email": "you@example.com" } }
+
+Use token for subsequent API calls:
+- curl -sS "https://api.your-domain.com/api/tasks" \
+  -H "Authorization: Bearer <JWT>"
+
+Notes:
+- CORS: Native apps and curl typically send no Origin header; the backend permits such requests. If your client does send Origin, ensure it matches one of the AllowedOrigins configured during deployment.
+- Web app continues to use secure HttpOnly cookies with credentials: 'include'. Mobile should prefer Bearer tokens as shown above.

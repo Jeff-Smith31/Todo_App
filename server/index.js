@@ -133,7 +133,13 @@ function clearAuthCookie(res) {
 }
 
 function authMiddleware(req, res, next) {
-  const token = req.cookies.tt_auth;
+  let token = req.cookies.tt_auth;
+  if (!token) {
+    const hdr = req.headers['authorization'] || req.headers['Authorization'];
+    if (hdr && /^Bearer\s+/i.test(hdr)) {
+      token = hdr.replace(/^Bearer\s+/i, '').trim();
+    }
+  }
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
@@ -181,7 +187,7 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
   const user = { id: info.lastInsertRowid, email: value.email.toLowerCase() };
   const token = issueToken(user);
   setAuthCookie(res, token);
-  res.json({ ok: true, user: { id: user.id, email: user.email } });
+  res.json({ ok: true, token, user: { id: user.id, email: user.email } });
 });
 
 app.post('/api/auth/login', authLimiter, (req, res) => {
@@ -194,7 +200,7 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
   if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
   const token = issueToken({ id: row.id, email: row.email });
   setAuthCookie(res, token);
-  res.json({ ok: true, user: { id: row.id, email: row.email } });
+  res.json({ ok: true, token, user: { id: row.id, email: row.email } });
 });
 
 app.post('/api/auth/logout', (req, res) => {
