@@ -113,6 +113,11 @@ CI/CD via GitHub Actions (auto-deploy on push)
   - Uploads site assets to S3 (infra, server, node_modules, serverless, .github excluded).
   - Computes AllowedOrigins (apex, optional www, CloudFront domain) and deploys backend stack (EC2 + Caddy TLS) in your BACKEND_REGION.
   - Auto-wires the frontend by writing config.js in the site bucket with the backend endpoint.
+- Resource reuse:
+  - Reuses an existing S3 bucket named <DomainName>-site if present (avoids bucket name conflicts).
+  - Reuses an existing ACM certificate for the apex or wildcard in us-east-1; otherwise requests a new one.
+  - Skips creating Route53 apex/www records if they already exist in the hosted zone.
+  - Skips creating the api.<DomainName> Route53 A record if it already exists (backend still deploys and serves TLS).
 
 Required GitHub settings
 - Secrets:

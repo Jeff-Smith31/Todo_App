@@ -18,9 +18,28 @@ Parameters:
     Type: String
     Default: ""
     Description: DNS name of the backend ALB (e.g., my-alb-123.us-east-1.elb.amazonaws.com). If empty, /api/* origin is omitted.
+  ExistingBucketName:
+    Type: String
+    Default: ""
+    Description: If set, reuse this existing S3 bucket for the site instead of creating a new one. Must be in the same account/region.
+  ExistingCertificateArn:
+    Type: String
+    Default: ""
+    Description: If set, reuse this ACM certificate ARN for CloudFront instead of creating a new one (must be in us-east-1).
+  CreateDnsRecords:
+    Type: String
+    AllowedValues: ['true','false']
+    Default: 'true'
+    Description: Whether to create Route53 A/AAAA records for apex and www.
 
 Conditions:
   UseWww: !Equals [ !Ref IncludeWww, 'true' ]
+  HasExistingBucket: !Not [ !Equals [ !Ref ExistingBucketName, '' ] ]
+  NoExistingBucket: !Equals [ !Ref ExistingBucketName, '' ]
+  HasExistingCert: !Not [ !Equals [ !Ref ExistingCertificateArn, '' ] ]
+  NoExistingCert: !Equals [ !Ref ExistingCertificateArn, '' ]
+  DoDns: !Equals [ !Ref CreateDnsRecords, 'true' ]
+  DoWwwDns: !And [ !Condition UseWww, !Condition DoDns ]
 
 Mappings:
   CloudFront:
@@ -30,6 +49,7 @@ Mappings:
 Resources:
   # Create a certificate in us-east-1 for CloudFront (template must be deployed in us-east-1)
   SiteCertificate:
+    Condition: NoExistingCert
     Type: 'AWS::CertificateManager::Certificate'
     Properties:
       DomainName: !Ref DomainName
@@ -47,6 +67,7 @@ Resources:
           Value: TickTockTasks
 
   SiteBucket:
+    Condition: NoExistingBucket
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub '${DomainName}-site'
@@ -86,7 +107,7 @@ Resources:
           - [!Ref DomainName, !Sub 'www.${DomainName}']
           - [!Ref DomainName]
         ViewerCertificate:
-          AcmCertificateArn: !Ref SiteCertificate
+          AcmCertificateArn: !If [HasExistingCert, !Ref ExistingCertificateArn, !Ref SiteCertificate]
           SslSupportMethod: sni-only
           MinimumProtocolVersion: TLSv1.2_2021
         DefaultCacheBehavior:
@@ -98,7 +119,7 @@ Resources:
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
         Origins:
           - Id: site-s3-origin
-            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            DomainName: !If [HasExistingBucket, !Sub '${ExistingBucketName}.s3.${AWS::Region}.amazonaws.com', !GetAtt SiteBucket.RegionalDomainName]
             S3OriginConfig: {}
             OriginAccessControlId: !Ref OriginAccessControl
         PriceClass: PriceClass_100
@@ -119,7 +140,7 @@ Resources:
   BucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !Ref SiteBucket
+      Bucket: !If [HasExistingBucket, !Ref ExistingBucketName, !Ref SiteBucket]
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -128,12 +149,13 @@ Resources:
             Principal:
               Service: cloudfront.amazonaws.com
             Action: 's3:GetObject'
-            Resource: !Sub '${SiteBucket.Arn}/*'
+            Resource: !If [HasExistingBucket, !Sub 'arn:aws:s3:::${ExistingBucketName}/*', !Sub '${SiteBucket.Arn}/*']
             Condition:
               StringEquals:
                 AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
 
   ApexRecordA:
+    Condition: DoDns
     Type: AWS::Route53::RecordSet
     Properties:
       HostedZoneId: !Ref HostedZoneId
@@ -144,6 +166,7 @@ Resources:
         HostedZoneId: !FindInMap [CloudFront, Global, HostedZoneId]
 
   ApexRecordAAAA:
+    Condition: DoDns
     Type: AWS::Route53::RecordSet
     Properties:
       HostedZoneId: !Ref HostedZoneId
@@ -155,7 +178,7 @@ Resources:
 
   WwwRecordA:
     Type: AWS::Route53::RecordSet
-    Condition: UseWww
+    Condition: DoWwwDns
     Properties:
       HostedZoneId: !Ref HostedZoneId
       Name: !Sub 'www.${DomainName}'
@@ -166,7 +189,7 @@ Resources:
 
   WwwRecordAAAA:
     Type: AWS::Route53::RecordSet
-    Condition: UseWww
+    Condition: DoWwwDns
     Properties:
       HostedZoneId: !Ref HostedZoneId
       Name: !Sub 'www.${DomainName}'
@@ -178,7 +201,7 @@ Resources:
 Outputs:
   BucketName:
     Description: S3 bucket for site content
-    Value: !Ref SiteBucket
+    Value: !If [HasExistingBucket, !Ref ExistingBucketName, !Ref SiteBucket]
   DistributionId:
     Description: CloudFront Distribution ID
     Value: !Ref Distribution

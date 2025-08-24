@@ -37,6 +37,8 @@ fi
 
 echo "Deploying backend stack: $STACK_NAME in $REGION"
 set -x
+# Allow caller to control DNS creation (default true)
+CREATE_API_DNS_RECORD_VAL="${CREATE_API_DNS_RECORD:-true}"
 aws cloudformation deploy \
   --region "$REGION" \
   --stack-name "$STACK_NAME" \
@@ -49,7 +51,8 @@ aws cloudformation deploy \
     SubnetId="$SUBNET_ID" \
     AllowedOrigins="$ALLOWED_ORIGINS" \
     ApiSubdomain="$API_SUBDOMAIN" \
-    RepoUrl="$REPO_URL"
+    RepoUrl="$REPO_URL" \
+    CreateApiDnsRecord="$CREATE_API_DNS_RECORD_VAL"
 set +x
 
 echo "Fetching outputs..."

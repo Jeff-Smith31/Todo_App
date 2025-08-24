@@ -35,6 +35,11 @@ Parameters:
     Type: String
     Default: https://ticktocktasks.com,https://www.ticktocktasks.com
     Description: "Comma-separated list of allowed frontend origins for CORS (e.g., your CloudFront domain and custom domain)"
+  CreateApiDnsRecord:
+    Type: String
+    AllowedValues: ['true','false']
+    Default: 'true'
+    Description: "Whether to create the api.<DomainName> Route53 A record. Set 'false' to reuse existing DNS."
 
 Mappings:
   RegionMap:
@@ -49,6 +54,7 @@ Mappings:
 
 Conditions:
   HasKey: !Not [ !Equals [ !Ref KeyName, '' ] ]
+  CreateApiDns: !Equals [ !Ref CreateApiDnsRecord, 'true' ]
 
 Resources:
   BackendSecurityGroup:
@@ -162,6 +168,7 @@ Resources:
           systemctl restart caddy || true
 
   ApiRecord:
+    Condition: CreateApiDns
     Type: AWS::Route53::RecordSet
     DependsOn: BackendEc2
     Properties:
