@@ -98,7 +98,7 @@ Troubleshooting
 - Switching backends later: re-run link-frontend.sh to overwrite config.js with a new endpoint.
 
 Development tips
-- The app reads the backend URL in this order: window.RUNTIME_CONFIG.BACKEND_URL → window.BACKEND_URL → localStorage.tt_backend_url → '' (local‑only mode).
+- The app reads the backend URL in this order: window.RUNTIME_CONFIG.BACKEND_URL → window.BACKEND_URL → localStorage.tt_backend_url → derived https://api.<apex-domain> (when not on localhost) → '' (local‑only mode).
 - For quick local testing, set localStorage.tt_backend_url and reload. For production, prefer config.js via link-frontend.sh.
 
 License

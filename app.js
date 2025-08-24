@@ -4,7 +4,19 @@
 
   const STORAGE_KEY = 'ticktock_tasks_v1';
   const SETTINGS_KEY = 'ticktock_settings_v1';
-  const BACKEND_URL = (window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.BACKEND_URL) || window.BACKEND_URL || localStorage.getItem('tt_backend_url') || '';
+  const AUTO_BACKEND_URL = (() => {
+    try {
+      const h = window.location.hostname || '';
+      if (!h || h === 'localhost') return '';
+      const parts = h.split('.');
+      if (parts.length >= 2) {
+        const apex = parts.slice(-2).join('.');
+        return `https://api.${apex}`;
+      }
+      return '';
+    } catch { return ''; }
+  })();
+  const BACKEND_URL = (window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.BACKEND_URL) || window.BACKEND_URL || localStorage.getItem('tt_backend_url') || AUTO_BACKEND_URL || '';
   const API = createApiClient(BACKEND_URL);
 
   /** Data Types
