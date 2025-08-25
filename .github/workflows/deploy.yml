@@ -424,7 +424,7 @@ jobs:
               "cd /opt/ticktock",
               "echo --- git pull repo ---",
               "git pull --rebase || true",
-              "echo --- compose pull images (if plugin) ---",
+              "echo --- compose pull images if plugin ---",
               "if command -v docker compose >/dev/null 2>&1; then docker compose pull || true; fi",
               "echo --- compose up -d (ensure services incl. caddy) ---",
               "if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d || true; else docker compose up -d || true; fi",
