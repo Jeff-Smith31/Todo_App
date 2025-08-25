@@ -386,11 +386,9 @@ jobs:
             --stack-name "$BE_STACK" \
             --query "Stacks[0].Outputs[?OutputKey=='ApiDomainName'].OutputValue | [0]" \
             --output text)
-          PUBLIC_IP=$(aws cloudformation describe-stacks \
-            --region "$BE_REGION" \
-            --stack-name "$BE_STACK" \
-            --query "Stacks[0].Outputs[?OutputKey=='PublicIp'].OutputValue | [0]" \
-            --output text)
+          # Prefer live EC2 PublicIp to avoid any stale CFN output
+          IID=$(aws cloudformation describe-stacks --region "$BE_REGION" --stack-name "$BE_STACK" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue | [0]" --output text)
+          PUBLIC_IP=$(aws ec2 describe-instances --region "$BE_REGION" --instance-ids "$IID" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
           if [ -z "$API_FQDN" ] || [ "$API_FQDN" = "None" ] || [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
             echo "Skipping explicit DNS upsert (missing outputs)." >> $GITHUB_STEP_SUMMARY
           else
@@ -403,6 +401,23 @@ jobs:
             echo "Route53 change submitted: $CID (api -> $PUBLIC_IP)" >> $GITHUB_STEP_SUMMARY
             aws route53 wait resource-record-sets-changed --id "$CID" || true
           fi
+
+      - name: Wait for TCP 443 to open (up to 5 min)
+        run: |
+          set +e
+          API_FQDN="${API_SUBDOMAIN}.${DOMAIN_NAME}"
+          echo "Waiting for TCP 443 at ${API_FQDN} to accept connections ..." >> $GITHUB_STEP_SUMMARY
+          ATT=0; MAX=150; SLEEP=2; OK=0
+          while [ $ATT -lt $MAX ]; do
+            (echo > /dev/tcp/${API_FQDN}/443) >/dev/null 2>&1 && { OK=1; break; }
+            ATT=$((ATT+1)); sleep $SLEEP
+          done
+          if [ $OK -eq 1 ]; then
+            echo "TCP 443 is open after $((ATT*SLEEP))s." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Warning: TCP 443 did not open within $((MAX*SLEEP/60)) min; continuing." >> $GITHUB_STEP_SUMMARY
+          fi
+          set -e
 
       - name: SSM nudge - restart containers and check ports
         run: |
