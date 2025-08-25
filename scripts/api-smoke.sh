@@ -11,7 +11,7 @@ fi
 
 TMP_DIR="$(mktemp -d)"
 COOKIE_JAR="$TMP_DIR/cookies.txt"
-EMAIL="ci-$(date +%s)@example.test"
+EMAIL="ci-$(date +%s)@example.com"
 PASS="Passw0rd!123"
 
 print_h() { printf "\n== %s ==\n" "$1"; }
