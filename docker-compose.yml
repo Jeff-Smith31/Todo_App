@@ -22,5 +22,17 @@ services:
     ports:
       - "8080:8080"    # optional HTTP -> HTTPS redirect or API if disabled
       - "8443:8443"    # HTTPS
+
+  caddy:
+    image: caddy:2
+    container_name: ticktock-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+    depends_on:
+      - backend
 volumes:
   backend_data:
