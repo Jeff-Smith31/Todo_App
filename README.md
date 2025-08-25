@@ -96,6 +96,7 @@ Troubleshooting
 - HTTPS on backend: ensure api.your-domain.com resolves publicly; security group allows 80/443; Caddy will fetch/renew the cert automatically.
 - CORS: if you see CORS errors, confirm AllowedOrigins includes both your domain(s) and the CloudFront domain.
 - Switching backends later: re-run link-frontend.sh to overwrite config.js with a new endpoint.
+- If health checks fail: run scripts/check-backend.sh https://api.your-domain.com for quick diagnostics (includes DNS, raw-IP with Host header, and TLS peek), and scripts/diagnose-backend-ssm.sh to collect docker ps/ports/logs and Caddyfile from the EC2 host via SSM.
 
 Development tips
 - The app reads the backend URL in this order: window.RUNTIME_CONFIG.BACKEND_URL → window.BACKEND_URL → localStorage.tt_backend_url → derived https://api.<apex-domain> (when not on localhost) → '' (local‑only mode).
@@ -163,7 +164,6 @@ Use token for subsequent API calls:
 Notes:
 - CORS: Native apps and curl typically send no Origin header; the backend permits such requests. If your client does send Origin, ensure it matches one of the AllowedOrigins configured during deployment.
 - Web app continues to use secure HttpOnly cookies with credentials: 'include'. Mobile should prefer Bearer tokens as shown above.
-
 
 ## Quick health check (no auth)
 Use these commands to verify the backend is up without logging in:

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Quick backend health confirm. Tries /api/ping and /healthz.
+# Quick backend health confirm. Tries /api/ping and /healthz and prints diagnostics.
 # Usage:
 #   scripts/check-backend.sh [BACKEND_URL]
 # If BACKEND_URL is not provided, attempts to resolve from CloudFormation backend stack outputs.
@@ -33,6 +33,7 @@ fi
 
 # Normalize (no trailing slash)
 BE_URL="${BE_URL%/}"
+HOST=$(printf "%s" "$BE_URL" | sed -E 's#^https?://([^/]+).*#\1#')
 
 curl_status() {
   local path="$1"
@@ -70,6 +71,31 @@ if [ "$PING_HTTP" = "200" ]; then
 else
   echo "FAIL /api/ping (HTTP $PING_HTTP)"
   echo "Body (truncated): $(printf "%s" "$PING_BODY" | head -c 140)"
+fi
+
+# Extra diagnostics on failure: DNS, raw IP Host-header curl, and TLS check
+if [ "$pass_any" -ne 1 ]; then
+  echo
+  echo "--- Diagnostics ---"
+  if command -v dig >/dev/null 2>&1; then
+    echo "DNS (dig +short ${HOST})"
+    dig +short "$HOST" || true
+  else
+    echo "Install dnsutils to run dig for DNS diagnostics."
+  fi
+  if command -v getent >/dev/null 2>&1; then
+    echo "getent hosts ${HOST}:"
+    getent hosts "$HOST" || true
+  fi
+  IP=$(getent ahostsv4 "$HOST" 2>/dev/null | awk '{print $1; exit}' || true)
+  if [ -n "$IP" ]; then
+    echo "Trying direct IP with Host header: ${IP} (Host: ${HOST})"
+    curl -skI --max-time 8 "https://${IP}/healthz" -H "Host: ${HOST}" || true
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    echo "TLS ServerHello (openssl s_client -servername ${HOST})"
+    printf "\n" | openssl s_client -connect "${HOST}:443" -servername "$HOST" -brief -no_ign_eof 2>/dev/null | sed -n '1,40p' || true
+  fi
 fi
 
 if [ "$pass_any" -eq 1 ]; then
