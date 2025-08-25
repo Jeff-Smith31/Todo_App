@@ -462,6 +462,8 @@ jobs:
               "docker run -d --name ticktock-caddy --network \"$NET\" -p 80:80 -p 443:443 -v /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile --restart unless-stopped caddy:2 || true",
               "# also ensure caddy is attached to backend's network (idempotent)",
               "docker network connect \"$NET\" ticktock-caddy 2>/dev/null || true",
+              "echo --- ensure autoheal sidecar ---",
+              "if ! docker ps --format '{{.Names}}' | grep -q '^ticktock-autoheal$'; then docker run -d --name ticktock-autoheal -v /var/run/docker.sock:/var/run/docker.sock -e AUTOHEAL_CONTAINER_LABEL=all -e AUTOHEAL_INTERVAL=10 --restart unless-stopped willfarrell/autoheal || true; fi",
               "echo --- docker ps ---",
               "docker ps",
               "echo --- sockets ---",
