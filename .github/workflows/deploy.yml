@@ -433,7 +433,7 @@ jobs:
               "echo --- docker ps ---",
               "docker ps",
               "echo --- sockets ---",
-              "ss -ltnp | egrep ":(80|443|8080|8443)" || true",
+              "ss -ltnp | egrep \":(80|443|8080|8443)\" || true",
               "echo --- caddy logs (last 120) ---",
               "docker logs --tail=120 ticktock-caddy || true",
               "echo --- backend logs (last 120) ---",
