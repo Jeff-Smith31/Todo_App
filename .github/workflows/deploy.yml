@@ -433,7 +433,7 @@ jobs:
               "echo --- docker ps ---",
               "docker ps",
               "echo --- sockets ---",
-              "ss -ltnp | egrep \":(80|443|8080|8443)\" || true",
+              "ss -ltnp | egrep ":(80|443|8080|8443)" || true",
               "echo --- caddy logs (last 120) ---",
               "docker logs --tail=120 ticktock-caddy || true",
               "echo --- backend logs (last 120) ---",
@@ -449,10 +449,21 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --parameters file://$PARAMS_FILE \
             --query "Command.CommandId" --output text)
-          # give it a moment
-          sleep 10
+          # give it a bit more time to complete
+          sleep 20
           OUT=$(aws ssm get-command-invocation --region "${BACKEND_REGION}" --command-id "$CMD_ID" --instance-id "$IID" --query "StandardOutputContent" --output text || true)
+          ERR=$(aws ssm get-command-invocation --region "${BACKEND_REGION}" --command-id "$CMD_ID" --instance-id "$IID" --query "StandardErrorContent" --output text || true)
           echo "\nSSM output (docker/ports/logs):\n${OUT}" >> $GITHUB_STEP_SUMMARY || true
+          echo "\nSSM stderr (if any):\n${ERR}" >> $GITHUB_STEP_SUMMARY || true
+          # Also print to raw logs for easier debugging
+          echo "===== BEGIN SSM OUTPUT ====="
+          echo "$OUT"
+          echo "===== END SSM OUTPUT ====="
+          if [ -n "$ERR" ] && [ "$ERR" != "None" ]; then
+            echo "===== BEGIN SSM STDERR ====="
+            echo "$ERR"
+            echo "===== END SSM STDERR ====="
+          fi
 
       - name: Verify DNS resolution and HTTPS health for API
         run: |
