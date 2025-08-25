@@ -97,6 +97,7 @@ Troubleshooting
 - HTTPS on backend: ensure api.your-domain.com resolves publicly; security group allows 80/443; Caddy will fetch/renew the cert automatically.
 - CORS: if you see CORS errors, confirm AllowedOrigins includes both your domain(s) and the CloudFront domain.
 - Switching backends later: re-run link-frontend.sh to overwrite config.js with a new endpoint.
+- Backend resilience: the EC2 deployment includes container health checks and an auto-heal sidecar to restart unhealthy containers automatically. If you still observe instability, run scripts/diagnose-backend-ssm.sh --repair to re-provision the proxy and print diagnostics.
 - If health checks fail: run scripts/check-backend.sh https://api.your-domain.com for quick diagnostics (includes DNS, raw-IP with Host header, and TLS peek), and scripts/diagnose-backend-ssm.sh to collect docker ps/ports/logs and Caddyfile from the EC2 host via SSM.
 
 Development tips

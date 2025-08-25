@@ -207,12 +207,27 @@ Resources:
                 - /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile
               depends_on:
                 - backend
+              healthcheck:
+                test: ["CMD-SHELL", "wget -qO- --header='Host: ${ApiSubdomain}.${DomainName}' http://127.0.0.1/healthz >/dev/null || exit 1"]
+                interval: 30s
+                timeout: 5s
+                retries: 3
+                start_period: 30s
               logging:
                 driver: awslogs
                 options:
                   awslogs-region: ${AWS::Region}
                   awslogs-group: /TickTock/Backend-${DomainName}
                   awslogs-create-group: "true"
+            autoheal:
+              image: willfarrell/autoheal
+              container_name: ticktock-autoheal
+              restart: unless-stopped
+              environment:
+                - AUTOHEAL_CONTAINER_LABEL=all
+                - AUTOHEAL_INTERVAL=10
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
           OVR
 
           # Prepare env and start backend (write .env with first origin), then widen to all AllowedOrigins
