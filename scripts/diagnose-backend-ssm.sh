@@ -2,11 +2,17 @@
 set -euo pipefail
 # Diagnose backend EC2 host via SSM. Gathers docker status, ports, Caddyfile, logs, and local health.
 # Usage:
-#   scripts/diagnose-backend-ssm.sh [BACKEND_STACK_NAME] [REGION]
+#   scripts/diagnose-backend-ssm.sh [--repair] [BACKEND_STACK_NAME] [REGION]
 # Defaults:
 #   BACKEND_STACK_NAME: ${BACKEND_STACK_NAME:-ttt-backend}
 #   REGION: ${BACKEND_REGION or aws configure get region or us-east-1}
 # Requires: AWS CLI v2 with permissions for SSM and CloudFormation.
+
+REPAIR=false
+if [ "${1:-}" = "--repair" ]; then
+  REPAIR=true
+  shift
+fi
 
 STACK_NAME="${1:-${BACKEND_STACK_NAME:-ttt-backend}}"
 REGION="${2:-${BACKEND_REGION:-$(aws configure get region 2>/dev/null || echo us-east-1)}}"
@@ -40,7 +46,36 @@ echo "InstanceId: $IID"
 echo "ApiDomain: ${APIDOM:-<unknown>}"
 
 TMP=$(mktemp)
-cat > "$TMP" <<'JSON'
+if $REPAIR; then
+  cat > "$TMP" <<JSON
+{
+  "commands": [
+    "set -e",
+    "cd /opt/ticktock || cd /",
+    "echo '=== ensure Caddyfile and start caddy ==='",
+    "if [ -d /opt/ticktock/Caddyfile ]; then rm -rf /opt/ticktock/Caddyfile; fi",
+    "echo '${APIDOM} {' > /opt/ticktock/Caddyfile",
+    "echo '  encode gzip' >> /opt/ticktock/Caddyfile",
+    "echo '  reverse_proxy backend:8080' >> /opt/ticktock/Caddyfile",
+    "echo '}' >> /opt/ticktock/Caddyfile",
+    "NET=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' ticktock-backend || echo '')",
+    "if [ -z \"$NET\" ]; then NET=ticktock_default; fi",
+    "docker rm -f ticktock-caddy || true",
+    "docker run -d --name ticktock-caddy --network $NET -p 80:80 -p 443:443 -v /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile --restart unless-stopped caddy:2 || true",
+    "docker network connect $NET ticktock-caddy 2>/dev/null || true",
+    "echo '=== docker ps ==='",
+    "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true",
+    "echo '=== listening sockets (80/443/8080/8443) ==='",
+    "ss -ltnp | egrep ':(80|443|8080|8443)' || true",
+    "echo '=== local caddy vhost health http://127.0.0.1/healthz (Host header) ==='",
+    "curl -sk --max-time 8 -H 'Host: ${APIDOM}' http://127.0.0.1/healthz || true",
+    "echo '=== last 80 lines caddy logs ==='",
+    "docker logs --tail=80 ticktock-caddy 2>&1 || true"
+  ]
+}
+JSON
+else
+  cat > "$TMP" <<'JSON'
 {
   "commands": [
     "set -e",
@@ -72,6 +107,7 @@ cat > "$TMP" <<'JSON'
   ]
 }
 JSON
+fi
 
 blu "Sending SSM command ..."
 CMD_ID=$(aws ssm send-command \
