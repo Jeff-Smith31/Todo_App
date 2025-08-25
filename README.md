@@ -25,6 +25,7 @@ Run the backend locally (Docker)
   - bash backend-up.sh http://localhost:8000
   - First run may need: chmod +x backend-up.sh
 - The backend exposes HTTPS on 8443 (self‑signed dev cert) and optionally redirects 8080→8443.
+- Note: The Caddy proxy is not required for local dev and is now disabled by default. If you previously had a directory named Caddyfile in this folder, remove it: rm -rf Caddyfile. To run Caddy anyway, use: docker compose --profile proxy up -d caddy
 - Trust the cert once by visiting https://localhost:8443 in your browser.
 - Connect the frontend (choose one):
   - Easiest for dev: open your browser console on http://localhost:8000 and run:

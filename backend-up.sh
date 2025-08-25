@@ -49,8 +49,14 @@ else
   fi
 fi
 
-echo "Starting backend with Docker Compose..."
-docker compose up --build -d
+# Hint: if a directory named Caddyfile exists from prior runs, it can break caddy mounts.
+if [ -d Caddyfile ]; then
+  echo "[warn] A directory named ./Caddyfile exists. Local dev does not need caddy; ignoring it."
+  echo "[warn] You may remove it: rm -rf Caddyfile"
+fi
+
+echo "Starting backend with Docker Compose (backend only; caddy is optional via profile 'proxy')..."
+docker compose up --build -d backend
 
 echo "Backend is starting. HTTPS port: 8443 (HTTP 8080 redirects to HTTPS)"
 echo "If running on LAN, access it at: https://<YOUR-LAN-IP>:8443"
