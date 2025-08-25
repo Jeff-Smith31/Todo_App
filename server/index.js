@@ -119,17 +119,22 @@ function issueToken(user) {
 }
 
 function setAuthCookie(res, token) {
-  res.cookie('tt_auth', token, {
+  // When served over HTTPS in production (behind Caddy on api.<domain>),
+  // the web app runs on a different site (https://<domain>) → cross-site cookie.
+  // Modern browsers require SameSite=None; Secure for such cookies.
+  const cookieOpts = {
     httpOnly: true,
     secure: COOKIE_SECURE,
-    sameSite: 'lax',
+    sameSite: COOKIE_SECURE ? 'none' : 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: '/',
-  });
+  };
+  res.cookie('tt_auth', token, cookieOpts);
 }
 
 function clearAuthCookie(res) {
-  res.clearCookie('tt_auth', { path: '/' });
+  const opts = { path: '/', secure: COOKIE_SECURE, sameSite: COOKIE_SECURE ? 'none' : 'lax' };
+  res.clearCookie('tt_auth', opts);
 }
 
 function authMiddleware(req, res, next) {
