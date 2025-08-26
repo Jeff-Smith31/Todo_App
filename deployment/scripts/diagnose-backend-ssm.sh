@@ -99,8 +99,12 @@ else
     "curl -sS --max-time 6 http://localhost:8080/healthz || true",
     "echo '=== local caddy vhost health http://127.0.0.1/healthz (Host header) ==='",
     "H=${APIDOM:-api.local}; curl -sk --max-time 8 -H \"Host: $H\" http://127.0.0.1/healthz || true",
-    "echo '=== last 120 lines caddy logs ==='",
+    "echo '=== last 120 lines caddy logs (if present) ==='",
     "docker logs --tail=120 ticktock-caddy 2>&1 || true",
+    "echo '=== nginx.conf (if present) ==='",
+    "cat /opt/ticktock/nginx/nginx.conf 2>/dev/null || true",
+    "echo '=== last 120 lines nginx logs (if present) ==='",
+    "docker logs --tail=120 ticktock-nginx 2>&1 || true",
     "echo '=== last 120 lines backend logs ==='",
     "docker logs --tail=120 ticktock-backend 2>&1 || true"
   ]
