@@ -420,7 +420,7 @@
 
       const dueDate = t.nextDue;
       const dueTime = t.remindAt;
-      meta.textContent = `Due: ${formatDate(dueDate)} at ${formatTime(dueTime)} • Every ${t.everyDays} day(s)`;
+      meta.textContent = `Due: ${formatDate(dueDate)} at ${formatTime(dueTime)} · Every ${t.everyDays} day(s)`;
 
       // badges
       toggleHidden(bPriority, !t.priority);

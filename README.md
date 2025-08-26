@@ -25,14 +25,11 @@ Run the backend locally (Docker)
   - bash backend/backend-up.sh http://localhost:8000
   - First run may need: chmod +x backend/backend-up.sh
 - The backend exposes HTTPS on 8443 (self‑signed dev cert) and optionally redirects 8080→8443.
-- Note: For reverse proxy/TLS in front of the backend you can use either Caddy (default) or Nginx (alternative):
-  - Caddy (auto TLS): cd backend && docker compose --profile proxy up -d caddy
+- Reverse proxy/TLS: Caddy is the supported option.
+  - Start Caddy locally (optional): cd backend && docker compose --profile proxy up -d caddy
     - Or run: bash backend/caddy-up.sh
-  - Nginx (simple reverse proxy): cd backend && docker compose --profile nginx up -d nginx
-    - Or run: bash backend/nginx-up.sh
-    - For HTTPS locally with Nginx, place certs in backend/nginx/certs/server.crt and server.key and uncomment the HTTPS server in backend/nginx/nginx.conf.
   - If you previously had a directory named Caddyfile in this folder, remove it: rm -rf Caddyfile.
-  - Troubleshooting: If you see “no configuration file provided: not found”, you’re likely running docker compose outside the backend directory. Use the commands above (cd backend …) or pass -f backend/docker-compose.yml.
+  - Troubleshooting: If you see “no configuration file provided: not found”, you’re likely running docker compose outside the backend directory. Use cd backend … or pass -f backend/docker-compose.yml.
 - Trust the cert once by visiting https://localhost:8443 in your browser.
 - Connect the frontend (choose one):
   - Easiest for dev: open your browser console on http://localhost:8000 and run:
@@ -70,7 +67,7 @@ We include CloudFormation templates and helper scripts to deploy the whole stack
     "https://your-domain.com,https://www.your-domain.com,https://<CloudFrontDomainName>" \
     api https://github.com/your/repo.git us-east-1
 - What this does:
-  - Creates an EC2 t2.micro with Docker and Caddy by default (Nginx available for local/dev)
+  - Creates an EC2 t2.micro with Docker and Caddy
   - Starts the backend Docker container (HTTP on 8080 inside the instance)
   - Provisions TLS for api.your-domain.com via Caddy and Route53 DNS A record
   - CORS is set to the AllowedOrigins values you pass to the script/template
