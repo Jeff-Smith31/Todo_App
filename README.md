@@ -11,19 +11,19 @@ What you get
 
 Architecture
 - Frontend: Static HTML/CSS/JS with a Service Worker and Web App Manifest. Served from any static host (locally or S3+CloudFront in production).
-- Backend (optional): Node.js + Express + SQLite (Dockerized). Secure defaults (Helmet, rate‑limits, bcrypt). Web Push supported when keys are configured.
+- Backend (optional): Django + Django REST Framework + SQLite (Dockerized). Secure defaults (CORS with credentials, session auth). Web Push subscribe endpoints provided (VAPID key exposure when configured).
 - Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from an optional config.js file at the site root. We provide a script that writes this file during deployment so the frontend is automatically connected to the backend without manual edits.
 
 Quick start (frontend only)
-- From the repo root, serve the site locally:
-  - python3 -m http.server 8000
+- From the frontend/website directory, serve the site locally:
+  - cd frontend/website && python3 -m http.server 8000
   - Open http://localhost:8000
 - Click “Enable Notifications” if prompted, then create tasks. Data stays on this device (localStorage) until you connect a backend.
 
 Run the backend locally (Docker)
 - One‑liner start (pass your frontend origin for CORS):
-  - bash backend-up.sh http://localhost:8000
-  - First run may need: chmod +x backend-up.sh
+  - bash backend/backend-up.sh http://localhost:8000
+  - First run may need: chmod +x backend/backend-up.sh
 - The backend exposes HTTPS on 8443 (self‑signed dev cert) and optionally redirects 8080→8443.
 - Note: The Caddy proxy is not required for local dev and is now disabled by default. If you previously had a directory named Caddyfile in this folder, remove it: rm -rf Caddyfile. To run Caddy anyway, use: docker compose --profile proxy up -d caddy
 - Trust the cert once by visiting https://localhost:8443 in your browser.
@@ -49,18 +49,16 @@ We include CloudFormation templates and helper scripts to deploy the whole stack
   aws cloudformation deploy \
     --region us-east-1 \
     --stack-name ttt-frontend \
-    --template-file infra/frontend/template.yaml \
+    --template-file deployment/infra/frontend/template.yaml \
     --parameter-overrides DomainName=your-domain.com HostedZoneId=Z123456ABCDEFG IncludeWww=true \
     --capabilities CAPABILITY_NAMED_IAM
 - Note Outputs: BucketName, DistributionId, DistributionDomainName.
-- Upload the site to S3 (exclude infra, node_modules, server, etc.):
-  aws s3 sync . s3://<BucketName> \
-    --exclude "infra/*" --exclude "mobile/*" --exclude "node_modules/*" \
-    --exclude ".git/*" --exclude "server/*" --exclude "serverless/*"
+- Upload the site to S3 (sync only the website folder):
+  aws s3 sync frontend/website s3://<BucketName>
 
 2) Backend stack (free‑tier EC2 with automatic TLS)
 - Deploy to your preferred region with your VPC/Subnet:
-  ./infra/scripts/deploy-backend.sh \
+  ./deployment/infra/scripts/deploy-backend.sh \
     ttt-backend your-domain.com Z123456ABCDEFG vpc-0123456789abcdef0 subnet-0123abcd \
     "https://your-domain.com,https://www.your-domain.com,https://<CloudFrontDomainName>" \
     api https://github.com/your/repo.git us-east-1
@@ -72,7 +70,7 @@ We include CloudFormation templates and helper scripts to deploy the whole stack
 
 3) Auto‑wire the frontend to the backend endpoint
 - Write config.js to the site bucket with the backend URL from stack outputs:
-  ./infra/scripts/link-frontend.sh ttt-frontend ttt-backend us-east-1
+  ./deployment/infra/scripts/link-frontend.sh ttt-frontend ttt-backend us-east-1
 - This script:
   - Reads BackendEndpoint from the backend stack
   - Uploads config.js to s3://<BucketName>/ with BACKEND_URL set
@@ -97,8 +95,8 @@ Troubleshooting
 - HTTPS on backend: ensure api.your-domain.com resolves publicly; security group allows 80/443; Caddy will fetch/renew the cert automatically.
 - CORS: if you see CORS errors, confirm AllowedOrigins includes both your domain(s) and the CloudFront domain.
 - Switching backends later: re-run link-frontend.sh to overwrite config.js with a new endpoint.
-- Backend resilience: the EC2 deployment includes container health checks and an auto-heal sidecar to restart unhealthy containers automatically. If you still observe instability, run scripts/diagnose-backend-ssm.sh --repair to re-provision the proxy and print diagnostics.
-- If health checks fail: run scripts/check-backend.sh https://api.your-domain.com for quick diagnostics (includes DNS, raw-IP with Host header, and TLS peek), and scripts/diagnose-backend-ssm.sh to collect docker ps/ports/logs and Caddyfile from the EC2 host via SSM.
+- Backend resilience: the EC2 deployment includes container health checks and an auto-heal sidecar to restart unhealthy containers automatically. If you still observe instability, run deployment/scripts/diagnose-backend-ssm.sh --repair to re-provision the proxy and print diagnostics.
+- If health checks fail: run deployment/scripts/check-backend.sh https://api.your-domain.com for quick diagnostics (includes DNS, raw-IP with Host header, and TLS peek), and deployment/scripts/diagnose-backend-ssm.sh to collect docker ps/ports/logs and Caddyfile from the EC2 host via SSM.
 
 Development tips
 - The app reads the backend URL in this order: window.RUNTIME_CONFIG.BACKEND_URL → window.BACKEND_URL → localStorage.tt_backend_url → derived https://api.<apex-domain> (when not on localhost) → '' (local‑only mode).
@@ -110,12 +108,8 @@ This project is licensed under the MIT License. See LICENSE for details.
 
 
 CI/CD via GitHub Actions (auto-deploy on push)
-- This repo includes .github/workflows/deploy.yml that deploys both stacks automatically on push to main and on manual workflow_dispatch.
-- What it does:
-  - Deploys frontend stack (S3 + CloudFront + ACM + Route53) in us-east-1.
-  - Uploads site assets to S3 (infra, server, node_modules, serverless, .github excluded).
-  - Computes AllowedOrigins (apex, optional www, CloudFront domain) and deploys backend stack (EC2 + Caddy TLS) in your BACKEND_REGION.
-  - Auto-wires the frontend by writing config.js in the site bucket with the backend endpoint.
+- Workflows have been moved to deployment/github/workflows. If you intend to use GitHub Actions, copy or move them back under .github/workflows at the repository root (GitHub only detects workflows there).
+- The main workflow deploys both stacks and links the frontend automatically when enabled.
 - Resource reuse:
   - Reuses an existing S3 bucket named <DomainName>-site if present (avoids bucket name conflicts).
   - Reuses an existing ACM certificate for the apex or wildcard in us-east-1; otherwise requests a new one.
@@ -139,7 +133,7 @@ Required GitHub settings
 
 Notes and requirements
 - The EC2 instance clones this repository to /opt/ticktock during UserData. The repository must be public or otherwise accessible from the instance. If your repo is private, either:
-  - Make a public mirror, then set REPO_URL in infra/scripts/deploy-backend.sh when calling it; or
+  - Make a public mirror, then set REPO_URL in deployment/infra/scripts/deploy-backend.sh when calling it; or
   - Modify the backend template/UserData to pull a pre-built image or artifact from S3/ECR.
 - CloudFront certificate must be in us-east-1; the workflow sets FRONTEND_REGION to us-east-1 by default.
 - Ensure the selected subnet is public and the security group created by the template allows ports 80/443 (it does by default).
