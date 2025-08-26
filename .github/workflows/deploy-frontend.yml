@@ -5,7 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'frontend/website/**'
-      - 'deployment/infra/frontend/**'
+      - 'infra/frontend/**'
       - '.github/workflows/deploy-frontend.yml'
 
 permissions:
@@ -61,7 +61,7 @@ jobs:
 
           aws cloudformation deploy \
             --stack-name ${STACK_NAME} \
-            --template-file deployment/infra/frontend/template.yaml \
+            --template-file infra/frontend/template.yaml \
             --capabilities CAPABILITY_NAMED_IAM \
             --region ${AWS_REGION} \
             --parameter-overrides \

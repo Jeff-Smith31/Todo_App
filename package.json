@@ -9,7 +9,7 @@
     "node": "20.x"
   },
   "scripts": {
-    "check:backend": "bash deployment/scripts/check-backend.sh ${BACKEND_URL:-}"
+    "check:backend": "bash scripts/check-backend.sh ${BACKEND_URL:-}"
   },
   "overrides": {
     "metro": "0.83.0",

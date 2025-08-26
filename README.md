@@ -53,7 +53,7 @@ We include CloudFormation templates and helper scripts to deploy the whole stack
   aws cloudformation deploy \
     --region us-east-1 \
     --stack-name ttt-frontend \
-    --template-file deployment/infra/frontend/template.yaml \
+    --template-file infra/frontend/template.yaml \
     --parameter-overrides DomainName=your-domain.com HostedZoneId=Z123456ABCDEFG IncludeWww=true \
     --capabilities CAPABILITY_NAMED_IAM
 - Note Outputs: BucketName, DistributionId, DistributionDomainName.
@@ -62,7 +62,7 @@ We include CloudFormation templates and helper scripts to deploy the whole stack
 
 2) Backend stack (free‑tier EC2 with automatic TLS)
 - Deploy to your preferred region with your VPC/Subnet:
-  ./deployment/infra/scripts/deploy-backend.sh \
+  ./infra/scripts/deploy-backend.sh \
     ttt-backend your-domain.com Z123456ABCDEFG vpc-0123456789abcdef0 subnet-0123abcd \
     "https://your-domain.com,https://www.your-domain.com,https://<CloudFrontDomainName>" \
     api https://github.com/your/repo.git us-east-1
@@ -75,7 +75,7 @@ We include CloudFormation templates and helper scripts to deploy the whole stack
 
 3) Auto‑wire the frontend to the backend endpoint
 - Write config.js to the site bucket with the backend URL from stack outputs:
-  ./deployment/infra/scripts/link-frontend.sh ttt-frontend ttt-backend us-east-1
+  ./infra/scripts/link-frontend.sh ttt-frontend ttt-backend us-east-1
 - This script:
   - Reads BackendEndpoint from the backend stack
   - Uploads config.js to s3://<BucketName>/ with BACKEND_URL set

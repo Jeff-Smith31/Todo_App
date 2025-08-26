@@ -1,0 +1,641 @@
+name: Deploy Frontend and Backend
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  # Frontend (must be us-east-1 for CloudFront ACM)
+  FRONTEND_REGION: ${{ vars.FRONTEND_REGION || 'us-east-1' }}
+  FRONTEND_STACK_NAME: ${{ vars.FRONTEND_STACK_NAME || 'ttt-frontend' }}
+  DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'ticktocktasks.com' }}
+  HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID || 'Z08471201NA2PN7ERBIB7' }}
+  INCLUDE_WWW: ${{ vars.INCLUDE_WWW || 'true' }}
+  # Optional explicit resource reuse overrides
+  EXISTING_BUCKET_NAME: ${{ vars.EXISTING_BUCKET_NAME || '' }}
+  EXISTING_CERT_ARN: ${{ vars.EXISTING_CERT_ARN || '' }}
+
+  # Backend
+  BACKEND_REGION: ${{ vars.BACKEND_REGION || 'us-east-1' }}
+  BACKEND_STACK_NAME: ${{ vars.BACKEND_STACK_NAME || 'ttt-backend' }}
+  VPC_ID: ${{ vars.VPC_ID }}
+  SUBNET_ID: ${{ vars.SUBNET_ID }}
+  API_SUBDOMAIN: ${{ vars.API_SUBDOMAIN || 'api' }}
+  BACKEND_OVERRIDE_URL: ${{ vars.BACKEND_OVERRIDE_URL || '' }}
+  USE_RELATIVE_API: ${{ vars.USE_RELATIVE_API || '' }}
+
+jobs:
+  deploy:
+    name: Deploy stacks and link frontend
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write    # for AWS OIDC federation
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (us-east-1)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.FRONTEND_REGION }}
+
+      - name: Resolve Domain and Hosted Zone (fallbacks)
+        run: |
+          set -e
+          # Ensure jq is installed for JSON parsing
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y jq
+          fi
+          # If DOMAIN_NAME/HOSTED_ZONE_ID are not provided as repo variables, try to infer them from the existing frontend stack or Route53
+          MISSING_DOMAIN="${DOMAIN_NAME:-}"
+          MISSING_ZONE="${HOSTED_ZONE_ID:-}"
+          FRONT_STACK="${FRONTEND_STACK_NAME}"
+
+          if [ -z "$MISSING_DOMAIN" ] || [ -z "$MISSING_ZONE" ]; then
+            if aws cloudformation describe-stacks --region "$FRONTEND_REGION" --stack-name "$FRONT_STACK" >/dev/null 2>&1; then
+              DN=$(aws cloudformation describe-stacks \
+                --region "$FRONTEND_REGION" \
+                --stack-name "$FRONT_STACK" \
+                --query "Stacks[0].Parameters[?ParameterKey=='DomainName'].ParameterValue | [0]" \
+                --output text)
+              HZ=$(aws cloudformation describe-stacks \
+                --region "$FRONTEND_REGION" \
+                --stack-name "$FRONT_STACK" \
+                --query "Stacks[0].Parameters[?ParameterKey=='HostedZoneId'].ParameterValue | [0]" \
+                --output text)
+              if [ -z "$MISSING_DOMAIN" ] && [ -n "$DN" ] && [ "$DN" != "None" ]; then
+                echo "DOMAIN_NAME=$DN" >> "$GITHUB_ENV"
+                MISSING_DOMAIN="$DN"
+              fi
+              if [ -z "$MISSING_ZONE" ] && [ -n "$HZ" ] && [ "$HZ" != "None" ]; then
+                echo "HOSTED_ZONE_ID=$HZ" >> "$GITHUB_ENV"
+                MISSING_ZONE="$HZ"
+              fi
+
+              # If still missing DomainName, try derive from BucketName output (<DomainName>-site)
+              if [ -z "$MISSING_DOMAIN" ]; then
+                BUCKET=$(aws cloudformation describe-stacks \
+                  --region "$FRONTEND_REGION" \
+                  --stack-name "$FRONT_STACK" \
+                  --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue | [0]" \
+                  --output text)
+                if [ -n "$BUCKET" ] && [ "$BUCKET" != "None" ]; then
+                  if [ "${BUCKET##*-}" = "site" ]; then
+                    DN2="${BUCKET%-site}"
+                    echo "DOMAIN_NAME=$DN2" >> "$GITHUB_ENV"
+                    MISSING_DOMAIN="$DN2"
+                  fi
+                fi
+              fi
+            fi
+
+            # If we have DomainName but not HostedZoneId, look it up in Route53
+            if [ -z "$MISSING_ZONE" ] && [ -n "$MISSING_DOMAIN" ]; then
+              HZ2=$(aws route53 list-hosted-zones-by-name --dns-name "${MISSING_DOMAIN}." --query "HostedZones[0].Id" --output text 2>/dev/null || true)
+              HZ2=${HZ2#/hostedzone/}
+              if [ -n "$HZ2" ] && [ "$HZ2" != "None" ]; then
+                echo "HOSTED_ZONE_ID=$HZ2" >> "$GITHUB_ENV"
+                MISSING_ZONE="$HZ2"
+              fi
+            fi
+          fi
+
+          # If still missing both or one of them, try to infer from Route53 hosted zones
+          if [ -z "$MISSING_DOMAIN" ] || [ -z "$MISSING_ZONE" ]; then
+            # List public hosted zones
+            ZONES_JSON=$(aws route53 list-hosted-zones --query "HostedZones[?Config.PrivateZone==\`false\`]")
+            COUNT=$(echo "$ZONES_JSON" | jq 'length')
+            if [ "$COUNT" -gt 0 ]; then
+              # Choose the first zone; if only one exists, it's unambiguous
+              Z_NAME=$(echo "$ZONES_JSON" | jq -r '.[0].Name' | sed 's/\.$//')
+              Z_ID=$(echo "$ZONES_JSON" | jq -r '.[0].Id' | sed 's#.*/##')
+              if [ -z "$MISSING_DOMAIN" ] && [ -n "$Z_NAME" ] && [ "$Z_NAME" != "null" ]; then
+                echo "DOMAIN_NAME=$Z_NAME" >> "$GITHUB_ENV"
+                MISSING_DOMAIN="$Z_NAME"
+              fi
+              if [ -z "$MISSING_ZONE" ] && [ -n "$Z_ID" ] && [ "$Z_ID" != "null" ]; then
+                echo "HOSTED_ZONE_ID=$Z_ID" >> "$GITHUB_ENV"
+                MISSING_ZONE="$Z_ID"
+              fi
+              echo "Route53 fallback used. Chosen zone: $Z_NAME ($Z_ID)" >> $GITHUB_STEP_SUMMARY
+              if [ "$COUNT" -gt 1 ]; then
+                echo "Warning: Multiple public hosted zones detected; selected the first. Set repo Variables DOMAIN_NAME and HOSTED_ZONE_ID to override." >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          fi
+
+          # Ensure INCLUDE_WWW default if unset
+          if [ -z "${INCLUDE_WWW:-}" ]; then echo "INCLUDE_WWW=true" >> "$GITHUB_ENV"; fi
+
+          # Summarize resolution
+          echo "Resolved DOMAIN_NAME=${MISSING_DOMAIN:-<unset>}" >> $GITHUB_STEP_SUMMARY
+          echo "Resolved HOSTED_ZONE_ID=${MISSING_ZONE:-<unset>}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Resolve VPC and Subnet (fallbacks)
+        run: |
+          set -e
+          # If provided explicitly, keep them
+          if [ -n "${VPC_ID:-}" ] && [ -n "${SUBNET_ID:-}" ]; then
+            echo "Using provided VPC_ID and SUBNET_ID" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          # Find default VPC in the backend region
+          VPC=$(aws ec2 describe-vpcs \
+            --region "${BACKEND_REGION}" \
+            --filters "Name=isDefault,Values=true" \
+            --query "Vpcs[0].VpcId" \
+            --output text 2>/dev/null || true)
+
+          # Fallback to the first VPC if no default VPC
+          if [ -z "$VPC" ] || [ "$VPC" = "None" ]; then
+            VPC=$(aws ec2 describe-vpcs \
+              --region "${BACKEND_REGION}" \
+              --query "Vpcs[0].VpcId" \
+              --output text 2>/dev/null || true)
+          fi
+
+          if [ -n "$VPC" ] && [ "$VPC" != "None" ]; then
+            echo "VPC_ID=$VPC" >> "$GITHUB_ENV"
+          fi
+
+          SUB=""
+          if [ -n "$VPC" ] && [ "$VPC" != "None" ]; then
+            # Prefer default subnets for AZs within the VPC
+            SUB=$(aws ec2 describe-subnets \
+              --region "${BACKEND_REGION}" \
+              --filters "Name=vpc-id,Values=$VPC" \
+              --query "Subnets[?DefaultForAz==\`true\`][0].SubnetId" \
+              --output text 2>/dev/null || true)
+
+            # If none, try to find a subnet with MapPublicIpOnLaunch=true
+            if [ -z "$SUB" ] || [ "$SUB" = "None" ]; then
+              IDS=$(aws ec2 describe-subnets \
+                --region "${BACKEND_REGION}" \
+                --filters "Name=vpc-id,Values=$VPC" \
+                --query "Subnets[].SubnetId" \
+                --output text 2>/dev/null || true)
+              for S in $IDS; do
+                MPL=$(aws ec2 describe-subnet-attribute \
+                  --region "${BACKEND_REGION}" \
+                  --subnet-id "$S" \
+                  --attribute mapPublicIpOnLaunch \
+                  --query "MapPublicIpOnLaunch.Value" \
+                  --output text 2>/dev/null || echo "false")
+                if [ "$MPL" = "True" ] || [ "$MPL" = "true" ]; then
+                  SUB="$S"; break;
+                fi
+              done
+            fi
+
+            # Fallback to first subnet in the VPC
+            if [ -z "$SUB" ] || [ "$SUB" = "None" ]; then
+              SUB=$(aws ec2 describe-subnets \
+                --region "${BACKEND_REGION}" \
+                --filters "Name=vpc-id,Values=$VPC" \
+                --query "Subnets[0].SubnetId" \
+                --output text 2>/dev/null || true)
+            fi
+
+            if [ -n "$SUB" ] && [ "$SUB" != "None" ]; then
+              echo "SUBNET_ID=$SUB" >> "$GITHUB_ENV"
+            fi
+          fi
+
+          echo "Resolved VPC_ID=${VPC:-<unset>}" >> $GITHUB_STEP_SUMMARY
+          echo "Resolved SUBNET_ID=${SUB:-<unset>}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Validate required variables
+        run: |
+          set -e
+          for v in DOMAIN_NAME HOSTED_ZONE_ID VPC_ID SUBNET_ID; do
+            if [ -z "${!v}" ]; then echo "Missing required repo variable: $v"; exit 2; fi
+          done
+
+      - name: Detect existing frontend resources (bucket, cert, DNS)
+        run: |
+          set -e
+          # Allow explicit override via repo variables
+          if [ -n "${EXISTING_BUCKET_NAME:-}" ]; then
+            echo "FRONT_EXISTING_BUCKET=${EXISTING_BUCKET_NAME}" >> "$GITHUB_ENV"
+            echo "Reusing existing bucket (override): ${EXISTING_BUCKET_NAME}" >> $GITHUB_STEP_SUMMARY
+          else
+            BUCKET_NAME="${DOMAIN_NAME}-site"
+            if aws s3api head-bucket --bucket "$BUCKET_NAME" >/dev/null 2>&1; then
+              echo "FRONT_EXISTING_BUCKET=$BUCKET_NAME" >> "$GITHUB_ENV"
+              echo "Reusing existing bucket: $BUCKET_NAME" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+          if [ -n "${EXISTING_CERT_ARN:-}" ]; then
+            echo "FRONT_EXISTING_CERT_ARN=${EXISTING_CERT_ARN}" >> "$GITHUB_ENV"
+            echo "Reusing existing ACM cert (override): ${EXISTING_CERT_ARN}" >> $GITHUB_STEP_SUMMARY
+          else
+            CERT1=$(aws acm list-certificates \
+              --region "${FRONTEND_REGION}" \
+              --certificate-statuses ISSUED \
+              --query "CertificateSummaryList[?DomainName=='${DOMAIN_NAME}'].CertificateArn | [0]" \
+              --output text 2>/dev/null || true)
+            WILDC="*.${DOMAIN_NAME}"
+            CERT2=$(aws acm list-certificates \
+              --region "${FRONTEND_REGION}" \
+              --certificate-statuses ISSUED \
+              --query "CertificateSummaryList[?DomainName=='${WILDC}'].CertificateArn | [0]" \
+              --output text 2>/dev/null || true)
+            CERT_ARN="${CERT1}"
+            if [ -z "$CERT_ARN" ] || [ "$CERT_ARN" = "None" ]; then CERT_ARN="$CERT2"; fi
+            if [ -n "$CERT_ARN" ] && [ "$CERT_ARN" != "None" ]; then
+              echo "FRONT_EXISTING_CERT_ARN=$CERT_ARN" >> "$GITHUB_ENV"
+              echo "Reusing existing ACM cert: $CERT_ARN" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+          APEX_A=$(aws route53 list-resource-record-sets \
+            --hosted-zone-id "${HOSTED_ZONE_ID}" \
+            --query "ResourceRecordSets[?Name=='${DOMAIN_NAME}.'] | [?Type=='A' || Type=='AAAA'] | [0].Type" \
+            --output text 2>/dev/null || true)
+          if [ -n "$APEX_A" ] && [ "$APEX_A" != "None" ]; then
+            echo "CREATE_DNS_RECORDS=false" >> "$GITHUB_ENV"
+            echo "Skipping DNS record creation (records already exist for ${DOMAIN_NAME})." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "CREATE_DNS_RECORDS=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Deploy frontend stack (S3 + CloudFront + ACM + Route53)
+        run: |
+          aws cloudformation deploy \
+            --region "${FRONTEND_REGION}" \
+            --stack-name "${FRONTEND_STACK_NAME}" \
+            --template-file infra/frontend/template.yaml \
+            --parameter-overrides \
+              DomainName="${DOMAIN_NAME}" \
+              HostedZoneId="${HOSTED_ZONE_ID}" \
+              IncludeWww="${INCLUDE_WWW}" \
+              ExistingBucketName="${FRONT_EXISTING_BUCKET:-}" \
+              ExistingCertificateArn="${FRONT_EXISTING_CERT_ARN:-}" \
+              CreateDnsRecords="${CREATE_DNS_RECORDS:-true}" \
+            --capabilities CAPABILITY_NAMED_IAM
+
+      - name: Get frontend outputs
+        id: front
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --region "${FRONTEND_REGION}" \
+            --stack-name "${FRONTEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue | [0]" \
+            --output text)
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --region "${FRONTEND_REGION}" \
+            --stack-name "${FRONTEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue | [0]" \
+            --output text)
+          CF_DOMAIN=$(aws cloudformation describe-stacks \
+            --region "${FRONTEND_REGION}" \
+            --stack-name "${FRONTEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue | [0]" \
+            --output text)
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+          echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
+          echo "cf_domain=$CF_DOMAIN" >> "$GITHUB_OUTPUT"
+
+      - name: Sync site to S3 bucket
+        run: |
+          set -e
+          BUCKET='${{ steps.front.outputs.bucket }}'
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then echo "Bucket not resolved"; exit 3; fi
+          # Stage only frontend assets into a temporary directory to avoid traversing the whole repo
+          SITE_DIR=$(mktemp -d)
+          cp frontend/website/index.html "$SITE_DIR/"
+          cp frontend/website/styles.css "$SITE_DIR/"
+          cp frontend/website/app.js "$SITE_DIR/"
+          cp frontend/website/sw.js "$SITE_DIR/"
+          cp frontend/website/manifest.json "$SITE_DIR/"
+          cp frontend/website/manifest.webmanifest "$SITE_DIR/"
+          if [ -f frontend/website/config.js ]; then cp frontend/website/config.js "$SITE_DIR/"; fi
+          mkdir -p "$SITE_DIR/icons"
+          cp -r frontend/website/icons/. "$SITE_DIR/icons/"
+          # Sync staged assets to S3 and delete anything else
+          aws s3 sync "$SITE_DIR" "s3://$BUCKET" --delete
+          # Invalidate CloudFront so latest app shell is served
+          DIST_ID='${{ steps.front.outputs.dist_id }}'
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
+            "/index.html" \
+            "/app.js" \
+            "/styles.css" \
+            "/sw.js" \
+            "/manifest.json" \
+            "/manifest.webmanifest" \
+            "/icons/*"
+
+      - name: Compute AllowedOrigins for backend
+        id: origins
+        run: |
+          CF_DOMAIN='${{ steps.front.outputs.cf_domain }}'
+          AO="https://${DOMAIN_NAME}"
+          if [ "${INCLUDE_WWW}" = "true" ]; then AO="$AO,https://www.${DOMAIN_NAME}"; fi
+          if [ -n "$CF_DOMAIN" ] && [ "$CF_DOMAIN" != "None" ]; then AO="$AO,https://$CF_DOMAIN"; fi
+          echo "allowed=$AO" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure helper scripts are executable
+        run: |
+          chmod +x infra/scripts/deploy-backend.sh || true
+          chmod +x infra/scripts/link-frontend.sh || true
+          chmod +x scripts/cors-test.sh || true
+          chmod +x scripts/api-smoke.sh || true
+          chmod +x scripts/check-backend.sh || true
+
+      - name: Detect existing API DNS record
+        run: |
+          set -e
+          API_FQDN="${API_SUBDOMAIN}.${DOMAIN_NAME}."
+          API_A=$(aws route53 list-resource-record-sets \
+            --hosted-zone-id "${HOSTED_ZONE_ID}" \
+            --query "ResourceRecordSets[?Name=='${API_FQDN}'] | [?Type=='A' || Type=='AAAA'] | [0].Type" \
+            --output text 2>/dev/null || true)
+          if [ -n "$API_A" ] && [ "$API_A" != "None" ]; then
+            echo "CREATE_API_DNS_RECORD=false" >> "$GITHUB_ENV"
+            echo "Skipping API DNS record creation (record already exists for ${API_FQDN})." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "CREATE_API_DNS_RECORD=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Choose API subdomain (auto if requested)
+        run: |
+          set -e
+          AS="${API_SUBDOMAIN:-}"
+          if [ -z "$AS" ] || [ "$AS" = "auto" ]; then
+            AS="api-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "API_SUBDOMAIN=$AS" >> "$GITHUB_ENV"
+            echo "Auto-selected API subdomain: $AS" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Using API subdomain from vars: $AS" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Deploy backend stack (EC2 + Caddy TLS)
+        run: |
+          # Use repository URL (must be public for EC2 to clone)
+          REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          # Pass CREATE_API_DNS_RECORD to the deploy script via environment
+          export CREATE_API_DNS_RECORD="${CREATE_API_DNS_RECORD:-true}"
+          ./infra/scripts/deploy-backend.sh \
+            "${BACKEND_STACK_NAME}" \
+            "${DOMAIN_NAME}" \
+            "${HOSTED_ZONE_ID}" \
+            "${VPC_ID}" \
+            "${SUBNET_ID}" \
+            "${{ steps.origins.outputs.allowed }}" \
+            "${API_SUBDOMAIN}" \
+            "$REPO_URL" \
+            "${BACKEND_REGION}"
+
+      - name: Ensure/repair API DNS record (UPSERT A -> EC2 PublicIp)
+        run: |
+          set -e
+          BE_STACK="${BACKEND_STACK_NAME}"
+          BE_REGION="${BACKEND_REGION}"
+          API_FQDN=$(aws cloudformation describe-stacks \
+            --region "$BE_REGION" \
+            --stack-name "$BE_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiDomainName'].OutputValue | [0]" \
+            --output text)
+          # Prefer live EC2 PublicIp to avoid any stale CFN output
+          IID=$(aws cloudformation describe-stacks --region "$BE_REGION" --stack-name "$BE_STACK" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue | [0]" --output text)
+          PUBLIC_IP=$(aws ec2 describe-instances --region "$BE_REGION" --instance-ids "$IID" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          if [ -z "$API_FQDN" ] || [ "$API_FQDN" = "None" ] || [ -z "$PUBLIC_IP" ] || [ "$PUBLIC_IP" = "None" ]; then
+            echo "Skipping explicit DNS upsert (missing outputs)." >> $GITHUB_STEP_SUMMARY
+          else
+            CHANGE_FILE=$(mktemp)
+            cat > "$CHANGE_FILE" <<JSON
+          { "Comment": "UPSERT api record for TickTock backend", "Changes": [ { "Action": "UPSERT", "ResourceRecordSet": { "Name": "${API_FQDN}.", "Type": "A", "TTL": 60, "ResourceRecords": [ { "Value": "${PUBLIC_IP}" } ] } } ] }
+          JSON
+            CHG=$(aws route53 change-resource-record-sets --hosted-zone-id "${HOSTED_ZONE_ID}" --change-batch "file://$CHANGE_FILE")
+            CID=$(echo "$CHG" | jq -r '.ChangeInfo.Id')
+            echo "Route53 change submitted: $CID (api -> $PUBLIC_IP)" >> $GITHUB_STEP_SUMMARY
+            aws route53 wait resource-record-sets-changed --id "$CID" || true
+          fi
+
+      - name: Wait for TCP 443 to open (up to 5 min)
+        run: |
+          set +e
+          API_FQDN="${API_SUBDOMAIN}.${DOMAIN_NAME}"
+          echo "Waiting for TCP 443 at ${API_FQDN} to accept connections ..." >> $GITHUB_STEP_SUMMARY
+          ATT=0; MAX=150; SLEEP=2; OK=0
+          while [ $ATT -lt $MAX ]; do
+            (echo > /dev/tcp/${API_FQDN}/443) >/dev/null 2>&1 && { OK=1; break; }
+            ATT=$((ATT+1)); sleep $SLEEP
+          done
+          if [ $OK -eq 1 ]; then
+            echo "TCP 443 is open after $((ATT*SLEEP))s." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Warning: TCP 443 did not open within $((MAX*SLEEP/60)) min; continuing." >> $GITHUB_STEP_SUMMARY
+          fi
+          set -e
+
+      - name: SSM nudge - restart containers and check ports
+        run: |
+          set -e
+          IID=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$IID" ] || [ "$IID" = "None" ]; then
+            echo "No InstanceId resolved for SSM nudge." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          echo "Sending SSM command to $IID to ensure proxy is running..." >> $GITHUB_STEP_SUMMARY
+          PARAMS_FILE=$(mktemp)
+          cat > "$PARAMS_FILE" <<JSON
+          {
+            "commands": [
+              "cd /opt/ticktock",
+              "echo --- git pull repo ---",
+              "git pull --rebase || true",
+              "echo --- compose pull images if plugin ---",
+              "if docker compose version >/dev/null 2>&1; then docker compose pull || true; fi",
+              "echo --- compose up -d ensure services incl. caddy ---",
+              "if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d || true; else docker compose up -d || true; fi",
+              "echo --- ensure caddy container running ---",
+              "# fix host Caddyfile type if it's a directory",
+              "if [ -d /opt/ticktock/Caddyfile ]; then rm -rf /opt/ticktock/Caddyfile; fi",
+              "# write Caddyfile (idempotent)",
+              "# determine backend container IP on its network",
+              "BACK_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ticktock-backend 2>/dev/null || echo '')",
+              "BACK_UPSTREAM=${BACK_IP:-backend}",
+              "echo '${API_SUBDOMAIN}.${DOMAIN_NAME} {' > /opt/ticktock/Caddyfile",
+              "echo '  encode gzip' >> /opt/ticktock/Caddyfile",
+              "echo \"  reverse_proxy ${BACK_UPSTREAM}:8080\" >> /opt/ticktock/Caddyfile",
+              "echo '}' >> /opt/ticktock/Caddyfile",
+              "# restart caddy container with correct bind mounts",
+              "docker rm -f ticktock-caddy || true",
+              "# detect backend container network (compose network)",
+              "NET=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' ticktock-backend || echo '')",
+              "if [ -z \"$NET\" ]; then NET=bridge; fi",
+              "docker run -d --name ticktock-caddy --network \"$NET\" -p 80:80 -p 443:443 -v /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile --restart unless-stopped caddy:2 || true",
+              "# also ensure caddy is attached to backend's network (idempotent)",
+              "docker network connect \"$NET\" ticktock-caddy 2>/dev/null || true",
+              "echo --- ensure autoheal sidecar ---",
+              "if ! docker ps --format '{{.Names}}' | grep -q '^ticktock-autoheal$'; then docker run -d --name ticktock-autoheal -v /var/run/docker.sock:/var/run/docker.sock -e AUTOHEAL_CONTAINER_LABEL=all -e AUTOHEAL_INTERVAL=10 --restart unless-stopped willfarrell/autoheal || true; fi",
+              "echo --- docker ps ---",
+              "docker ps",
+              "echo --- sockets ---",
+              "ss -ltnp | egrep \":(80|443|8080|8443)\" || true",
+              "echo --- caddy via localhost test ---",
+              "curl -sk --max-time 8 -H \"Host: ${API_SUBDOMAIN}.${DOMAIN_NAME}\" http://127.0.0.1/healthz || true",
+              "echo --- caddy logs last 120 ---",
+              "docker logs --tail=120 ticktock-caddy || true",
+              "echo --- backend logs last 120 ---",
+              "docker logs --tail=120 ticktock-backend || true",
+              "echo --- localhost backend health http://localhost:8080/healthz ---",
+              "curl -sS --max-time 5 http://localhost:8080/healthz || true"
+            ]
+          }
+          JSON
+          CMD_ID=$(aws ssm send-command \
+            --region "${BACKEND_REGION}" \
+            --instance-ids "$IID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters file://$PARAMS_FILE \
+            --query "Command.CommandId" --output text)
+          # give it a bit more time to complete
+          sleep 20
+          OUT=$(aws ssm get-command-invocation --region "${BACKEND_REGION}" --command-id "$CMD_ID" --instance-id "$IID" --query "StandardOutputContent" --output text || true)
+          ERR=$(aws ssm get-command-invocation --region "${BACKEND_REGION}" --command-id "$CMD_ID" --instance-id "$IID" --query "StandardErrorContent" --output text || true)
+          echo "\nSSM output (docker/ports/logs):\n${OUT}" >> $GITHUB_STEP_SUMMARY || true
+          echo "\nSSM stderr (if any):\n${ERR}" >> $GITHUB_STEP_SUMMARY || true
+          # Also print to raw logs for easier debugging
+          echo "===== BEGIN SSM OUTPUT ====="
+          echo "$OUT"
+          echo "===== END SSM OUTPUT ====="
+          if [ -n "$ERR" ] && [ "$ERR" != "None" ]; then
+            echo "===== BEGIN SSM STDERR ====="
+            echo "$ERR"
+            echo "===== END SSM STDERR ====="
+          fi
+
+      - name: Verify DNS resolution and HTTPS health for API
+        run: |
+          set -e
+          API_FQDN="${API_SUBDOMAIN}.${DOMAIN_NAME}"
+          if ! command -v dig >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y dnsutils; fi
+          echo "DNS check for ${API_FQDN}" >> $GITHUB_STEP_SUMMARY
+          RES=$(dig +short "${API_FQDN}")
+          echo "dig +short ${API_FQDN} -> ${RES}" >> $GITHUB_STEP_SUMMARY
+          HC=$(curl -sk -o /dev/null -w "%{http_code}" "https://${API_FQDN}/healthz" || true)
+          echo "HTTPS /healthz status: ${HC}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Wait for backend health (retry up to 10 min)
+        run: |
+          set +e
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$BE_URL" ] || [ "$BE_URL" = "None" ]; then
+            echo "No backend endpoint resolved for retry health check." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Waiting for backend to become healthy at $BE_URL ..." >> $GITHUB_STEP_SUMMARY
+            ATTEMPTS=0; MAX_ATTEMPTS=40; SLEEP=15
+            OK=0
+            while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+              CODE=$(curl -sk -o /dev/null -w "%{http_code}" "$BE_URL/healthz" || echo "000")
+              if [ "$CODE" = "200" ]; then OK=1; break; fi
+              ATTEMPTS=$((ATTEMPTS+1))
+              sleep $SLEEP
+            done
+            if [ $OK -eq 1 ]; then
+              echo "Backend healthy (HTTP 200 on /healthz) after $ATTEMPTS attempts." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "Backend still not healthy after $((MAX_ATTEMPTS*SLEEP/60)) minutes. Proceeding but marking as warning." >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          set -e
+
+      - name: Link frontend to backend endpoint (write config.js)
+        run: |
+          BACKEND_OVERRIDE_URL="${BACKEND_OVERRIDE_URL}" USE_RELATIVE_API="${USE_RELATIVE_API}" \
+          ./infra/scripts/link-frontend.sh "${FRONTEND_STACK_NAME}" "${BACKEND_STACK_NAME}" "${FRONTEND_REGION}" "${BACKEND_REGION}"
+
+      - name: Smoke test backend CORS/health
+        run: |
+          set +e
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          echo "Testing backend: ${BE_URL} from origin https://${DOMAIN_NAME}" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$BE_URL" ] && [ "$BE_URL" != "None" ]; then
+            scripts/cors-test.sh "$BE_URL" "https://${DOMAIN_NAME}" | sed -n '1,60p' >> $GITHUB_STEP_SUMMARY || true
+          else
+            echo "Warning: Backend endpoint could not be resolved for smoke test." >> $GITHUB_STEP_SUMMARY
+          fi
+          set -e
+
+      - name: API smoke test (register/login/tasks)
+        run: |
+          set +e
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          if [ -n "$BE_URL" ] && [ "$BE_URL" != "None" ]; then
+            echo "API smoke test against ${BE_URL}" >> $GITHUB_STEP_SUMMARY
+            scripts/api-smoke.sh "$BE_URL" | sed -n '1,200p' >> $GITHUB_STEP_SUMMARY || true
+          else
+            echo "Skipping API smoke test: no backend endpoint resolved." >> $GITHUB_STEP_SUMMARY
+          fi
+          set -e
+
+      - name: Publish smoke test outputs to CloudWatch Logs
+        run: |
+          set +e
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          LOG_GROUP="/TickTock/Backend-${DOMAIN_NAME}"
+          LOG_STREAM="ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TMP_DIR=$(mktemp -d)
+          CORS_OUT="$TMP_DIR/cors.txt"
+          API_OUT="$TMP_DIR/api.txt"
+          if [ -n "$BE_URL" ] && [ "$BE_URL" != "None" ]; then
+            scripts/cors-test.sh "$BE_URL" "https://${DOMAIN_NAME}" > "$CORS_OUT" 2>&1 || true
+            scripts/api-smoke.sh "$BE_URL" > "$API_OUT" 2>&1 || true
+          else
+            echo "No backend endpoint resolved for smoke logs." > "$CORS_OUT"
+            : > "$API_OUT"
+          fi
+          # Ensure log group/stream exist in backend region
+          aws logs create-log-group --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" >/dev/null 2>&1 || true
+          aws logs create-log-stream --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM" >/dev/null 2>&1 || true
+          SEQ=$(aws logs describe-log-streams --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" --log-stream-name-prefix "$LOG_STREAM" --query "logStreams[0].uploadSequenceToken" --output text 2>/dev/null)
+          TS=$(date +%s%3N)
+          MSG1="CI CORS/health smoke for ${BE_URL} from https://${DOMAIN_NAME}\\n$(sed -n '1,200p' "$CORS_OUT")"
+          MSG2="CI API smoke for ${BE_URL}\\n$(sed -n '1,200p' "$API_OUT")"
+          if [ -n "$SEQ" ] && [ "$SEQ" != "None" ]; then
+            aws logs put-log-events --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM" --sequence-token "$SEQ" --log-events timestamp=$TS,message="$MSG1" timestamp=$((TS+1)),message="$MSG2" >/dev/null 2>&1 || true
+          else
+            aws logs put-log-events --region "${BACKEND_REGION}" --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM" --log-events timestamp=$TS,message="$MSG1" timestamp=$((TS+1)),message="$MSG2" >/dev/null 2>&1 || true
+          fi
+          set -e
+
+      - name: Output Summary
+        run: |
+          echo "Frontend Bucket: ${{ steps.front.outputs.bucket }}" >> $GITHUB_STEP_SUMMARY
+          echo "CloudFront ID: ${{ steps.front.outputs.dist_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "CloudFront Domain: ${{ steps.front.outputs.cf_domain }}" >> $GITHUB_STEP_SUMMARY
+          echo "Allowed Origins: ${{ steps.origins.outputs.allowed }}" >> $GITHUB_STEP_SUMMARY
+          BE_URL=$(aws cloudformation describe-stacks \
+            --region "${BACKEND_REGION}" \
+            --stack-name "${BACKEND_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          echo "Backend Endpoint: ${BE_URL}" >> $GITHUB_STEP_SUMMARY

@@ -31,7 +31,7 @@ jobs:
 
       - name: Make scripts executable
         run: |
-          chmod +x deployment/scripts/diagnose-backend-ssm.sh || true
+          chmod +x scripts/diagnose-backend-ssm.sh || true
 
       - name: Run SSM repair on backend host
         env:
@@ -40,7 +40,7 @@ jobs:
         run: |
           set -e
           echo "Running diagnose-backend-ssm.sh --repair for stack $BACKEND_STACK_NAME in $BACKEND_REGION" >> $GITHUB_STEP_SUMMARY
-          deployment/scripts/diagnose-backend-ssm.sh --repair | sed -n '1,500p'
+          scripts/diagnose-backend-ssm.sh --repair | sed -n '1,500p'
 
       - name: Public health check
         env:
