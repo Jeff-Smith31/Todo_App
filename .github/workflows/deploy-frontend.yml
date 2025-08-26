@@ -6,7 +6,7 @@ on:
     paths:
       - 'frontend/website/**'
       - 'deployment/infra/frontend/**'
-      - 'deployment/github/.github/workflows/deploy-frontend.yml'
+      - '.github/workflows/deploy-frontend.yml'
 
 permissions:
   id-token: write
