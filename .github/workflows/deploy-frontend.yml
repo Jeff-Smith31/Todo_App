@@ -59,6 +59,14 @@ jobs:
             if [ -n "$CERT1" ] && [ "$CERT1" != "None" ]; then FRONT_EXISTING_CERT_ARN="$CERT1"; elif [ -n "$CERT2" ] && [ "$CERT2" != "None" ]; then FRONT_EXISTING_CERT_ARN="$CERT2"; fi
           fi
 
+          # Detect CNAME conflicts (aliases already in use)
+          SKIP="false"
+          CF_MATCH=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Aliases.Items, '${DOMAIN_NAME}') || contains(Aliases.Items, 'www.${DOMAIN_NAME}')][0].Id" --output text 2>/dev/null || true)
+          if [ -n "$CF_MATCH" ] && [ "$CF_MATCH" != "None" ]; then
+            echo "Existing CloudFront distribution with alias found: $CF_MATCH" 
+            SKIP="true"
+          fi
+
           aws cloudformation deploy \
             --stack-name ${STACK_NAME} \
             --template-file infra/frontend/template.yaml \
@@ -70,7 +78,8 @@ jobs:
               HostedZoneId=$HZ \
               ExistingBucketName=${FRONT_EXISTING_BUCKET} \
               ExistingCertificateArn=${FRONT_EXISTING_CERT_ARN} \
-              CreateDnsRecords=true
+              CreateDnsRecords=true \
+              SkipAliases=$SKIP
 
       - name: Read stack outputs
         id: out

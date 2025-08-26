@@ -31,6 +31,11 @@ Parameters:
     AllowedValues: ['true','false']
     Default: 'true'
     Description: Whether to create Route53 A/AAAA records for apex and www.
+  SkipAliases:
+    Type: String
+    AllowedValues: ['true','false']
+    Default: 'false'
+    Description: If 'true', do not set CloudFront Aliases to avoid CNAME conflicts.
 
 Conditions:
   UseWww: !Equals [ !Ref IncludeWww, 'true' ]
@@ -40,6 +45,7 @@ Conditions:
   NoExistingCert: !Equals [ !Ref ExistingCertificateArn, '' ]
   DoDns: !Equals [ !Ref CreateDnsRecords, 'true' ]
   DoWwwDns: !And [ !Condition UseWww, !Condition DoDns ]
+  UseAliases: !Equals [ !Ref SkipAliases, 'false' ]
 
 Mappings:
   CloudFront:
@@ -103,9 +109,12 @@ Resources:
         HttpVersion: http2
         DefaultRootObject: index.html
         Aliases: !If
-          - UseWww
-          - [!Ref DomainName, !Sub 'www.${DomainName}']
-          - [!Ref DomainName]
+          - UseAliases
+          - !If
+            - UseWww
+            - [!Ref DomainName, !Sub 'www.${DomainName}']
+            - [!Ref DomainName]
+          - !Ref AWS::NoValue
         ViewerCertificate:
           AcmCertificateArn: !If [HasExistingCert, !Ref ExistingCertificateArn, !Ref SiteCertificate]
           SslSupportMethod: sni-only
