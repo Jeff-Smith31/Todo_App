@@ -89,7 +89,7 @@ Resources:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
-        Name: !Sub '${DomainName}-oac'
+        Name: !Sub '${AWS::StackName}-${DomainName}-oac'
         Description: Access S3 bucket privately from CloudFront
         SigningBehavior: always
         SigningProtocol: sigv4
