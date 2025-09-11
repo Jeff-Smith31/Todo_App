@@ -40,8 +40,10 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
     depends_on:
       - backend
 
 volumes:
   backend_data:
+  caddy_data:
