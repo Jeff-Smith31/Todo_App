@@ -56,7 +56,7 @@ if $REPAIR; then
     "if [ -d /opt/ticktock/Caddyfile ]; then rm -rf /opt/ticktock/Caddyfile; fi",
     "echo '${APIDOM} {' > /opt/ticktock/Caddyfile",
     "echo '  encode gzip' >> /opt/ticktock/Caddyfile",
-    "echo '  reverse_proxy ticktock-backend:8080' >> /opt/ticktock/Caddyfile",
+    "echo '  reverse_proxy backend:8080' >> /opt/ticktock/Caddyfile",
     "echo '}' >> /opt/ticktock/Caddyfile",
     "NET=\$(docker network ls --format '{{.Name}}' | grep -E '^ticktock_default$' >/dev/null 2>&1 && echo ticktock_default || echo bridge)",
     "docker rm -f ticktock-caddy || true",

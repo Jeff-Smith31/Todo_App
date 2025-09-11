@@ -16,7 +16,7 @@ services:
       - WEB_PUSH_PUBLIC_KEY=${WEB_PUSH_PUBLIC_KEY}
       - WEB_PUSH_PRIVATE_KEY=${WEB_PUSH_PRIVATE_KEY}
       - CERT_HOSTS=${CERT_HOSTS:-localhost}
-      - REDIRECT_HTTP_TO_HTTPS=${REDIRECT_HTTP_TO_HTTPS:-true}
+      - REDIRECT_HTTP_TO_HTTPS=false
     volumes:
       - backend_data:/data
     ports:
