@@ -200,6 +200,7 @@ Resources:
               image: caddy:2
               container_name: ticktock-caddy
               restart: unless-stopped
+              profiles: ["proxy"]
               ports:
                 - "80:80"
                 - "443:443"
