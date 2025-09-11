@@ -48,7 +48,8 @@
     template: $('#task-item-template'),
     backendUrlInput: $('#backend-url-input'),
     backendUrlSave: $('#backend-url-save'),
-    backendStatus: $('#backend-status')
+    backendStatus: $('#backend-status'),
+    backendTest: $('#backend-test')
   };
 
   let tasks = loadTasks();
@@ -124,18 +125,36 @@
     window.addEventListener('hashchange', route);
 
     // PWA install
+    function isStandalone(){
+      return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator && window.navigator.standalone);
+    }
+    function isNativeWebView(){
+      return !!window.ReactNativeWebView;
+    }
+    function hideInstall(){ if (elements.installBtn) elements.installBtn.style.display = 'none'; }
+    function showInstall(){ if (elements.installBtn) elements.installBtn.style.display = 'inline-block'; }
+    if (elements.installBtn){
+      if (isStandalone() || isNativeWebView()) hideInstall();
+      window.addEventListener('appinstalled', hideInstall);
+      if (window.matchMedia){
+        try { window.matchMedia('(display-mode: standalone)').addEventListener('change', () => { if (isStandalone()) hideInstall(); }); } catch {}
+      }
+    }
     window.addEventListener('beforeinstallprompt', (e) => {
+      if (isStandalone() || isNativeWebView()) return;
       e.preventDefault();
       deferredPrompt = e;
-      elements.installBtn.style.display = 'inline-block';
+      showInstall();
     });
-    elements.installBtn.addEventListener('click', async () => {
-      if (!deferredPrompt) return;
-      deferredPrompt.prompt();
-      await deferredPrompt.userChoice;
-      deferredPrompt = null;
-      elements.installBtn.style.display = 'none';
-    });
+    if (elements.installBtn){
+      elements.installBtn.addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        await deferredPrompt.userChoice;
+        deferredPrompt = null;
+        hideInstall();
+      });
+    }
 
     // Service worker
     if ('serviceWorker' in navigator){
@@ -530,13 +549,19 @@
 
   // Notifications
   function refreshPermissionButton(){
-    const state = Notification && Notification.permission || 'default';
+    if (!elements.permissionBtn) return;
+    const supported = typeof Notification !== 'undefined' && Notification && typeof Notification.permission === 'string';
+    const state = supported ? Notification.permission : 'denied';
+    if (!supported) {
+      elements.permissionBtn.style.display = 'none';
+      return;
+    }
     if (state === 'granted'){
-      elements.permissionBtn.textContent = 'Notifications Enabled';
-      elements.permissionBtn.disabled = true;
+      elements.permissionBtn.style.display = 'none';
     } else {
       elements.permissionBtn.textContent = 'Enable Notifications';
       elements.permissionBtn.disabled = false;
+      elements.permissionBtn.style.display = 'inline-block';
     }
   }
 
@@ -817,6 +842,11 @@
     }
     if (backendStatus) {
       backendStatus.textContent = BACKEND_URL ? `Backend: ${BACKEND_URL}` : 'Local-only mode (no backend set)';
+    }
+    if (elements.backendTest) {
+      elements.backendTest.addEventListener('click', () => {
+        updateBackendConnectivityStatus();
+      });
     }
   }
 
