@@ -91,3 +91,9 @@ This project is licensed under the MIT License. See LICENSE for details.
 
 
 Deployment note: Triggered by CI at 2025-08-26 15:53 local time to run .github/workflows/deploy.yml.
+
+
+
+Backend status quick check
+- scripts/check-backend.sh https://api.ticktocktasks.com
+- Or via npm: BACKEND_URL=https://api.ticktocktasks.com npm run check:backend

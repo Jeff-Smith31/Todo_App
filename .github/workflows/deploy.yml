@@ -318,8 +318,26 @@ jobs:
           if [ -f frontend/website/config.js ]; then cp frontend/website/config.js "$SITE_DIR/"; fi
           mkdir -p "$SITE_DIR/icons"
           cp -r frontend/website/icons/. "$SITE_DIR/icons/"
+
+          # Build/version id used for cache-busting
+          BUILD_ID="${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}"
+          INDEX="$SITE_DIR/index.html"
+          # Append ?v=BUILD_ID to core assets referenced from index.html
+          sed -i "s|\"app.js\"|\"app.js?v=${BUILD_ID}\"|g" "$INDEX"
+          sed -i "s|\"styles.css\"|\"styles.css?v=${BUILD_ID}\"|g" "$INDEX"
+          sed -i "s|\"manifest.webmanifest\"|\"manifest.webmanifest?v=${BUILD_ID}\"|g" "$INDEX"
+          sed -i "s|\"manifest.json\"|\"manifest.json?v=${BUILD_ID}\"|g" "$INDEX"
+          sed -i "s|\"config.js\"|\"config.js?v=${BUILD_ID}\"|g" "$INDEX" || true
+
+          # Bump Service Worker cache name so clients fetch fresh assets
+          sed -i "s|^const CACHE_NAME = .*|const CACHE_NAME = 'ticktock-cache-${BUILD_ID}';|" "$SITE_DIR/sw.js"
+
           # Sync staged assets to S3 and delete anything else
           aws s3 sync "$SITE_DIR" "s3://$BUCKET" --delete
+          # Ensure index.html and sw.js are uploaded with no-cache so browsers revalidate on each visit
+          aws s3 cp "$SITE_DIR/index.html" "s3://$BUCKET/index.html" --cache-control "no-cache, no-store, must-revalidate" --content-type text/html
+          aws s3 cp "$SITE_DIR/sw.js" "s3://$BUCKET/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+
           # Invalidate CloudFront so latest app shell is served
           DIST_ID='${{ steps.front.outputs.dist_id }}'
           aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
@@ -477,7 +495,7 @@ jobs:
               "# detect backend container network (compose network)",
               "NET=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' ticktock-backend || echo '')",
               "if [ -z \"$NET\" ]; then NET=bridge; fi",
-              "docker run -d --name ticktock-caddy --network \"$NET\" -p 80:80 -p 443:443 -v /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile --restart unless-stopped caddy:2 || true",
+              "if [ -n \"$NET\" ]; then docker run -d --name ticktock-caddy --network \"$NET\" -p 80:80 -p 443:443 -v /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile --restart unless-stopped caddy:2 || true; else docker run -d --name ticktock-caddy -p 80:80 -p 443:443 -v /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile --restart unless-stopped caddy:2 || true; fi",
               "# also ensure caddy is attached to backend's network (idempotent)",
               "docker network connect \"$NET\" ticktock-caddy 2>/dev/null || true",
               "echo --- docker ps ---",
