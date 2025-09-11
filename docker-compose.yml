@@ -2,26 +2,26 @@ version: '3.8'
 services:
   backend:
     build:
-      context: ..
+      context: .
       dockerfile: backend/Dockerfile
     container_name: ticktock-backend
     restart: unless-stopped
     environment:
       - PORT=8080
       - HTTPS_PORT=8443
-      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:8000}
+      - CORS_ORIGIN=${CORS_ORIGIN:-https://ticktocktasks.com}
       - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
       - NODE_ENV=production
       - SQLITE_FILE=/data/data.sqlite
       - WEB_PUSH_PUBLIC_KEY=${WEB_PUSH_PUBLIC_KEY}
       - WEB_PUSH_PRIVATE_KEY=${WEB_PUSH_PRIVATE_KEY}
-      - CERT_HOSTS=${CERT_HOSTS:-localhost,192.168.1.6}
+      - CERT_HOSTS=${CERT_HOSTS:-localhost}
       - REDIRECT_HTTP_TO_HTTPS=${REDIRECT_HTTP_TO_HTTPS:-true}
     volumes:
       - backend_data:/data
     ports:
-      - "8080:8080"    # optional HTTP -> HTTPS redirect or API if disabled
-      - "8443:8443"    # HTTPS
+      - "8080:8080"
+      - "8443:8443"
     labels:
       - "autoheal=true"
     healthcheck:
@@ -35,7 +35,6 @@ services:
     image: caddy:2
     container_name: ticktock-caddy
     restart: unless-stopped
-    profiles: ["proxy"]
     ports:
       - "80:80"
       - "443:443"
