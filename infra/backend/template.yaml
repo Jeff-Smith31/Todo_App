@@ -247,7 +247,7 @@ Resources:
           cat >/opt/ticktock/Caddyfile <<CFG
           ${ApiSubdomain}.${DomainName} {
             encode gzip
-            reverse_proxy backend:8080
+            reverse_proxy ticktock-backend:8080
           }
           CFG
 
@@ -262,7 +262,7 @@ Resources:
           cat >/opt/ticktock/Caddyfile <<CFG
           ${ApiSubdomain}.${DomainName} {
             encode gzip
-            reverse_proxy backend:8080
+            reverse_proxy ticktock-backend:8080
           }
           CFG
           # Ensure systemd Caddy is stopped (free ports 80/443)
