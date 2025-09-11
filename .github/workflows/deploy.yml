@@ -457,7 +457,7 @@ jobs:
               "git pull --rebase || true",
               "echo --- compose pull images if plugin ---",
               "if docker compose version >/dev/null 2>&1; then docker compose pull || true; fi",
-              "echo --- remove stray autoheal (to avoid compose name conflict) ---",
+              "echo --- remove stray autoheal - to avoid compose name conflict ---",
               "docker rm -f ticktock-autoheal || true",
               "echo --- compose up -d ensure services incl. caddy ---",
               "if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d || true; else docker compose up -d || true; fi",
