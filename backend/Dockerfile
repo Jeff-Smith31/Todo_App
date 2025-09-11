@@ -3,8 +3,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies and openssl for cert generation
-RUN apk add --no-cache openssl
+# Install dependencies and tools (openssl for cert generation, curl for healthcheck)
+RUN apk add --no-cache openssl curl
 COPY backend/package.json ./package.json
 RUN npm install --omit=dev
 

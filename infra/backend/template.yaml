@@ -252,6 +252,8 @@ Resources:
           CFG
 
           # Start containers
+          # Remove stray containers to avoid name conflicts with compose
+          docker rm -f ticktock-caddy ticktock-autoheal 2>/dev/null || true
           if command -v docker-compose >/dev/null 2>&1; then
             docker-compose up -d || true
           else
@@ -268,6 +270,8 @@ Resources:
           # Ensure systemd Caddy is stopped (free ports 80/443)
           systemctl stop caddy || true
           # Restart containers to pick up caddy service/config
+          # Remove stray containers to avoid name conflicts with compose
+          docker rm -f ticktock-caddy ticktock-autoheal 2>/dev/null || true
           if command -v docker-compose >/dev/null 2>&1; then
             docker-compose up -d || true
           else
