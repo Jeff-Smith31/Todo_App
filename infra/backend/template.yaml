@@ -200,7 +200,6 @@ Resources:
               image: caddy:2
               container_name: ticktock-caddy
               restart: unless-stopped
-              profiles: ["proxy"]
               ports:
                 - "80:80"
                 - "443:443"
@@ -248,7 +247,7 @@ Resources:
           cat >/opt/ticktock/Caddyfile <<CFG
           ${ApiSubdomain}.${DomainName} {
             encode gzip
-            reverse_proxy backend:8080
+            reverse_proxy http://backend:8080
           }
           CFG
 
@@ -265,7 +264,7 @@ Resources:
           cat >/opt/ticktock/Caddyfile <<CFG
           ${ApiSubdomain}.${DomainName} {
             encode gzip
-            reverse_proxy backend:8080
+            reverse_proxy http://backend:8080
           }
           CFG
           # Ensure systemd Caddy is stopped (free ports 80/443)
