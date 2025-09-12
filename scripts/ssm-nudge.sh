@@ -119,6 +119,23 @@ else
   docker compose run --rm certbot certonly --webroot -w /var/www/certbot -d "${APIDOM}" --agree-tos --email "admin@${DOMAIN_NAME}" -n || true
 fi
 
+# Ensure certificate files exist; generate self-signed fallback if Let's Encrypt not ready
+log "ensure certificate files exist (fallback to self-signed if missing)"
+DOM="${APIDOM}"
+docker run --rm -e DOM="$DOM" -v letsencrypt:/etc/letsencrypt nginx:alpine sh -c '
+set -e
+CERT_DIR="/etc/letsencrypt/live/${DOM}"
+mkdir -p "${CERT_DIR}"
+if [ ! -s "${CERT_DIR}/privkey.pem" ] || [ ! -s "${CERT_DIR}/fullchain.pem" ]; then
+  echo "Generating self-signed certificate for ${DOM} ..."
+  openssl req -x509 -nodes -days 365 -subj "/CN=${DOM}" -newkey rsa:2048 \
+    -keyout "${CERT_DIR}/privkey.pem" \
+    -out "${CERT_DIR}/fullchain.pem"
+else
+  echo "Existing certificate found for ${DOM}"
+fi
+' || true
+
 log "write HTTPS nginx.conf"
 cat > "$NGINX_CONF" <<'CFG'
 user  nginx;
