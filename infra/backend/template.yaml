@@ -182,7 +182,7 @@ Resources:
                   awslogs-create-group: "true"
             nginx:
               image: nginx:alpine
-              container_name: ticktock-nginx
+              container_name: ttt-nginx
               restart: unless-stopped
               ports:
                 - "80:80"
@@ -207,13 +207,13 @@ Resources:
                   awslogs-create-group: "true"
             certbot:
               image: certbot/certbot
-              container_name: ticktock-certbot
+              container_name: ttt-certbot
               volumes:
                 - letsencrypt:/etc/letsencrypt
                 - certbot_challenges:/var/www/certbot
             autoheal:
               image: willfarrell/autoheal
-              container_name: ticktock-autoheal
+              container_name: ttt-autoheal
               restart: unless-stopped
               environment:
                 - AUTOHEAL_CONTAINER_LABEL=all
@@ -262,7 +262,7 @@ Resources:
           CFG
 
           # Start containers (ensure backend + nginx)
-          docker rm -f ticktock-nginx ticktock-autoheal 2>/dev/null || true
+          docker rm -f ttt-nginx ttt-autoheal 2>/dev/null || true
           if command -v docker-compose >/dev/null 2>&1; then
             docker-compose up -d || true
           else
@@ -304,10 +304,10 @@ Resources:
               ssl_ciphers HIGH:!aNULL:!MD5;
               location = /healthz { proxy_set_header Host \$host; proxy_pass http://ticktock_backend/healthz; }
               location / {
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header Host \$host;
+                proxy_set_header X-Real-IP \$remote_addr;
+                proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto \$scheme;
                 proxy_pass http://ticktock_backend;
               }
             }

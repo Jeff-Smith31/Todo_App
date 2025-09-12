@@ -49,13 +49,7 @@ else
   fi
 fi
 
-# Hint: if a directory named Caddyfile exists from prior runs, it can break caddy mounts.
-if [ -d Caddyfile ]; then
-  echo "[warn] A directory named ./Caddyfile exists. Local dev does not need caddy; ignoring it."
-  echo "[warn] You may remove it: rm -rf Caddyfile"
-fi
-
-echo "Starting backend with Docker Compose (backend only; caddy is optional via profile 'proxy')..."
+echo "Starting backend container with Docker Compose (service: backend)..."
 docker compose up --build -d backend
 
 echo "Backend is starting. HTTPS port: 8443 (HTTP 8080 redirects to HTTPS)"

@@ -28,7 +28,6 @@ Run the backend locally (Docker)
 - Reverse proxy/TLS: Nginx + Certbot is the supported option.
   - Start Nginx locally (optional): docker compose up -d nginx
     - Note: Local dev uses HTTP-only nginx.conf by default and proxies to the backend on 8080.
-  - If you previously had Caddy artifacts (Caddyfile, caddy-up.sh), they are no longer used.
   - Troubleshooting: If you see “no configuration file provided: not found”, run docker compose from the repo root or pass -f accordingly.
 - Trust the cert once by visiting https://localhost:8443 in your browser.
 - Connect the frontend (choose one):

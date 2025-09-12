@@ -76,11 +76,11 @@ if $REPAIR; then
     "}",
     "NCFG",
     "NET=\$(docker network ls --format '{{.Name}}' | grep -E '^ticktock_default$' >/dev/null 2>&1 && echo ticktock_default || echo bridge)",
-    "docker rm -f ticktock-nginx || true",
+    "docker rm -f ttt-nginx || true",
     "docker volume create letsencrypt || true",
     "docker volume create certbot_challenges || true",
-    "docker run -d --name ticktock-nginx --network \$NET -p 80:80 -p 443:443 -v /opt/ticktock/nginx.conf:/etc/nginx/nginx.conf -v letsencrypt:/etc/letsencrypt -v certbot_challenges:/var/www/certbot --restart unless-stopped nginx:alpine || true",
-    "docker network connect \$NET ticktock-nginx 2>/dev/null || true",
+    "docker run -d --name ttt-nginx --network \$NET -p 80:80 -p 443:443 -v /opt/ticktock/nginx.conf:/etc/nginx/nginx.conf -v letsencrypt:/etc/letsencrypt -v certbot_challenges:/var/www/certbot --restart unless-stopped nginx:alpine || true",
+    "docker network connect \$NET ttt-nginx 2>/dev/null || true",
     "echo '=== docker ps ==='",
     "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true",
     "echo '=== listening sockets (80/443/8080/8443) ==='",
@@ -88,7 +88,7 @@ if $REPAIR; then
     "echo '=== local nginx vhost health http://127.0.0.1/healthz (Host header) ==='",
     "curl -sk --max-time 8 -H 'Host: ${APIDOM}' http://127.0.0.1/healthz || true",
     "echo '=== last 80 lines nginx logs (if present) ==='",
-    "docker logs --tail=80 ticktock-nginx 2>&1 || true"
+    "docker logs --tail=80 ttt-nginx 2>&1 || true"
   ]
 }
 JSON
@@ -107,7 +107,7 @@ else
     "echo '=== docker networks ==='",
     "docker network ls || true",
     "echo '=== backend container inspect (networks, ip) ==='",
-    "docker inspect ticktock-backend --format '{{json .NetworkSettings.Networks}}' 2>/dev/null || true",
+    "docker inspect ttt-backend --format '{{json .NetworkSettings.Networks}}' 2>/dev/null || true",
     "echo '=== listening sockets (80/443/8080/8443) ==='",
     "ss -ltnp | egrep ':(80|443|8080|8443)' || true",
     "echo '=== nginx.conf contents ==='",
@@ -121,7 +121,7 @@ else
     "echo '=== last 120 lines nginx logs (if present) ==='",
     "docker logs --tail=120 ticktock-nginx 2>&1 || true",
     "echo '=== last 120 lines backend logs ==='",
-    "docker logs --tail=120 ticktock-backend 2>&1 || true"
+    "docker logs --tail=120 ttt-backend 2>&1 || true"
   ]
 }
 JSON

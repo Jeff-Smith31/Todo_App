@@ -19,7 +19,7 @@ log "compose pull (if plugin available)"
 if $HAS_PLUGIN; then docker compose pull || true; fi
 
 log "remove stray proxy/autoheal to avoid name conflicts"
-docker rm -f ticktock-nginx ticktock-autoheal ticktock-caddy ticktock-certbot 2>/dev/null || true
+docker rm -f ttt-nginx ttt-autoheal ttt-certbot ticktock-nginx ticktock-autoheal ticktock-certbot 2>/dev/null || true
 
 # Ensure nginx.conf (host-mounted)
 API_SUBDOMAIN=${API_SUBDOMAIN:-api}
@@ -127,10 +127,10 @@ log "nginx via localhost test"
 curl -sk --max-time 10 -H "Host: ${APIDOM}" http://127.0.0.1/healthz || true
 
 log "nginx logs (last 160)"
-docker logs --tail=160 ticktock-nginx 2>&1 || true
+docker logs --tail=160 ttt-nginx 2>&1 || true
 
 log "backend logs (last 160)"
-docker logs --tail=160 ticktock-backend 2>&1 || true
+docker logs --tail=160 ttt-backend 2>&1 || true
 
 log "localhost backend health"
 curl -sS --max-time 6 http://localhost:8080/healthz || true

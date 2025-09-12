@@ -290,7 +290,7 @@ app.delete('/api/push/subscribe', authMiddleware, (req, res) => {
 app.get('/api/ping', (req, res) => {
   res.json({
     ok: true,
-    service: 'ticktock-backend',
+    service: 'ttt-backend',
     time: new Date().toISOString(),
     uptimeSec: Math.round(process.uptime())
   });

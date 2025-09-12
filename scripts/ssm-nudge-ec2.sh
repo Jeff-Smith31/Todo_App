@@ -59,8 +59,8 @@ cat > "$PARAMS_FILE" <<JSON
     "curl -sk --max-time 8 -H 'Host: ${APIDOM}' http://127.0.0.1/healthz || true",
     "curl -sS --max-time 6 http://localhost:8080/healthz || true",
     "echo --- tail nginx/backend logs ---",
-    "docker logs --tail=140 ticktock-nginx 2>&1 || true",
-    "docker logs --tail=140 ticktock-backend 2>&1 || true"
+    "docker logs --tail=140 ttt-nginx 2>&1 || true",
+    "docker logs --tail=140 ttt-backend 2>&1 || true"
   ]
 }
 JSON

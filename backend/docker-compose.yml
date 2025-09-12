@@ -4,7 +4,7 @@ services:
     build:
       context: ..
       dockerfile: backend/Dockerfile
-    container_name: ticktock-backend
+    container_name: ttt-backend
     restart: unless-stopped
     environment:
       - PORT=8080
@@ -33,7 +33,7 @@ services:
 
   nginx:
     image: nginx:alpine
-    container_name: ticktock-nginx
+    container_name: ttt-nginx
     restart: unless-stopped
     ports:
       - "80:80"
