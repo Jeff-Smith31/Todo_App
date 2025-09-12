@@ -478,7 +478,7 @@ jobs:
               "export API_SUBDOMAIN=${API_SUBDOMAIN}",
               "export DOMAIN_NAME=${DOMAIN_NAME}",
               "echo --- pull repo ---",
-              "if [ -d /opt/ticktock/.git ]; then git -C /opt/ticktock pull --rebase || true; fi",
+              "if [ -d /opt/ticktock/.git ]; then git -C /opt/ticktock fetch --all --prune || true; git -C /opt/ticktock reset --hard origin/main || true; git -C /opt/ticktock clean -fd -e .env || true; fi",
               "echo --- run nudge - nginx ---",
               "bash /opt/ticktock/scripts/ssm-nudge.sh",
               "echo --- docker ps ---",

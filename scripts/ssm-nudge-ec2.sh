@@ -50,7 +50,7 @@ cat > "$PARAMS_FILE" <<JSON
     "export API_SUBDOMAIN=${SUB}",
     "export DOMAIN_NAME=${DOM}",
     "echo --- pull repo ---",
-    "if [ -d /opt/ticktock/.git ]; then cd /opt/ticktock && git pull --rebase || true; fi",
+    "if [ -d /opt/ticktock/.git ]; then cd /opt/ticktock && git fetch --all --prune || true; git reset --hard origin/main || true; git clean -fd -e .env || true; fi",
     "echo --- run nudge ---",
     "bash /opt/ticktock/scripts/ssm-nudge.sh",
     "echo --- docker ps ---",

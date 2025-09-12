@@ -8,8 +8,13 @@ log() { printf "[%s] %s\n" "$(date -u +%FT%TZ)" "$*"; }
 
 cd /opt/ticktock 2>/dev/null || cd "$(dirname "$0")/.." || true
 
-log "git pull"
-if [ -d .git ]; then git pull --rebase || true; fi
+log "git sync (fetch + reset --hard origin/main)"
+if [ -d .git ]; then 
+  git fetch --all --prune || true
+  git reset --hard origin/main || true
+  # keep local .env intact
+  git clean -fd -e .env || true
+fi
 
 # Prefer compose plugin; fall back to docker-compose if present
 HAS_PLUGIN=false
