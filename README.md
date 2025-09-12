@@ -25,11 +25,11 @@ Run the backend locally (Docker)
   - bash backend/backend-up.sh http://localhost:8000
   - First run may need: chmod +x backend/backend-up.sh
 - The backend exposes HTTPS on 8443 (self‑signed dev cert) and optionally redirects 8080→8443.
-- Reverse proxy/TLS: Caddy is the supported option.
-  - Start Caddy locally (optional): cd backend && docker compose --profile proxy up -d caddy
-    - Or run: bash backend/caddy-up.sh
-  - If you previously had a directory named Caddyfile in this folder, remove it: rm -rf Caddyfile.
-  - Troubleshooting: If you see “no configuration file provided: not found”, you’re likely running docker compose outside the backend directory. Use cd backend … or pass -f backend/docker-compose.yml.
+- Reverse proxy/TLS: Nginx + Certbot is the supported option.
+  - Start Nginx locally (optional): docker compose up -d nginx
+    - Note: Local dev uses HTTP-only nginx.conf by default and proxies to the backend on 8080.
+  - If you previously had Caddy artifacts (Caddyfile, caddy-up.sh), they are no longer used.
+  - Troubleshooting: If you see “no configuration file provided: not found”, run docker compose from the repo root or pass -f accordingly.
 - Trust the cert once by visiting https://localhost:8443 in your browser.
 - Connect the frontend (choose one):
   - Easiest for dev: open your browser console on http://localhost:8000 and run:

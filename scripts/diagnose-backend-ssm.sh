@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Diagnose backend EC2 host via SSM. Gathers docker status, ports, Caddyfile, logs, and local health.
+# Diagnose backend EC2 host via SSM. Gathers docker status, ports, nginx.conf, logs, and local health.
 # Usage:
 #   scripts/diagnose-backend-ssm.sh [--repair] [BACKEND_STACK_NAME] [REGION]
 # Defaults:
@@ -52,26 +52,43 @@ if $REPAIR; then
   "commands": [
     "set -e",
     "cd /opt/ticktock || cd /",
-    "echo '=== ensure Caddyfile and start caddy ==='",
-    "if [ -d /opt/ticktock/Caddyfile ]; then rm -rf /opt/ticktock/Caddyfile; fi",
-    "echo '${APIDOM} {' > /opt/ticktock/Caddyfile",
-    "echo '  encode gzip' >> /opt/ticktock/Caddyfile",
-    "echo '  tls internal' >> /opt/ticktock/Caddyfile",
-    "echo '  reverse_proxy http://backend:8080' >> /opt/ticktock/Caddyfile",
-    "echo '}' >> /opt/ticktock/Caddyfile",
+    "echo '=== ensure nginx.conf and start nginx ==='",
+    "APID='${APIDOM}'",
+    "cat > /opt/ticktock/nginx.conf <<NCFG",
+    "user  nginx;",
+    "worker_processes  auto;",
+    "error_log  /var/log/nginx/error.log warn;",
+    "pid        /var/run/nginx.pid;",
+    "events { worker_connections 1024; }",
+    "http {",
+    "  include       /etc/nginx/mime.types;",
+    "  default_type  application/octet-stream;",
+    "  sendfile        on;",
+    "  keepalive_timeout 65;",
+    "  upstream ticktock_backend { server backend:8080; }",
+    "  server {",
+    "    listen 80 default_server;",
+    "    server_name \${APID};",
+    "    location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type 'text/plain'; }",
+    "    location = /healthz { proxy_set_header Host \$host; proxy_pass http://ticktock_backend/healthz; }",
+    "    location / { proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \$scheme; proxy_pass http://ticktock_backend; }",
+    "  }",
+    "}",
+    "NCFG",
     "NET=\$(docker network ls --format '{{.Name}}' | grep -E '^ticktock_default$' >/dev/null 2>&1 && echo ticktock_default || echo bridge)",
-    "docker rm -f ticktock-caddy || true",
-    "docker volume create caddy_data || true",
-    "docker run -d --name ticktock-caddy --network \$NET -p 80:80 -p 443:443 -v /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile -v caddy_data:/data --restart unless-stopped caddy:2 || true",
-    "docker network connect \$NET ticktock-caddy 2>/dev/null || true",
+    "docker rm -f ticktock-nginx || true",
+    "docker volume create letsencrypt || true",
+    "docker volume create certbot_challenges || true",
+    "docker run -d --name ticktock-nginx --network \$NET -p 80:80 -p 443:443 -v /opt/ticktock/nginx.conf:/etc/nginx/nginx.conf -v letsencrypt:/etc/letsencrypt -v certbot_challenges:/var/www/certbot --restart unless-stopped nginx:alpine || true",
+    "docker network connect \$NET ticktock-nginx 2>/dev/null || true",
     "echo '=== docker ps ==='",
     "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true",
     "echo '=== listening sockets (80/443/8080/8443) ==='",
     "ss -ltnp | egrep ':(80|443|8080|8443)' || true",
-    "echo '=== local caddy vhost health http://127.0.0.1/healthz (Host header) ==='",
+    "echo '=== local nginx vhost health http://127.0.0.1/healthz (Host header) ==='",
     "curl -sk --max-time 8 -H 'Host: ${APIDOM}' http://127.0.0.1/healthz || true",
-    "echo '=== last 80 lines caddy logs ==='",
-    "docker logs --tail=80 ticktock-caddy 2>&1 || true"
+    "echo '=== last 80 lines nginx logs (if present) ==='",
+    "docker logs --tail=80 ticktock-nginx 2>&1 || true"
   ]
 }
 JSON
@@ -93,16 +110,16 @@ else
     "docker inspect ticktock-backend --format '{{json .NetworkSettings.Networks}}' 2>/dev/null || true",
     "echo '=== listening sockets (80/443/8080/8443) ==='",
     "ss -ltnp | egrep ':(80|443|8080|8443)' || true",
-    "echo '=== Caddyfile contents ==='",
-    "if [ -d /opt/ticktock/Caddyfile ]; then echo '[WARN] Caddyfile is a directory'; ls -la /opt/ticktock/Caddyfile; else cat /opt/ticktock/Caddyfile 2>/dev/null || echo '[missing]'; fi",
+    "echo '=== nginx.conf contents ==='",
+    "cat /opt/ticktock/nginx.conf 2>/dev/null || echo '[missing]'",
     "echo '=== docker compose ps (if available) ==='",
     "if command -v docker-compose >/dev/null 2>&1; then docker-compose ps || true; else docker compose ps || true; fi",
     "echo '=== local backend health http://localhost:8080/healthz ==='",
     "curl -sS --max-time 6 http://localhost:8080/healthz || true",
-    "echo '=== local caddy vhost health http://127.0.0.1/healthz (Host header) ==='",
+    "echo '=== local nginx vhost health http://127.0.0.1/healthz (Host header) ==='",
     "H=${APIDOM:-api.local}; curl -sk --max-time 8 -H \"Host: $H\" http://127.0.0.1/healthz || true",
-    "echo '=== last 120 lines caddy logs (if present) ==='",
-    "docker logs --tail=120 ticktock-caddy 2>&1 || true",
+    "echo '=== last 120 lines nginx logs (if present) ==='",
+    "docker logs --tail=120 ticktock-nginx 2>&1 || true",
     "echo '=== last 120 lines backend logs ==='",
     "docker logs --tail=120 ticktock-backend 2>&1 || true"
   ]

@@ -31,19 +31,27 @@ services:
       retries: 3
       start_period: 30s
 
-  caddy:
-    image: caddy:2
-    container_name: ticktock-caddy
+  nginx:
+    image: nginx:alpine
+    container_name: ticktock-nginx
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - caddy_data:/data
+      - ../nginx.conf:/etc/nginx/nginx.conf
+      - letsencrypt:/etc/letsencrypt
+      - certbot_challenges:/var/www/certbot
     depends_on:
       - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 volumes:
   backend_data:
-  caddy_data:
+  letsencrypt:
+  certbot-challenges:

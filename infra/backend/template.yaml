@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: "Free-tier EC2 backend for TickTock Tasks with automatic TLS via Caddy and Route53 DNS"
+Description: "Free-tier EC2 backend for TickTock Tasks with Nginx (reverse proxy) and automatic TLS via Let's Encrypt (Certbot) and Route53 DNS"
 
 Parameters:
   DomainName:
@@ -150,7 +150,7 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
-          # Install docker, compose plugin, caddy, git, jq
+          # Install docker, compose plugin, git, jq (Nginx runs via Docker)
           (dnf update -y || yum update -y) || true
           (dnf install -y docker docker-compose-plugin git jq || yum install -y docker git jq) || true
           # Fallback for compose if plugin missing
@@ -159,23 +159,7 @@ Resources:
               curl -L "https://github.com/docker/compose/releases/download/v2.27.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose || true
             fi
           fi
-          # Caddy for automatic TLS (robust install across distros)
-          if command -v dnf >/dev/null 2>&1; then
-            ELVER=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | tr -d '"' | cut -d. -f1)
-            [ -z "$ELVER" ] && ELVER=9
-            (dnf install -y dnf-plugins-core || true)
-            (dnf config-manager --add-repo "https://dl.cloudsmith.io/public/caddy/stable/rpm/el/$ELVER.repo" || true)
-            (dnf install -y caddy || true)
-          else
-            ELVER=$(awk -F= '/^VERSION_ID/{print $2}' /etc/os-release | tr -d '"' | cut -d. -f1)
-            [ -z "$ELVER" ] && ELVER=7
-            (yum install -y yum-utils || true)
-            (yum-config-manager --add-repo "https://dl.cloudsmith.io/public/caddy/stable/rpm/el/$ELVER.repo" || true)
-            (yum install -y caddy || true)
-          fi
           systemctl enable --now docker
-          # Ensure systemd Caddy is not running; we'll use dockerized Caddy
-          systemctl disable --now caddy || true
 
           # Clone repo
           mkdir -p /opt/ticktock
@@ -185,7 +169,7 @@ Resources:
           cd /opt/ticktock
           chmod +x ./backend-up.sh || true
 
-          # Configure Docker logging and containerized Caddy reverse proxy via override before first start
+          # Configure Docker logging and containerized Nginx reverse proxy via override before first start
           cat > /opt/ticktock/docker-compose.override.yml <<OVR
           version: '3.8'
           services:
@@ -196,20 +180,21 @@ Resources:
                   awslogs-region: ${AWS::Region}
                   awslogs-group: /TickTock/Backend-${DomainName}
                   awslogs-create-group: "true"
-            caddy:
-              image: caddy:2
-              container_name: ticktock-caddy
+            nginx:
+              image: nginx:alpine
+              container_name: ticktock-nginx
               restart: unless-stopped
               ports:
                 - "80:80"
                 - "443:443"
               volumes:
-                - /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile
-                - caddy_data:/data
+                - /opt/ticktock/nginx.conf:/etc/nginx/nginx.conf
+                - letsencrypt:/etc/letsencrypt
+                - certbot_challenges:/var/www/certbot
               depends_on:
                 - backend
               healthcheck:
-                test: ["CMD-SHELL", "wget -qO- --header='Host: ${ApiSubdomain}.${DomainName}' http://127.0.0.1/healthz >/dev/null || exit 1"]
+                test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
                 interval: 30s
                 timeout: 5s
                 retries: 3
@@ -220,6 +205,12 @@ Resources:
                   awslogs-region: ${AWS::Region}
                   awslogs-group: /TickTock/Backend-${DomainName}
                   awslogs-create-group: "true"
+            certbot:
+              image: certbot/certbot
+              container_name: ticktock-certbot
+              volumes:
+                - letsencrypt:/etc/letsencrypt
+                - certbot_challenges:/var/www/certbot
             autoheal:
               image: willfarrell/autoheal
               container_name: ticktock-autoheal
@@ -230,7 +221,8 @@ Resources:
               volumes:
                 - /var/run/docker.sock:/var/run/docker.sock
           volumes:
-            caddy_data:
+            letsencrypt:
+            certbot_challenges:
           OVR
 
           # Prepare env and start backend (write .env with first origin), then widen to all AllowedOrigins
@@ -246,43 +238,90 @@ Resources:
             fi
           fi
 
-          # Write Caddyfile before first start so proxy is ready immediately
-          cat >/opt/ticktock/Caddyfile <<CFG
-          ${ApiSubdomain}.${DomainName} {
-            encode gzip
-            tls internal
-            reverse_proxy http://backend:8080
+          # Write initial Nginx config (HTTP only + ACME webroot) so proxy is ready immediately
+          cat >/opt/ticktock/nginx.conf <<CFG
+          user  nginx;
+          worker_processes  auto;
+          error_log  /var/log/nginx/error.log warn;
+          pid        /var/run/nginx.pid;
+          events { worker_connections 1024; }
+          http {
+            include       /etc/nginx/mime.types;
+            default_type  application/octet-stream;
+            sendfile        on;
+            keepalive_timeout 65;
+            upstream ticktock_backend { server backend:8080; }
+            server {
+              listen 80 default_server;
+              server_name ${ApiSubdomain}.${DomainName};
+              location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type "text/plain"; }
+              location = /healthz { proxy_set_header Host \$host; proxy_pass http://ticktock_backend/healthz; }
+              location / { proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \$scheme; proxy_pass http://ticktock_backend; }
+            }
           }
           CFG
 
-          # Start containers
-          # Remove stray containers to avoid name conflicts with compose
-          docker rm -f ticktock-caddy ticktock-autoheal 2>/dev/null || true
+          # Start containers (ensure backend + nginx)
+          docker rm -f ticktock-nginx ticktock-autoheal 2>/dev/null || true
           if command -v docker-compose >/dev/null 2>&1; then
             docker-compose up -d || true
           else
             docker compose up -d || true
           fi
 
-          # Configure Caddyfile for containerized Caddy reverse proxy
-          cat >/opt/ticktock/Caddyfile <<CFG
-          ${ApiSubdomain}.${DomainName} {
-            encode gzip
-            tls admin@${DomainName}
-            reverse_proxy http://backend:8080
+          # Obtain/renew certificate via Certbot webroot (non-fatal if it fails)
+          if command -v docker-compose >/dev/null 2>&1; then
+            docker-compose run --rm certbot certonly --webroot -w /var/www/certbot -d ${ApiSubdomain}.${DomainName} --agree-tos --email admin@${DomainName} -n || true
+          else
+            docker compose run --rm certbot certonly --webroot -w /var/www/certbot -d ${ApiSubdomain}.${DomainName} --agree-tos --email admin@${DomainName} -n || true
+          fi
+
+          # Write HTTPS-enabled Nginx config
+          cat >/opt/ticktock/nginx.conf <<CFG
+          user  nginx;
+          worker_processes  auto;
+          error_log  /var/log/nginx/error.log warn;
+          pid        /var/run/nginx.pid;
+          events { worker_connections 1024; }
+          http {
+            include       /etc/nginx/mime.types;
+            default_type  application/octet-stream;
+            sendfile        on;
+            keepalive_timeout 65;
+            upstream ticktock_backend { server backend:8080; }
+            server {
+              listen 80;
+              server_name ${ApiSubdomain}.${DomainName};
+              location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type "text/plain"; }
+              return 301 https://\$host\$request_uri;
+            }
+            server {
+              listen 443 ssl http2;
+              server_name ${ApiSubdomain}.${DomainName};
+              ssl_certificate /etc/letsencrypt/live/${ApiSubdomain}.${DomainName}/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/${ApiSubdomain}.${DomainName}/privkey.pem;
+              ssl_protocols TLSv1.2 TLSv1.3;
+              ssl_ciphers HIGH:!aNULL:!MD5;
+              location = /healthz { proxy_set_header Host \$host; proxy_pass http://ticktock_backend/healthz; }
+              location / {
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_pass http://ticktock_backend;
+              }
+            }
           }
           CFG
-          # Ensure systemd Caddy is stopped (free ports 80/443)
-          systemctl stop caddy || true
-          # Restart containers to pick up caddy service/config
-          # Remove stray containers to avoid name conflicts with compose
-          docker rm -f ticktock-caddy ticktock-autoheal 2>/dev/null || true
+
+          # Reload Nginx to pick up HTTPS config
           if command -v docker-compose >/dev/null 2>&1; then
-            docker-compose up -d || true
+            docker-compose exec -T nginx nginx -s reload || docker-compose restart nginx || true
           else
-            docker compose up -d || true
+            docker compose exec -T nginx nginx -s reload || docker compose restart nginx || true
           fi
-          # Wait for Caddy to listen on 80/443
+
+          # Wait for Nginx to listen on 80/443
           for i in $(seq 1 60); do
             if ss -ltn 2>/dev/null | grep -E 'LISTEN.+:(80|443)'; then
               break

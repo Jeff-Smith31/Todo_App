@@ -119,7 +119,7 @@ function issueToken(user) {
 }
 
 function setAuthCookie(res, token) {
-  // When served over HTTPS in production (behind Caddy on api.<domain>),
+  // When served over HTTPS in production (behind Nginx on api.<domain>),
   // the web app runs on a different site (https://<domain>) → cross-site cookie.
   // Modern browsers require SameSite=None; Secure for such cookies.
   const cookieOpts = {
