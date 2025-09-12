@@ -85,8 +85,8 @@ if $REPAIR; then
     "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true",
     "echo '=== listening sockets (80/443/8080/8443) ==='",
     "ss -ltnp | egrep ':(80|443|8080|8443)' || true",
-    "echo '=== local nginx vhost health http://127.0.0.1/healthz (Host header) ==='",
-    "curl -sk --max-time 8 -H 'Host: ${APIDOM}' http://127.0.0.1/healthz || true",
+    "echo '=== local nginx vhost health https://127.0.0.1/healthz ==='",
+    "curl -sk --max-time 8 https://127.0.0.1/healthz || true",
     "echo '=== last 80 lines nginx logs (if present) ==='",
     "docker logs --tail=80 ttt-nginx 2>&1 || true"
   ]
@@ -116,8 +116,8 @@ else
     "if command -v docker-compose >/dev/null 2>&1; then docker-compose ps || true; else docker compose ps || true; fi",
     "echo '=== local backend health http://localhost:8080/healthz ==='",
     "curl -sS --max-time 6 http://localhost:8080/healthz || true",
-    "echo '=== local nginx vhost health http://127.0.0.1/healthz (Host header) ==='",
-    "H=${APIDOM:-api.local}; curl -sk --max-time 8 -H \"Host: $H\" http://127.0.0.1/healthz || true",
+    "echo '=== local nginx vhost health https://127.0.0.1/healthz ==='",
+    "curl -sk --max-time 8 https://127.0.0.1/healthz || true",
     "echo '=== last 120 lines nginx logs (if present) ==='",
     "docker logs --tail=120 ttt-nginx 2>&1 || true",
     "echo '=== last 120 lines backend logs ==='",

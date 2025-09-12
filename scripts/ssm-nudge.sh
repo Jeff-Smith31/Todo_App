@@ -50,7 +50,7 @@ services:
     depends_on:
       - backend
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --no-check-certificate https://127.0.0.1/healthz >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -201,7 +201,7 @@ log "listening sockets"
 ss -ltnp | egrep ':(80|443|8080|8443)' || true
 
 log "nginx via localhost test"
-curl -sk --max-time 10 -H "Host: ${APIDOM}" http://127.0.0.1/healthz || true
+curl -sk --max-time 10 https://127.0.0.1/healthz || true
 
 log "nginx logs (last 160)"
 docker logs --tail=160 ttt-nginx 2>&1 || true

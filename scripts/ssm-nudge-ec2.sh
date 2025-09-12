@@ -56,7 +56,7 @@ cat > "$PARAMS_FILE" <<JSON
     "echo --- docker ps ---",
     "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true",
     "echo --- localhost health - nginx and backend ---",
-    "curl -sk --max-time 8 -H 'Host: ${APIDOM}' http://127.0.0.1/healthz || true",
+    "curl -sk --max-time 8 https://127.0.0.1/healthz || true",
     "curl -sS --max-time 6 http://localhost:8080/healthz || true",
     "echo --- tail nginx/backend logs ---",
     "docker logs --tail=140 ttt-nginx 2>&1 || true",
