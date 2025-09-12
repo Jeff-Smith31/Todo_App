@@ -76,7 +76,7 @@ if $REPAIR; then
     "}",
     "NCFG",
     "NET=\$(docker network ls --format '{{.Name}}' | grep -E '^ticktock_default$' >/dev/null 2>&1 && echo ticktock_default || echo bridge)",
-    "docker rm -f ttt-nginx || true",
+    "docker rm -f ttt-nginx ticktock-nginx ticktock-caddy || true",
     "docker volume create letsencrypt || true",
     "docker volume create certbot_challenges || true",
     "docker run -d --name ttt-nginx --network \$NET -p 80:80 -p 443:443 -v /opt/ticktock/nginx.conf:/etc/nginx/nginx.conf -v letsencrypt:/etc/letsencrypt -v certbot_challenges:/var/www/certbot --restart unless-stopped nginx:alpine || true",
@@ -119,7 +119,7 @@ else
     "echo '=== local nginx vhost health http://127.0.0.1/healthz (Host header) ==='",
     "H=${APIDOM:-api.local}; curl -sk --max-time 8 -H \"Host: $H\" http://127.0.0.1/healthz || true",
     "echo '=== last 120 lines nginx logs (if present) ==='",
-    "docker logs --tail=120 ticktock-nginx 2>&1 || true",
+    "docker logs --tail=120 ttt-nginx 2>&1 || true",
     "echo '=== last 120 lines backend logs ==='",
     "docker logs --tail=120 ttt-backend 2>&1 || true"
   ]

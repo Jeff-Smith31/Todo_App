@@ -262,7 +262,7 @@ Resources:
           CFG
 
           # Start containers (ensure backend + nginx)
-          docker rm -f ttt-nginx ttt-autoheal 2>/dev/null || true
+          docker rm -f ttt-nginx ttt-autoheal ticktock-caddy 2>/dev/null || true
           if command -v docker-compose >/dev/null 2>&1; then
             docker-compose up -d || true
           else

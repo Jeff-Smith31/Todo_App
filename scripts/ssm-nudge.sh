@@ -19,7 +19,7 @@ log "compose pull (if plugin available)"
 if $HAS_PLUGIN; then docker compose pull || true; fi
 
 log "remove stray proxy/autoheal to avoid name conflicts"
-docker rm -f ttt-nginx ttt-autoheal ttt-certbot ticktock-nginx ticktock-autoheal ticktock-certbot 2>/dev/null || true
+docker rm -f ttt-nginx ttt-autoheal ttt-certbot ticktock-nginx ticktock-autoheal ticktock-certbot ticktock-caddy 2>/dev/null || true
 
 # Ensure nginx.conf (host-mounted)
 API_SUBDOMAIN=${API_SUBDOMAIN:-api}
