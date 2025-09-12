@@ -54,4 +54,4 @@ services:
 volumes:
   backend_data:
   letsencrypt:
-  certbot-challenges:
+  certbot_challenges:

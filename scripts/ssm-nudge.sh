@@ -76,7 +76,7 @@ volumes:
 OVR
 
 log "write initial HTTP nginx.conf for ${APIDOM}"
-cat > "$NGINX_CONF" <<'CFG'
+cat > "$NGINX_CONF" <<CFG
 user  nginx;
 worker_processes  auto;
 error_log  /var/log/nginx/error.log warn;
@@ -121,23 +121,22 @@ fi
 
 # Ensure certificate files exist; generate self-signed fallback if Let's Encrypt not ready
 log "ensure certificate files exist (fallback to self-signed if missing)"
-DOM="${APIDOM}"
-docker run --rm -e DOM="$DOM" -v letsencrypt:/etc/letsencrypt nginx:alpine sh -c '
-set -e
-CERT_DIR="/etc/letsencrypt/live/${DOM}"
-mkdir -p "${CERT_DIR}"
-if [ ! -s "${CERT_DIR}/privkey.pem" ] || [ ! -s "${CERT_DIR}/fullchain.pem" ]; then
-  echo "Generating self-signed certificate for ${DOM} ..."
-  openssl req -x509 -nodes -days 365 -subj "/CN=${DOM}" -newkey rsa:2048 \
-    -keyout "${CERT_DIR}/privkey.pem" \
-    -out "${CERT_DIR}/fullchain.pem"
-else
-  echo "Existing certificate found for ${DOM}"
+# Ensure openssl available on host quietly
+(command -v openssl >/dev/null 2>&1 || dnf install -y openssl || yum install -y openssl || true) >/dev/null 2>&1 || true
+VOL_DIR=$(docker volume inspect letsencrypt --format '{{.Mountpoint}}' 2>/dev/null || echo '')
+if [ -n "$VOL_DIR" ]; then
+  CERT_DIR="$VOL_DIR/live/${APIDOM}"
+  mkdir -p "$CERT_DIR"
+  if [ ! -s "$CERT_DIR/privkey.pem" ] || [ ! -s "$CERT_DIR/fullchain.pem" ]; then
+    echo "Generating self-signed certificate at $CERT_DIR ..."
+    openssl req -x509 -nodes -days 365 -subj "/CN=${APIDOM}" -newkey rsa:2048 \
+      -keyout "$CERT_DIR/privkey.pem" \
+      -out "$CERT_DIR/fullchain.pem" || true
+  fi
 fi
-' || true
 
 log "write HTTPS nginx.conf"
-cat > "$NGINX_CONF" <<'CFG'
+cat > "$NGINX_CONF" <<CFG
 user  nginx;
 worker_processes  auto;
 error_log  /var/log/nginx/error.log warn;
@@ -153,7 +152,7 @@ http {
     listen 80;
     server_name ${APIDOM};
     location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type "text/plain"; }
-    return 301 https://$host$request_uri;
+    return 301 https://\$host\$request_uri;
   }
   server {
     listen 443 ssl http2;
