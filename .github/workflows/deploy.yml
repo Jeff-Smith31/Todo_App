@@ -479,7 +479,7 @@ jobs:
               "export DOMAIN_NAME=${DOMAIN_NAME}",
               "echo --- pull repo ---",
               "if [ -d /opt/ticktock/.git ]; then git -C /opt/ticktock pull --rebase || true; fi",
-              "echo --- run nudge (nginx) ---",
+              "echo --- run nudge - nginx ---",
               "bash /opt/ticktock/scripts/ssm-nudge.sh",
               "echo --- docker ps ---",
               "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true",
