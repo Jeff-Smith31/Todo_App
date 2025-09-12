@@ -27,8 +27,51 @@ DOMAIN_NAME=${DOMAIN_NAME:-ticktocktasks.com}
 APIDOM=${APIDOM:-${API_SUBDOMAIN}.${DOMAIN_NAME}}
 NGINX_CONF=/opt/ticktock/nginx.conf
 
+log "ensure docker-compose.override.yml defines nginx/certbot/autoheal"
+cat > /opt/ticktock/docker-compose.override.yml <<'OVR'
+version: '3.8'
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: ttt-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/ticktock/nginx.conf:/etc/nginx/nginx.conf
+      - letsencrypt:/etc/letsencrypt
+      - certbot_challenges:/var/www/certbot
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+  certbot:
+    image: certbot/certbot
+    container_name: ttt-certbot
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_challenges:/var/www/certbot
+  autoheal:
+    image: willfarrell/autoheal
+    container_name: ttt-autoheal
+    restart: unless-stopped
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+      - AUTOHEAL_INTERVAL=10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+volumes:
+  letsencrypt:
+  certbot_challenges:
+OVR
+
 log "write initial HTTP nginx.conf for ${APIDOM}"
-cat > "$NGINX_CONF" <<CFG
+cat > "$NGINX_CONF" <<'CFG'
 user  nginx;
 worker_processes  auto;
 error_log  /var/log/nginx/error.log warn;
@@ -72,7 +115,7 @@ else
 fi
 
 log "write HTTPS nginx.conf"
-cat > "$NGINX_CONF" <<CFG
+cat > "$NGINX_CONF" <<'CFG'
 user  nginx;
 worker_processes  auto;
 error_log  /var/log/nginx/error.log warn;
