@@ -250,7 +250,7 @@ Resources:
           cat >/opt/ticktock/Caddyfile <<CFG
           ${ApiSubdomain}.${DomainName} {
             encode gzip
-            tls admin@${DomainName}
+            tls internal
             reverse_proxy http://backend:8080
           }
           CFG
