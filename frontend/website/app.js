@@ -295,7 +295,7 @@
           } else {
             elements.frequency.value = 'custom';
             elements.customWrap.classList.remove('hidden');
-            elements.customDays.value = String(t.everyDays);
+            // No numeric custom interval; leave weekday selection empty by default
           }
           elements.nextDue.value = t.nextDue;
           elements.remindAt.value = t.remindAt;
@@ -364,7 +364,6 @@
     elements.title.value = '';
     elements.notes.value = '';
     elements.frequency.value = '1';
-    elements.customDays.value = '2';
     elements.customWrap.classList.add('hidden');
     elements.nextDue.value = todayStr();
     elements.remindAt.value = '09:00';

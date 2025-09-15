@@ -281,7 +281,7 @@
           } else {
             elements.frequency.value = 'custom';
             elements.customWrap.classList.remove('hidden');
-            elements.customDays.value = String(t.everyDays);
+            // No numeric custom interval; leave weekday selection empty by default
           }
           elements.nextDue.value = t.nextDue;
           elements.remindAt.value = t.remindAt;
@@ -309,13 +309,15 @@
     e.preventDefault();
     const id = elements.id.value || cryptoRandomId();
     const freqVal = elements.frequency.value;
-    const everyDays = freqVal === 'custom' ? Math.max(1, parseInt(elements.customDays.value || '1', 10)) : parseInt(freqVal, 10);
+    const scheduleDays = (freqVal === 'custom') ? Array.from(document.querySelectorAll('#custom-days-wrap input.wd')).filter(b=>b.checked).map(b=>parseInt(b.value,10)) : undefined;
+    const everyDays = freqVal === 'custom' ? 7 : parseInt(freqVal, 10);
 
     const t = {
       id,
       title: elements.title.value.trim(),
       notes: elements.notes.value.trim(),
       everyDays,
+      scheduleDays,
       nextDue: elements.nextDue.value,
       remindAt: elements.remindAt.value,
       priority: false,
@@ -348,7 +350,6 @@
     elements.title.value = '';
     elements.notes.value = '';
     elements.frequency.value = '1';
-    elements.customDays.value = '2';
     elements.customWrap.classList.add('hidden');
     elements.nextDue.value = todayStr();
     elements.remindAt.value = '09:00';
