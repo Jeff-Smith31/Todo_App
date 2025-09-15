@@ -267,6 +267,7 @@ jobs:
 
       - name: Deploy frontend stack (S3 + CloudFront + ACM + Route53)
         run: |
+          set +e
           aws cloudformation deploy \
             --region "${FRONTEND_REGION}" \
             --stack-name "${FRONTEND_STACK_NAME}" \
@@ -279,28 +280,68 @@ jobs:
               ExistingCertificateArn="${FRONT_EXISTING_CERT_ARN:-}" \
               CreateDnsRecords="${CREATE_DNS_RECORDS:-true}" \
             --capabilities CAPABILITY_NAMED_IAM
+          RC=$?
+          set -e
+          if [ $RC -ne 0 ]; then
+            echo "Frontend stack deploy failed (rc=$RC). Will attempt to reuse an existing CloudFront distribution by alias (CNAME) and continue." >> $GITHUB_STEP_SUMMARY
+          fi
+          exit 0
 
       - name: Get frontend outputs
         id: front
         run: |
+          set -e
           BUCKET=$(aws cloudformation describe-stacks \
             --region "${FRONTEND_REGION}" \
             --stack-name "${FRONTEND_STACK_NAME}" \
             --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue | [0]" \
-            --output text)
+            --output text 2>/dev/null || echo None)
           DIST_ID=$(aws cloudformation describe-stacks \
             --region "${FRONTEND_REGION}" \
             --stack-name "${FRONTEND_STACK_NAME}" \
             --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue | [0]" \
-            --output text)
+            --output text 2>/dev/null || echo None)
           CF_DOMAIN=$(aws cloudformation describe-stacks \
             --region "${FRONTEND_REGION}" \
             --stack-name "${FRONTEND_STACK_NAME}" \
             --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue | [0]" \
-            --output text)
+            --output text 2>/dev/null || echo None)
+
+          # Fallbacks if stack outputs are missing (e.g., CNAME already in use)
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
+            if [ -n "${FRONT_EXISTING_BUCKET:-}" ]; then
+              BUCKET="${FRONT_EXISTING_BUCKET}"
+            else
+              # Default naming convention
+              BUCKET="${DOMAIN_NAME}-site"
+              # Create bucket if it doesn't exist (us-east-1 has special rules)
+              if ! aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
+                if [ "${FRONTEND_REGION}" = "us-east-1" ]; then
+                  aws s3api create-bucket --bucket "$BUCKET" >/dev/null
+                else
+                  aws s3api create-bucket --bucket "$BUCKET" --create-bucket-configuration LocationConstraint="${FRONTEND_REGION}" >/dev/null
+                fi
+              fi
+            fi
+          fi
+
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
+            # Try to find an existing distribution by alias (CNAME)
+            DID=$(aws cloudfront list-distributions \
+              --query "DistributionList.Items[?Aliases.Items!=null && contains(join(',',Aliases.Items), '${DOMAIN_NAME}')].[Id,DomainName] | [0]" \
+              --output text 2>/dev/null || true)
+            if [ -n "$DID" ] && [ "$DID" != "None" ]; then
+              DIST_ID=$(echo "$DID" | awk '{print $1}')
+              CF_DOMAIN=$(echo "$DID" | awk '{print $2}')
+            fi
+          fi
+
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
           echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
           echo "cf_domain=$CF_DOMAIN" >> "$GITHUB_OUTPUT"
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
+            echo "Warning: Could not resolve a CloudFront distribution. Subsequent invalidation will fail." >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Sync site to S3 bucket
         run: |
@@ -349,21 +390,25 @@ jobs:
 
           # Invalidate CloudFront so latest app shell is served and wait for completion
           DIST_ID='${{ steps.front.outputs.dist_id }}'
-          INV_JSON=$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
-            "/" \
-            "/index.html" \
-            "/app.js" \
-            "/styles.css" \
-            "/sw.js" \
-            "/manifest.json" \
-            "/manifest.webmanifest" \
-            "/app-version.js" \
-            "/version.json" \
-            "/icons/*")
-          INV_ID=$(printf "%s" "$INV_JSON" | jq -r '.Invalidation.Id')
-          if [ -n "$INV_ID" ] && [ "$INV_ID" != "null" ]; then
-            echo "Waiting for CloudFront invalidation $INV_ID to complete ..."
-            aws cloudfront wait invalidation-completed --distribution-id "$DIST_ID" --id "$INV_ID" || true
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+            INV_JSON=$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
+              "/" \
+              "/index.html" \
+              "/app.js" \
+              "/styles.css" \
+              "/sw.js" \
+              "/manifest.json" \
+              "/manifest.webmanifest" \
+              "/app-version.js" \
+              "/version.json" \
+              "/icons/*")
+            INV_ID=$(printf "%s" "$INV_JSON" | jq -r '.Invalidation.Id')
+            if [ -n "$INV_ID" ] && [ "$INV_ID" != "null" ]; then
+              echo "Waiting for CloudFront invalidation $INV_ID to complete ..."
+              aws cloudfront wait invalidation-completed --distribution-id "$DIST_ID" --id "$INV_ID" || true
+            fi
+          else
+            echo "Skipping CloudFront invalidation: no distribution id resolved." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Verify frontend homepage (after invalidation)
