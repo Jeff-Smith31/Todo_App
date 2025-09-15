@@ -9,6 +9,7 @@
   const runtimeBE = hasRuntimeBE ? runtimeCfg.BACKEND_URL : undefined; // allow empty string intentionally
   // No auto-derivation of api.<domain>; rely on config.js (window.RUNTIME_CONFIG) or window.BACKEND_URL
   const BACKEND_URL = (runtimeBE ?? window.BACKEND_URL ?? '');
+  let authToken = localStorage.getItem('tt_auth_token') || '';
   const API = createApiClient(BACKEND_URL);
 
   /** Data Types
@@ -776,7 +777,12 @@
   // Simple API client
   function createApiClient(base){
     const baseUrl = (base || '').replace(/\/$/, '');
-    const opts = { credentials: 'include', headers: { 'Content-Type': 'application/json' } };
+    const common = { credentials: 'include' };
+    const buildHeaders = () => {
+      const h = { 'Content-Type': 'application/json' };
+      if (authToken) h['Authorization'] = 'Bearer ' + authToken;
+      return h;
+    };
     async function handle(res){
       const ct = res.headers.get('content-type') || '';
       const data = ct.includes('application/json') ? await res.json().catch(()=>null) : await res.text();
@@ -784,17 +790,30 @@
       return data;
     }
     return {
-      async register(email, password){ return handle(await fetch(baseUrl + '/api/auth/register', { method: 'POST', ...opts, body: JSON.stringify({ email, password }) })); },
-      async login(email, password){ return handle(await fetch(baseUrl + '/api/auth/login', { method: 'POST', ...opts, body: JSON.stringify({ email, password }) })); },
-      async logout(){ return handle(await fetch(baseUrl + '/api/auth/logout', { method: 'POST', ...opts })); },
-      async me(){ try { const r = await fetch(baseUrl + '/api/auth/me', { ...opts }); if (!r.ok) return null; const j = await r.json(); return j.user; } catch { return null; } },
-      async getTasks(){ const j = await handle(await fetch(baseUrl + '/api/tasks', { ...opts })); return j.tasks; },
-      async createTask(t){ return handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...opts, body: JSON.stringify(t) })); },
-      async updateTask(t){ return handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...opts, body: JSON.stringify(t) })); },
-      async deleteTask(id){ return handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(id), { method: 'DELETE', ...opts })); },
-      async getVapidKey(){ return handle(await fetch(baseUrl + '/api/push/vapid-public-key', { ...opts })); },
-      async subscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'POST', ...opts, body: JSON.stringify(sub) })); },
-      async unsubscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'DELETE', ...opts, body: JSON.stringify({ endpoint: sub.endpoint }) })); },
+      async register(email, password){
+        const data = await handle(await fetch(baseUrl + '/api/auth/register', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ email, password }) }));
+        if (data && data.token) { authToken = data.token; localStorage.setItem('tt_auth_token', authToken); }
+        return data;
+      },
+      async login(email, password){
+        const data = await handle(await fetch(baseUrl + '/api/auth/login', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ email, password }) }));
+        if (data && data.token) { authToken = data.token; localStorage.setItem('tt_auth_token', authToken); }
+        return data;
+      },
+      async logout(){
+        try { await handle(await fetch(baseUrl + '/api/auth/logout', { method: 'POST', ...common, headers: buildHeaders() })); } finally {
+          authToken = ''; localStorage.removeItem('tt_auth_token');
+        }
+        return { ok: true };
+      },
+      async me(){ try { const r = await fetch(baseUrl + '/api/auth/me', { ...common, headers: buildHeaders() }); if (!r.ok) return null; const j = await r.json(); return j.user; } catch { return null; } },
+      async getTasks(){ const j = await handle(await fetch(baseUrl + '/api/tasks', { ...common, headers: buildHeaders() })); return j.tasks; },
+      async createTask(t){ return handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
+      async updateTask(t){ return handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
+      async deleteTask(id){ return handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(id), { method: 'DELETE', ...common, headers: buildHeaders() })); },
+      async getVapidKey(){ return handle(await fetch(baseUrl + '/api/push/vapid-public-key', { ...common, headers: buildHeaders() })); },
+      async subscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(sub) })); },
+      async unsubscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'DELETE', ...common, headers: buildHeaders(), body: JSON.stringify({ endpoint: sub.endpoint }) })); },
     };
   }
 
