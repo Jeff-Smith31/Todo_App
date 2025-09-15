@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: us-east-1  # ACM for CloudFront must be in us-east-1
-      STACK_NAME: tictock-frontend
+      STACK_NAME: ttt-frontend
       DOMAIN_NAME: ticktocktasks.com
     steps:
       - name: Checkout
