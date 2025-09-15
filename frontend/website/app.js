@@ -8,7 +8,7 @@
   const hasRuntimeBE = Object.prototype.hasOwnProperty.call(runtimeCfg, 'BACKEND_URL');
   const runtimeBE = hasRuntimeBE ? runtimeCfg.BACKEND_URL : undefined; // allow empty string intentionally
   // No auto-derivation of api.<domain>; rely on config.js or user override in localStorage
-  const BACKEND_URL = (runtimeBE ?? window.BACKEND_URL ?? localStorage.getItem('tt_backend_url') ?? '');
+  const BACKEND_URL = (runtimeBE ?? window.BACKEND_URL ?? '');
   const API = createApiClient(BACKEND_URL);
 
   /** Data Types
@@ -169,7 +169,6 @@
 
     // Backend mode: check session and sync; otherwise local-only
     // Also show connectivity diagnostics and allow overriding the backend URL from the login page.
-    setupBackendUrlUi();
     await updateBackendConnectivityStatus();
 
     if (BACKEND_URL) {
