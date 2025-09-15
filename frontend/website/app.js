@@ -140,9 +140,19 @@
     }
     function hideInstall(){ if (elements.installBtn) elements.installBtn.style.display = 'none'; }
     function showInstall(){ if (elements.installBtn) elements.installBtn.style.display = 'inline-block'; }
-    // Initial visibility: hide if installed or in native app
+    function isIosSafari(){
+      const ua = navigator.userAgent || navigator.vendor || window.opera || '';
+      const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      const isSafari = /^((?!chrome|android).)*safari/i.test(ua);
+      return isIOS && isSafari;
+    }
+    // Initial visibility logic: if not installed and not inside native webview, show the button.
     if (elements.installBtn){
-      if (isStandalone() || isNativeWebView()) hideInstall();
+      if (isStandalone() || isNativeWebView()) {
+        hideInstall();
+      } else {
+        showInstall();
+      }
       window.addEventListener('appinstalled', hideInstall);
       if (window.matchMedia){
         try { window.matchMedia('(display-mode: standalone)').addEventListener('change', () => { if (isStandalone()) hideInstall(); }); } catch {}
@@ -154,13 +164,28 @@
       deferredPrompt = e;
       showInstall();
     });
+    function showInstallHelp(){
+      // Minimal, text-only guidance to keep footprint small
+      if (isIosSafari()){
+        alert('To install: Tap the Share button, then "Add to Home Screen". This adds TickTock Tasks to your Home Screen with notifications.');
+      } else {
+        alert('Your browser did not offer an install prompt. You can still add this app to your Home Screen from your browser menu (Add to Home Screen or Install app).');
+      }
+    }
     if (elements.installBtn){
       elements.installBtn.addEventListener('click', async () => {
-        if (!deferredPrompt) return;
-        deferredPrompt.prompt();
-        await deferredPrompt.userChoice;
-        deferredPrompt = null;
-        hideInstall();
+        if (isStandalone() || isNativeWebView()) { hideInstall(); return; }
+        if (deferredPrompt){
+          try {
+            deferredPrompt.prompt();
+            await deferredPrompt.userChoice;
+          } catch {}
+          deferredPrompt = null;
+          hideInstall();
+        } else {
+          // Fallback: show simple guidance when no install prompt is available yet (e.g., iOS Safari)
+          showInstallHelp();
+        }
       });
     }
 

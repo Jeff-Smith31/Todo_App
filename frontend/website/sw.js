@@ -41,7 +41,8 @@ self.addEventListener('push', (event) => {
     icon: data.icon || '/icons/logo.svg',
     badge: data.badge || '/icons/logo.svg',
     tag: data.taskId ? `task-${data.taskId}` : undefined,
-    data
+    data,
+    requireInteraction: true
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });

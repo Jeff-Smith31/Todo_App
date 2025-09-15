@@ -118,6 +118,7 @@ const taskSchema = Joi.object({
   id: Joi.string().optional(),
   title: Joi.string().min(1).max(255).required(),
   notes: Joi.string().allow('').max(1000).optional(),
+  category: Joi.string().max(100).optional(),
   everyDays: Joi.number().integer().min(1).max(3650).required(),
   scheduleDays: Joi.array().items(Joi.number().integer().min(0).max(6)).optional(),
   nextDue: Joi.string().regex(/^\d{4}-\d{2}-\d{2}$/).required(),
@@ -178,6 +179,7 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
     id: r.id,
     title: r.title,
     notes: r.notes || '',
+    category: r.category || 'Default',
     everyDays: r.every_days ?? r.everyDays,
     scheduleDays: r.schedule_days ?? r.scheduleDays,
     nextDue: r.next_due ?? r.nextDue,
@@ -197,6 +199,7 @@ app.post('/api/tasks', authMiddleware, async (req, res) => {
     user_id: String(req.user.id),
     title: value.title,
     notes: value.notes || '',
+    category: value.category || 'Default',
     every_days: value.everyDays,
     schedule_days: value.scheduleDays,
     next_due: value.nextDue,
@@ -216,6 +219,7 @@ app.put('/api/tasks/:id', authMiddleware, async (req, res) => {
     user_id: String(req.user.id),
     title: value.title,
     notes: value.notes || '',
+    category: value.category || 'Default',
     every_days: value.everyDays,
     schedule_days: value.scheduleDays,
     next_due: value.nextDue,
@@ -234,7 +238,10 @@ app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
 
 // Push endpoints (authenticated)
 app.get('/api/push/vapid-public-key', (req, res) => {
-  if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'Push not configured' });
+  if (!VAPID_PUBLIC_KEY) {
+    // Return 200 with empty key to avoid frontend console errors/noise when push is not configured
+    return res.json({ key: '' });
+  }
   res.json({ key: VAPID_PUBLIC_KEY });
 });
 
