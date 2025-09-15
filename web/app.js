@@ -7,8 +7,8 @@
   const runtimeCfg = window.RUNTIME_CONFIG || {};
   const hasRuntimeBE = Object.prototype.hasOwnProperty.call(runtimeCfg, 'BACKEND_URL');
   const runtimeBE = hasRuntimeBE ? runtimeCfg.BACKEND_URL : undefined; // allow empty string intentionally
-  // No auto-derivation of api.<domain>; rely on config.js or user override in localStorage
-  const BACKEND_URL = (runtimeBE ?? window.BACKEND_URL ?? localStorage.getItem('tt_backend_url') ?? '');
+  // No auto-derivation of api.<domain>; rely on config.js (window.RUNTIME_CONFIG) or window.BACKEND_URL
+  const BACKEND_URL = (runtimeBE ?? window.BACKEND_URL ?? '');
   const API = createApiClient(BACKEND_URL);
 
   /** Data Types
@@ -46,10 +46,6 @@
     permissionBtn: $('#btn-permission'),
     installBtn: $('#btn-install'),
     template: $('#task-item-template'),
-    backendUrlInput: $('#backend-url-input'),
-    backendUrlSave: $('#backend-url-save'),
-    backendStatus: $('#backend-status'),
-    backendTest: $('#backend-test')
   };
 
   let tasks = loadTasks();
@@ -167,9 +163,7 @@
     }
 
     // Backend mode: check session and sync; otherwise local-only
-    // Also show connectivity diagnostics and allow overriding the backend URL from the login page.
-    setupBackendUrlUi();
-    await updateBackendConnectivityStatus();
+    // Backend connectivity diagnostics UI removed.
 
     if (BACKEND_URL) {
       try {
@@ -812,43 +806,6 @@
     }
   });
 
-  // Connectivity diagnostics and backend URL override UI
-  function setupBackendUrlUi(){
-    const { backendUrlInput, backendUrlSave, backendStatus } = elements;
-    if (backendUrlInput) {
-      backendUrlInput.value = BACKEND_URL || '';
-    }
-    if (backendUrlSave) {
-      backendUrlSave.addEventListener('click', () => {
-        const v = (elements.backendUrlInput?.value || '').trim();
-        try {
-          if (v) {
-            // rudimentary validation
-            const u = new URL(v);
-            if (!/^https:/.test(u.protocol)) {
-              alert('Please use an https:// URL');
-              return;
-            }
-            localStorage.setItem('tt_backend_url', v);
-          } else {
-            localStorage.removeItem('tt_backend_url');
-          }
-        } catch {
-          alert('Invalid URL');
-          return;
-        }
-        location.reload();
-      });
-    }
-    if (backendStatus) {
-      backendStatus.textContent = BACKEND_URL ? `Backend: ${BACKEND_URL}` : 'Local-only mode (no backend set)';
-    }
-    if (elements.backendTest) {
-      elements.backendTest.addEventListener('click', () => {
-        updateBackendConnectivityStatus();
-      });
-    }
-  }
 
   async function updateBackendConnectivityStatus(err){
     const el = elements.backendStatus;

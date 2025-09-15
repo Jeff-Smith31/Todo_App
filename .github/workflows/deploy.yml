@@ -341,6 +341,7 @@ jobs:
           # Invalidate CloudFront so latest app shell is served
           DIST_ID='${{ steps.front.outputs.dist_id }}'
           aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
+            "/" \
             "/index.html" \
             "/app.js" \
             "/styles.css" \
@@ -348,6 +349,13 @@ jobs:
             "/manifest.json" \
             "/manifest.webmanifest" \
             "/icons/*"
+
+      - name: Verify frontend homepage (after invalidation)
+        run: |
+          set +e
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${DOMAIN_NAME}/")
+          echo "Homepage https://${DOMAIN_NAME}/ status: ${CODE}" >> $GITHUB_STEP_SUMMARY
+          set -e
 
       - name: Compute AllowedOrigins for backend
         id: origins
