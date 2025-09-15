@@ -276,27 +276,6 @@ Resources:
             docker compose run --rm certbot certonly --webroot -w /var/www/certbot -d ${ApiSubdomain}.${DomainName} --agree-tos --email admin@${DomainName} -n || true
           fi
 
-          # Fallback: generate self-signed cert in the actual letsencrypt mount used by nginx
-          (command -v openssl >/dev/null 2>&1 || dnf install -y openssl || yum install -y openssl || true) >/dev/null 2>&1 || true
-          VOL_DIR=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/etc/letsencrypt"}}{{.Source}}{{end}}{{end}}' ttt-nginx 2>/dev/null || echo '')
-          if [ -z "$VOL_DIR" ]; then
-            VNAME=$(docker volume ls -q | grep -E '(_|^)letsencrypt$' | head -n1 || true)
-            if [ -n "$VNAME" ]; then
-              VOL_DIR=$(docker volume inspect "$VNAME" --format '{{.Mountpoint}}' 2>/dev/null || echo '')
-            fi
-          fi
-          if [ -n "$VOL_DIR" ]; then
-            CERT_DIR="$VOL_DIR/live/${ApiSubdomain}.${DomainName}"
-            mkdir -p "$CERT_DIR"
-            if [ ! -s "$CERT_DIR/privkey.pem" ] || [ ! -s "$CERT_DIR/fullchain.pem" ]; then
-              echo "Generating self-signed certificate at $CERT_DIR ..."
-              openssl req -x509 -nodes -days 365 -subj "/CN=${ApiSubdomain}.${DomainName}" -newkey rsa:2048 \
-                -keyout "$CERT_DIR/privkey.pem" \
-                -out "$CERT_DIR/fullchain.pem" || true
-            fi
-          else
-            echo "Warning: Could not resolve letsencrypt mount; skipping self-signed fallback" || true
-          fi
 
           # Write HTTPS-enabled Nginx config
           cat >/opt/ticktock/nginx.conf <<CFG

@@ -119,34 +119,6 @@ else
   docker compose run --rm certbot certonly --webroot -w /var/www/certbot -d "${APIDOM}" --agree-tos --email "admin@${DOMAIN_NAME}" -n || true
 fi
 
-# Ensure certificate files exist; generate self-signed fallback if Let's Encrypt not ready
-log "ensure certificate files exist (fallback to self-signed if missing)"
-# Ensure openssl available on host quietly
-(command -v openssl >/dev/null 2>&1 || dnf install -y openssl || yum install -y openssl || true) >/dev/null 2>&1 || true
-# Prefer the actual mount backing /etc/letsencrypt in the nginx container to avoid
-# project-prefixed volume name mismatches (e.g., ticktock_letsencrypt vs letsencrypt)
-VOL_DIR=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/etc/letsencrypt"}}{{.Source}}{{end}}{{end}}' ttt-nginx 2>/dev/null || echo '')
-# Fallback: first volume whose name ends with _letsencrypt or equals letsencrypt
-if [ -z "$VOL_DIR" ]; then
-  VNAME=$(docker volume ls -q | grep -E '(_|^)letsencrypt$' | head -n1 || true)
-  if [ -n "$VNAME" ]; then
-    VOL_DIR=$(docker volume inspect "$VNAME" --format '{{.Mountpoint}}' 2>/dev/null || echo '')
-  fi
-fi
-if [ -n "$VOL_DIR" ]; then
-  CERT_DIR="$VOL_DIR/live/${APIDOM}"
-  mkdir -p "$CERT_DIR"
-  if [ ! -s "$CERT_DIR/privkey.pem" ] || [ ! -s "$CERT_DIR/fullchain.pem" ]; then
-    echo "Generating self-signed certificate at $CERT_DIR ..."
-    openssl req -x509 -nodes -days 365 -subj "/CN=${APIDOM}" -newkey rsa:2048 \
-      -keyout "$CERT_DIR/privkey.pem" \
-      -out "$CERT_DIR/fullchain.pem" || true
-  else
-    echo "Existing certificate found at $CERT_DIR"
-  fi
-else
-  echo "Warning: Could not resolve letsencrypt volume mount; skipping self-signed fallback"
-fi
 
 log "write HTTPS nginx.conf"
 cat > "$NGINX_CONF" <<CFG

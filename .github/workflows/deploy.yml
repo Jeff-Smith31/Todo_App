@@ -313,6 +313,7 @@ jobs:
 
           # Build/version id used for cache-busting
           BUILD_ID="${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           INDEX="$SITE_DIR/index.html"
           if [ -f "$INDEX" ]; then
             # Append ?v=BUILD_ID to core assets referenced from index.html
@@ -321,7 +322,12 @@ jobs:
             sed -i "s|\"manifest.webmanifest\"|\"manifest.webmanifest?v=${BUILD_ID}\"|g" "$INDEX" || true
             sed -i "s|\"manifest.json\"|\"manifest.json?v=${BUILD_ID}\"|g" "$INDEX" || true
             sed -i "s|\"config.js\"|\"config.js?v=${BUILD_ID}\"|g" "$INDEX" || true
+            sed -i "s|\"app-version.js\"|\"app-version.js?v=${BUILD_ID}\"|g" "$INDEX" || true
           fi
+
+          # Create/update version artifacts
+          echo "window.APP_VERSION='${BUILD_ID}'; window.APP_BUILD_TIME='${BUILD_TIME}';" > "$SITE_DIR/app-version.js"
+          echo "{\"version\":\"${BUILD_ID}\",\"time\":\"${BUILD_TIME}\"}" > "$SITE_DIR/version.json"
 
           # Bump Service Worker cache name so clients fetch fresh assets
           if [ -f "$SITE_DIR/sw.js" ]; then
@@ -337,6 +343,9 @@ jobs:
           if [ -f "$SITE_DIR/sw.js" ]; then
             aws s3 cp "$SITE_DIR/sw.js" "s3://$BUCKET/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
           fi
+          # Also ensure version artifacts are no-cached
+          aws s3 cp "$SITE_DIR/app-version.js" "s3://$BUCKET/app-version.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+          aws s3 cp "$SITE_DIR/version.json" "s3://$BUCKET/version.json" --cache-control "no-cache, no-store, must-revalidate" --content-type application/json
 
           # Invalidate CloudFront so latest app shell is served
           DIST_ID='${{ steps.front.outputs.dist_id }}'
@@ -348,6 +357,8 @@ jobs:
             "/sw.js" \
             "/manifest.json" \
             "/manifest.webmanifest" \
+            "/app-version.js" \
+            "/version.json" \
             "/icons/*"
 
       - name: Verify frontend homepage (after invalidation)

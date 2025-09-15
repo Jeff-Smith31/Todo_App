@@ -58,6 +58,10 @@
   // Initialization
   document.addEventListener('DOMContentLoaded', init);
 
+  function isMobile() {
+    return (typeof window.orientation !== 'undefined') || (navigator.userAgent || '').indexOf('Mobi') >= 0 || window.innerWidth < 640;
+  }
+
   async function init(){
     // Defaults
     elements.nextDue.value = todayStr();
@@ -195,6 +199,9 @@
 
     // Show permission button state
     refreshPermissionButton();
+
+    // Version UI and update checks
+    setupVersionUiAndUpdater();
 
     // Initial route
     if (!location.hash) {
@@ -827,42 +834,48 @@
     }
   });
 
-  // Connectivity diagnostics and backend URL override UI
-  function setupBackendUrlUi(){
-    const { backendUrlInput, backendUrlSave, backendStatus } = elements;
-    if (backendUrlInput) {
-      backendUrlInput.value = BACKEND_URL || '';
-    }
-    if (backendUrlSave) {
-      backendUrlSave.addEventListener('click', () => {
-        const v = (elements.backendUrlInput?.value || '').trim();
+  // Version visible pill and update workflow
+  function setupVersionUiAndUpdater(){
+    const current = (window.APP_VERSION || 'dev').toString();
+    const pillTxt = document.getElementById('app-version-text');
+    if (pillTxt) pillTxt.textContent = current;
+
+    const btnUpdate = document.getElementById('btn-update');
+    if (btnUpdate) {
+      btnUpdate.addEventListener('click', async () => {
         try {
-          if (v) {
-            // rudimentary validation
-            const u = new URL(v);
-            if (!/^https:/.test(u.protocol)) {
-              alert('Please use an https:// URL');
-              return;
-            }
-            localStorage.setItem('tt_backend_url', v);
-          } else {
-            localStorage.removeItem('tt_backend_url');
+          // Ask SW to update then reload
+          if ('serviceWorker' in navigator) {
+            const reg = await navigator.serviceWorker.getRegistration();
+            if (reg) { try { await reg.update(); } catch {} }
           }
-        } catch {
-          alert('Invalid URL');
-          return;
+        } catch {}
+        // Hard reload bypassing cache if possible
+        location.reload(true);
+      });
+    }
+
+    async function checkLatest(){
+      try {
+        const res = await fetch(`version.json?ts=${Date.now()}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json().catch(()=>null);
+        const latest = (data && data.version) ? String(data.version) : null;
+        if (!latest) return;
+        if (latest !== current) {
+          // Mobile → show update button; Desktop → auto reload
+          if (isMobile()) {
+            if (btnUpdate) btnUpdate.style.display = 'inline-block';
+          } else {
+            location.reload(true);
+          }
         }
-        location.reload();
-      });
+      } catch {}
     }
-    if (backendStatus) {
-      backendStatus.textContent = BACKEND_URL ? `Backend: ${BACKEND_URL}` : 'Local-only mode (no backend set)';
-    }
-    if (elements.backendTest) {
-      elements.backendTest.addEventListener('click', () => {
-        updateBackendConnectivityStatus();
-      });
-    }
+    // Poll every 30s and also on tab focus
+    checkLatest();
+    const iv = setInterval(checkLatest, 30000);
+    window.addEventListener('visibilitychange', () => { if (!document.hidden) checkLatest(); });
   }
 
   async function updateBackendConnectivityStatus(err){

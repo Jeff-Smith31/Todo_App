@@ -58,6 +58,10 @@
   // Initialization
   document.addEventListener('DOMContentLoaded', init);
 
+  function isMobile() {
+    return (typeof window.orientation !== 'undefined') || (navigator.userAgent || '').indexOf('Mobi') >= 0 || window.innerWidth < 640;
+  }
+
   async function init(){
     // Defaults
     elements.nextDue.value = todayStr();
@@ -194,6 +198,9 @@
 
     // Show permission button state
     refreshPermissionButton();
+
+    // Version UI and update checks
+    setupVersionUiAndUpdater();
 
     // Initial route
     if (!location.hash) {
@@ -825,6 +832,45 @@
     }
   });
 
+  // Version visible pill and update workflow
+  function setupVersionUiAndUpdater(){
+    const current = (window.APP_VERSION || 'dev').toString();
+    const pillTxt = document.getElementById('app-version-text');
+    if (pillTxt) pillTxt.textContent = current;
+
+    const btnUpdate = document.getElementById('btn-update');
+    if (btnUpdate) {
+      btnUpdate.addEventListener('click', async () => {
+        try {
+          if ('serviceWorker' in navigator) {
+            const reg = await navigator.serviceWorker.getRegistration();
+            if (reg) { try { await reg.update(); } catch {} }
+          }
+        } catch {}
+        location.reload(true);
+      });
+    }
+
+    async function checkLatest(){
+      try {
+        const res = await fetch(`version.json?ts=${Date.now()}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json().catch(()=>null);
+        const latest = (data && data.version) ? String(data.version) : null;
+        if (!latest) return;
+        if (latest !== current) {
+          if (isMobile()) {
+            if (btnUpdate) btnUpdate.style.display = 'inline-block';
+          } else {
+            location.reload(true);
+          }
+        }
+      } catch {}
+    }
+    checkLatest();
+    setInterval(checkLatest, 30000);
+    window.addEventListener('visibilitychange', () => { if (!document.hidden) checkLatest(); });
+  }
 
   async function updateBackendConnectivityStatus(err){
     const el = elements.backendStatus;

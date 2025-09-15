@@ -25,6 +25,7 @@
     <div class="actions">
       <button id="btn-permission" class="btn primary">Enable Notifications</button>
       <button id="btn-install" class="btn">Install App</button>
+      <button id="btn-update" class="btn" style="display:none">Update</button>
     </div>
   </header>
 
@@ -126,6 +127,8 @@
     <p>© 2025 CodeSmith Consulting. All rights reserved.</p>
   </footer>
 
+  <div id="app-version-pill" style="position:fixed;right:8px;bottom:8px;background:rgba(0,0,0,0.6);color:#fff;padding:6px 10px;border-radius:999px;font-size:12px;z-index:9999;">v<span id="app-version-text">—</span></div>
+
   <template id="task-item-template">
     <li class="task-item">
       <label class="checkbox">
@@ -153,6 +156,7 @@
 
   <!-- Optional runtime config file. If present, it sets window.RUNTIME_CONFIG.BACKEND_URL -->
   <script src="config.js"></script>
+  <script src="app-version.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
