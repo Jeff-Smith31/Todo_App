@@ -99,10 +99,18 @@
               <option value="custom">Custom…</option>
             </select>
           </label>
-          <label id="custom-days-wrap" class="hidden">
-            <span>Every N days</span>
-            <input id="custom-days" type="number" min="1" value="2">
-          </label>
+          <div id="custom-days-wrap" class="hidden">
+            <span>Repeat on</span>
+            <div class="weekdays">
+              <label><input type="checkbox" class="wd" value="0"> Sun</label>
+              <label><input type="checkbox" class="wd" value="1"> Mon</label>
+              <label><input type="checkbox" class="wd" value="2"> Tue</label>
+              <label><input type="checkbox" class="wd" value="3"> Wed</label>
+              <label><input type="checkbox" class="wd" value="4"> Thu</label>
+              <label><input type="checkbox" class="wd" value="5"> Fri</label>
+              <label><input type="checkbox" class="wd" value="6"> Sat</label>
+            </div>
+          </div>
         </div>
         <div class="grid">
           <label>

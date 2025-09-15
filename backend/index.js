@@ -7,7 +7,8 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
-import Database from 'better-sqlite3';
+// SQLite removed. Using DynamoDB for persistence.
+import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent } from './dynamo.js';
 import Joi from 'joi';
 import webpush from 'web-push';
 import fs from 'fs';
@@ -25,7 +26,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:8000';
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const COOKIE_SECURE = NODE_ENV === 'production';
-const SQLITE_FILE = process.env.SQLITE_FILE || './data.sqlite';
+// DynamoDB: tables are auto-provisioned. Optionally set DDB_TABLE_PREFIX (default 'ttt').
 const VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || '';
 const VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || '';
 
@@ -33,56 +34,8 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(`mailto:admin@example.com`, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 }
 
-// DB setup
-const db = new Database(SQLITE_FILE);
-db.pragma('journal_mode = WAL');
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-`);
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS tasks (
-  id TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL,
-  title TEXT NOT NULL,
-  notes TEXT,
-  every_days INTEGER NOT NULL,
-  next_due TEXT NOT NULL,
-  remind_at TEXT NOT NULL,
-  priority INTEGER NOT NULL DEFAULT 0,
-  last_completed TEXT,
-  FOREIGN KEY(user_id) REFERENCES users(id)
-);
-`);
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS push_subscriptions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  endpoint TEXT NOT NULL,
-  p256dh TEXT NOT NULL,
-  auth TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  UNIQUE(user_id, endpoint),
-  FOREIGN KEY(user_id) REFERENCES users(id)
-);
-`);
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS notifications_sent (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id TEXT NOT NULL,
-  due_key TEXT NOT NULL,
-  sent_at TEXT NOT NULL,
-  UNIQUE(task_id, due_key)
-);
-`);
+// DB setup → DynamoDB (ensure tables once at startup)
+await ensureTables().catch((e)=>{ console.error('DynamoDB ensureTables failed', e); });
 
 // Security middleware
 app.use(helmet());
@@ -166,6 +119,7 @@ const taskSchema = Joi.object({
   title: Joi.string().min(1).max(255).required(),
   notes: Joi.string().allow('').max(1000).optional(),
   everyDays: Joi.number().integer().min(1).max(3650).required(),
+  scheduleDays: Joi.array().items(Joi.number().integer().min(0).max(6)).optional(),
   nextDue: Joi.string().regex(/^\d{4}-\d{2}-\d{2}$/).required(),
   remindAt: Joi.string().regex(/^\d{2}:\d{2}$/).required(),
   priority: Joi.boolean().optional(),
@@ -179,27 +133,27 @@ const subscriptionSchema = Joi.object({
 });
 
 // Auth routes
-app.post('/api/auth/register', authLimiter, (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { error, value } = registerSchema.validate(req.body);
   if (error) return res.status(400).json({ error: error.message });
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(value.email.toLowerCase());
+  const email = value.email.toLowerCase();
+  const existing = await getUserByEmail(email);
   if (existing) return res.status(409).json({ error: 'Email already registered' });
-
   const hash = bcrypt.hashSync(value.password, 10);
-  const info = db.prepare('INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)')
-    .run(value.email.toLowerCase(), hash, new Date().toISOString());
-  const user = { id: info.lastInsertRowid, email: value.email.toLowerCase() };
+  const userRec = await createUser(email, hash);
+  const user = { id: userRec.id, email: userRec.email };
   const token = issueToken(user);
   setAuthCookie(res, token);
   res.json({ ok: true, token, user: { id: user.id, email: user.email } });
 });
 
-app.post('/api/auth/login', authLimiter, (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { error, value } = loginSchema.validate(req.body);
   if (error) return res.status(400).json({ error: error.message });
 
-  const row = db.prepare('SELECT id, email, password_hash FROM users WHERE email = ?').get(value.email.toLowerCase());
+  const email = value.email.toLowerCase();
+  const row = await getUserByEmail(email);
   if (!row) return res.status(401).json({ error: 'Invalid credentials' });
   const ok = bcrypt.compareSync(value.password, row.password_hash);
   if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
@@ -218,44 +172,63 @@ app.get('/api/auth/me', authMiddleware, (req, res) => {
 });
 
 // Task routes (authenticated)
-app.get('/api/tasks', authMiddleware, (req, res) => {
-  const rows = db.prepare('SELECT * FROM tasks WHERE user_id = ?').all(req.user.id);
+app.get('/api/tasks', authMiddleware, async (req, res) => {
+  const rows = await ddbListTasks(String(req.user.id));
   const tasks = rows.map(r => ({
     id: r.id,
     title: r.title,
     notes: r.notes || '',
-    everyDays: r.every_days,
-    nextDue: r.next_due,
-    remindAt: r.remind_at,
-    priority: !!r.priority,
-    lastCompleted: r.last_completed || undefined,
+    everyDays: r.every_days ?? r.everyDays,
+    scheduleDays: r.schedule_days ?? r.scheduleDays,
+    nextDue: r.next_due ?? r.nextDue,
+    remindAt: r.remind_at ?? r.remindAt,
+    priority: !!(r.priority ?? false),
+    lastCompleted: r.last_completed ?? r.lastCompleted,
   }));
   res.json({ tasks });
 });
 
-app.post('/api/tasks', authMiddleware, (req, res) => {
+app.post('/api/tasks', authMiddleware, async (req, res) => {
   const { error, value } = taskSchema.validate(req.body);
   if (error) return res.status(400).json({ error: error.message });
   const id = value.id || cryptoRandomId();
-  db.prepare(`INSERT INTO tasks (id, user_id, title, notes, every_days, next_due, remind_at, priority, last_completed)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, req.user.id, value.title, value.notes || '', value.everyDays, value.nextDue, value.remindAt, value.priority ? 1 : 0, value.lastCompleted || null);
+  const item = {
+    id,
+    user_id: String(req.user.id),
+    title: value.title,
+    notes: value.notes || '',
+    every_days: value.everyDays,
+    schedule_days: value.scheduleDays,
+    next_due: value.nextDue,
+    remind_at: value.remindAt,
+    priority: !!value.priority,
+    last_completed: value.lastCompleted || null,
+  };
+  await ddbPutTask(item);
   res.status(201).json({ id });
 });
 
-app.put('/api/tasks/:id', authMiddleware, (req, res) => {
+app.put('/api/tasks/:id', authMiddleware, async (req, res) => {
   const { error, value } = taskSchema.validate({ ...req.body, id: req.params.id });
   if (error) return res.status(400).json({ error: error.message });
-  const result = db.prepare(`UPDATE tasks SET title=?, notes=?, every_days=?, next_due=?, remind_at=?, priority=?, last_completed=?
-                             WHERE id=? AND user_id=?`)
-    .run(value.title, value.notes || '', value.everyDays, value.nextDue, value.remindAt, value.priority ? 1 : 0, value.lastCompleted || null, req.params.id, req.user.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Task not found' });
+  const item = {
+    id: req.params.id,
+    user_id: String(req.user.id),
+    title: value.title,
+    notes: value.notes || '',
+    every_days: value.everyDays,
+    schedule_days: value.scheduleDays,
+    next_due: value.nextDue,
+    remind_at: value.remindAt,
+    priority: !!value.priority,
+    last_completed: value.lastCompleted || null,
+  };
+  await ddbPutTask(item);
   res.json({ ok: true });
 });
 
-app.delete('/api/tasks/:id', authMiddleware, (req, res) => {
-  const result = db.prepare('DELETE FROM tasks WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Task not found' });
+app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
+  await ddbDeleteTask(String(req.user.id), req.params.id);
   res.json({ ok: true });
 });
 
@@ -265,25 +238,23 @@ app.get('/api/push/vapid-public-key', (req, res) => {
   res.json({ key: VAPID_PUBLIC_KEY });
 });
 
-app.post('/api/push/subscribe', authMiddleware, (req, res) => {
+app.post('/api/push/subscribe', authMiddleware, async (req, res) => {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(503).json({ error: 'Push not configured' });
   const { error, value } = subscriptionSchema.validate(req.body);
   if (error) return res.status(400).json({ error: error.message });
   try {
-    db.prepare(`INSERT OR REPLACE INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at)
-                 VALUES ((SELECT id FROM push_subscriptions WHERE user_id=? AND endpoint=?), ?, ?, ?, ?, ?)`)
-      .run(req.user.id, value.endpoint, req.user.id, value.endpoint, value.keys.p256dh, value.keys.auth, new Date().toISOString());
+    await putSub(String(req.user.id), value.endpoint, value.keys.p256dh, value.keys.auth);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to save subscription' });
   }
 });
 
-app.delete('/api/push/subscribe', authMiddleware, (req, res) => {
+app.delete('/api/push/subscribe', authMiddleware, async (req, res) => {
   const { endpoint } = req.body || {};
   if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
-  const result = db.prepare('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?').run(req.user.id, endpoint);
-  res.json({ ok: true, removed: result.changes });
+  await delSub(String(req.user.id), endpoint);
+  res.json({ ok: true, removed: 1 });
 });
 
 // Health and ping (no auth)
@@ -346,17 +317,16 @@ function combineDueDateTime(next_due, remind_at) {
 }
 
 async function sendPushToUser(userId, payloadObj) {
-  const subs = db.prepare('SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id=?').all(userId);
+  const subs = await listSubs(String(userId));
   const payload = JSON.stringify(payloadObj);
   for (const s of subs) {
     const sub = { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } };
     try {
       await webpush.sendNotification(sub, payload);
     } catch (e) {
-      // Remove gone subscriptions
       const message = e?.body || e?.message || '';
       if (e?.statusCode === 404 || e?.statusCode === 410 || message.includes('gone')) {
-        db.prepare('DELETE FROM push_subscriptions WHERE endpoint=?').run(s.endpoint);
+        await delSub(String(userId), s.endpoint);
       }
     }
   }
@@ -367,7 +337,7 @@ async function scanAndNotify() {
   const now = new Date();
   const windowStart = new Date(now.getTime() - SCAN_INTERVAL_MS);
 
-  const rows = db.prepare('SELECT id, user_id, title, notes, every_days, next_due, remind_at, last_completed FROM tasks').all();
+  const rows = await (async () => { const allUsers = []; /* We don't list users here; simply scan tasks table. */ return (await (await import('./dynamo.js')).ddb.send(new (await import('@aws-sdk/lib-dynamodb')).ScanCommand({ TableName: (await import('./dynamo.js')).TABLES.tasks }))).Items || []; })();
   const todayYmd = ymdLocal(now);
 
   for (const r of rows) {

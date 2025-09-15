@@ -1,0 +1,118 @@
+import { DynamoDBClient, CreateTableCommand, DescribeTableCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+
+const REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || undefined; // let SDK infer on EC2
+const TABLE_PREFIX = process.env.DDB_TABLE_PREFIX || 'ttt';
+
+export const TABLES = {
+  users: `${TABLE_PREFIX}-users`,
+  tasks: `${TABLE_PREFIX}-tasks`,
+  push: `${TABLE_PREFIX}-push`,
+  notifs: `${TABLE_PREFIX}-notifs`,
+};
+
+const client = new DynamoDBClient({ region: REGION });
+export const ddb = DynamoDBDocumentClient.from(client, { marshallOptions: { removeUndefinedValues: true } });
+
+async function ensureTableUsers(){
+  const TableName = TABLES.users;
+  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
+  await client.send(new CreateTableCommand({
+    TableName,
+    BillingMode: 'PAY_PER_REQUEST',
+    KeySchema: [{ AttributeName: 'email', KeyType: 'HASH' }],
+    AttributeDefinitions: [{ AttributeName: 'email', AttributeType: 'S' }],
+  }));
+}
+
+async function ensureTableTasks(){
+  const TableName = TABLES.tasks;
+  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
+  await client.send(new CreateTableCommand({
+    TableName,
+    BillingMode: 'PAY_PER_REQUEST',
+    KeySchema: [
+      { AttributeName: 'user_id', KeyType: 'HASH' },
+      { AttributeName: 'id', KeyType: 'RANGE' },
+    ],
+    AttributeDefinitions: [
+      { AttributeName: 'user_id', AttributeType: 'S' },
+      { AttributeName: 'id', AttributeType: 'S' },
+    ],
+  }));
+}
+
+async function ensureTablePush(){
+  const TableName = TABLES.push;
+  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
+  await client.send(new CreateTableCommand({
+    TableName,
+    BillingMode: 'PAY_PER_REQUEST',
+    KeySchema: [ { AttributeName: 'user_id', KeyType: 'HASH' }, { AttributeName: 'endpoint', KeyType: 'RANGE' } ],
+    AttributeDefinitions: [ { AttributeName: 'user_id', AttributeType: 'S' }, { AttributeName: 'endpoint', AttributeType: 'S' } ],
+  }));
+}
+
+async function ensureTableNotifs(){
+  const TableName = TABLES.notifs;
+  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
+  await client.send(new CreateTableCommand({
+    TableName,
+    BillingMode: 'PAY_PER_REQUEST',
+    KeySchema: [ { AttributeName: 'task_id', KeyType: 'HASH' }, { AttributeName: 'due_key', KeyType: 'RANGE' } ],
+    AttributeDefinitions: [ { AttributeName: 'task_id', AttributeType: 'S' }, { AttributeName: 'due_key', AttributeType: 'S' } ],
+  }));
+}
+
+export async function ensureTables(){
+  await Promise.all([
+    ensureTableUsers(),
+    ensureTableTasks(),
+    ensureTablePush(),
+    ensureTableNotifs(),
+  ]);
+}
+
+// Users
+export async function getUserByEmail(email){
+  const r = await ddb.send(new GetCommand({ TableName: TABLES.users, Key: { email } }));
+  return r.Item || null;
+}
+export async function createUser(email, password_hash){
+  const user = { email, password_hash, created_at: new Date().toISOString(), id: email };
+  await ddb.send(new PutCommand({ TableName: TABLES.users, Item: user, ConditionExpression: 'attribute_not_exists(email)' }));
+  return user;
+}
+
+// Tasks
+export async function listTasks(user_id){
+  const r = await ddb.send(new QueryCommand({ TableName: TABLES.tasks, KeyConditionExpression: 'user_id = :u', ExpressionAttributeValues: { ':u': user_id } }));
+  return r.Items || [];
+}
+export async function putTask(task){
+  await ddb.send(new PutCommand({ TableName: TABLES.tasks, Item: task }));
+}
+export async function deleteTask(user_id, id){
+  await ddb.send(new DeleteCommand({ TableName: TABLES.tasks, Key: { user_id, id } }));
+}
+
+// Push subs
+export async function listSubs(user_id){
+  const r = await ddb.send(new QueryCommand({ TableName: TABLES.push, KeyConditionExpression: 'user_id = :u', ExpressionAttributeValues: { ':u': user_id } }));
+  return r.Items || [];
+}
+export async function putSub(user_id, endpoint, p256dh, auth){
+  await ddb.send(new PutCommand({ TableName: TABLES.push, Item: { user_id, endpoint, p256dh, auth, created_at: new Date().toISOString() } }));
+}
+export async function delSub(user_id, endpoint){
+  await ddb.send(new DeleteCommand({ TableName: TABLES.push, Key: { user_id, endpoint } }));
+}
+
+// Notifs (idempotence keys)
+export async function notifWasSent(task_id, due_key){
+  const r = await ddb.send(new GetCommand({ TableName: TABLES.notifs, Key: { task_id, due_key } }));
+  return !!r.Item;
+}
+export async function markNotifSent(task_id, due_key){
+  await ddb.send(new PutCommand({ TableName: TABLES.notifs, Item: { task_id, due_key, sent_at: new Date().toISOString() } }));
+}

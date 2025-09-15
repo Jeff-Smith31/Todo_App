@@ -35,7 +35,6 @@
     notes: $('#notes'),
     frequency: $('#frequency'),
     customWrap: $('#custom-days-wrap'),
-    customDays: $('#custom-days'),
     nextDue: $('#next-due'),
     remindAt: $('#remind-at'),
     saveBtn: $('#btn-save'),
@@ -215,6 +214,16 @@
     elements.customWrap.classList.toggle('hidden', val !== 'custom');
   }
 
+  function readSelectedWeekdays(){
+    const boxes = Array.from(document.querySelectorAll('#custom-days-wrap input.wd'));
+    return boxes.filter(b=>b.checked).map(b=>parseInt(b.value,10));
+  }
+
+  function setSelectedWeekdays(days){
+    const boxes = Array.from(document.querySelectorAll('#custom-days-wrap input.wd'));
+    for (const b of boxes){ b.checked = Array.isArray(days) && days.includes(parseInt(b.value,10)); }
+  }
+
   // Simple router to separate Login, Tasks list, and Task form pages
   function route(){
     const pageLogin = document.getElementById('page-login');
@@ -276,7 +285,11 @@
           elements.id.value = t.id;
           elements.title.value = t.title;
           elements.notes.value = t.notes || '';
-          if (t.everyDays === 1 || t.everyDays === 7 || t.everyDays === 30) {
+          if (t.scheduleDays && t.scheduleDays.length) {
+            elements.frequency.value = 'custom';
+            elements.customWrap.classList.remove('hidden');
+            setSelectedWeekdays(t.scheduleDays);
+          } else if (t.everyDays === 1 || t.everyDays === 7 || t.everyDays === 30) {
             elements.frequency.value = String(t.everyDays);
             elements.customWrap.classList.add('hidden');
           } else {
@@ -310,13 +323,15 @@
     e.preventDefault();
     const id = elements.id.value || cryptoRandomId();
     const freqVal = elements.frequency.value;
-    const everyDays = freqVal === 'custom' ? Math.max(1, parseInt(elements.customDays.value || '1', 10)) : parseInt(freqVal, 10);
+    const scheduleDays = (freqVal === 'custom') ? readSelectedWeekdays() : undefined;
+    const everyDays = (freqVal === 'custom') ? 7 : parseInt(freqVal, 10);
 
     const t = {
       id,
       title: elements.title.value.trim(),
       notes: elements.notes.value.trim(),
       everyDays,
+      scheduleDays,
       nextDue: elements.nextDue.value,
       remindAt: elements.remindAt.value,
       priority: false,
@@ -442,7 +457,10 @@
 
       const dueDate = t.nextDue;
       const dueTime = t.remindAt;
-      meta.textContent = `Due: ${formatDate(dueDate)} at ${formatTime(dueTime)} • Every ${t.everyDays} day(s)`;
+      const scheduleText = (t.scheduleDays && t.scheduleDays.length)
+        ? `• ${t.scheduleDays.map(d=>['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}`
+        : `• Every ${t.everyDays} day(s)`;
+      meta.textContent = `Due: ${formatDate(dueDate)} at ${formatTime(dueTime)} ${scheduleText}`;
 
       // badges
       toggleHidden(bPriority, !t.priority);

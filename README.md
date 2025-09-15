@@ -3,7 +3,7 @@
 A lightweight recurring to‑do app that works offline (PWA) and optionally syncs across devices via a small backend. This guide explains what you get, how it’s deployed, step‑by‑step deployment, and the license.
 
 What you get
-- Recurring tasks: daily, weekly, monthly (approx), or custom every N days
+- Recurring tasks: daily, weekly, monthly (approx), or custom weekdays (choose specific days of week)
 - Reminder time per task; missed reminders roll to the next day and mark PRIORITY
 - Offline‑first PWA: install to Home Screen; data stored locally if no backend
 - Optional backend: accounts (email/password), sync across devices, Web Push
@@ -11,7 +11,7 @@ What you get
 
 Architecture
 - Frontend: Static HTML/CSS/JS with a Service Worker and Web App Manifest. Served from any static host (locally or S3+CloudFront in production).
-- Backend (optional): Django + Django REST Framework + SQLite (Dockerized). Secure defaults (CORS with credentials, session auth). Web Push subscribe endpoints provided (VAPID key exposure when configured).
+- Backend (optional): Node.js/Express with DynamoDB (Dockerized), no local database persistence required. Secure defaults (CORS with credentials, JWT cookie/session auth). Web Push subscribe endpoints provided (VAPID key exposure when configured).
 - Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from an optional config.js file at the site root. We provide a script that writes this file during deployment so the frontend is automatically connected to the backend without manual edits.
 
 Quick start (frontend only)
