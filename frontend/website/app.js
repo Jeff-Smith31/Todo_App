@@ -164,13 +164,33 @@
       deferredPrompt = e;
       showInstall();
     });
+    function isAndroid(){
+      return /Android/i.test(navigator.userAgent || '');
+    }
+    function isAndroidChromeOrEdge(){
+      const ua = navigator.userAgent || '';
+      return isAndroid() && (/Chrome\//i.test(ua) || /EdgA\//i.test(ua));
+    }
+    function isInAppBrowser(){
+      const ua = (navigator.userAgent || '').toLowerCase();
+      // Common in-app browsers where install prompt is not supported
+      return ua.includes('instagram') || ua.includes('fbav') || ua.includes('fban') || ua.includes('line') || ua.includes('kakaotalk') || ua.includes('twitter') || ua.includes('snapchat') || ua.includes('gsa') || ua.includes('wv') || ua.includes('apk') || ua.includes('okhttp');
+    }
     function showInstallHelp(){
       // Minimal, text-only guidance to keep footprint small
       if (isIosSafari()){
-        alert('To install: Tap the Share button, then "Add to Home Screen". This adds TickTock Tasks to your Home Screen with notifications.');
-      } else {
-        alert('Your browser did not offer an install prompt. You can still add this app to your Home Screen from your browser menu (Add to Home Screen or Install app).');
+        alert('To install on iPhone/iPad: Tap the Share button, then "Add to Home Screen". This adds TickTock Tasks to your Home Screen with notifications.');
+        return;
       }
+      if (isInAppBrowser()){
+        alert('Install is not available inside this in-app browser. Please open this page in Chrome (or your main browser) and use the menu → Install app. Tip: Tap the ••• or ⋮ menu → Open in Browser, then Install.');
+        return;
+      }
+      if (isAndroidChromeOrEdge()){
+        alert('To install on Android: Tap the ⋮ menu and choose "Install app" (or "Add to Home screen"). If you don\'t see it, browse the app for a bit and try again.');
+        return;
+      }
+      alert('Your browser did not offer an install prompt. You can still add this app from your browser menu (Add to Home Screen or Install app).');
     }
     if (elements.installBtn){
       elements.installBtn.addEventListener('click', async () => {
