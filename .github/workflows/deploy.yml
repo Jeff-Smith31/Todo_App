@@ -347,9 +347,9 @@ jobs:
           aws s3 cp "$SITE_DIR/app-version.js" "s3://$BUCKET/app-version.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
           aws s3 cp "$SITE_DIR/version.json" "s3://$BUCKET/version.json" --cache-control "no-cache, no-store, must-revalidate" --content-type application/json
 
-          # Invalidate CloudFront so latest app shell is served
+          # Invalidate CloudFront so latest app shell is served and wait for completion
           DIST_ID='${{ steps.front.outputs.dist_id }}'
-          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
+          INV_JSON=$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
             "/" \
             "/index.html" \
             "/app.js" \
@@ -359,13 +359,30 @@ jobs:
             "/manifest.webmanifest" \
             "/app-version.js" \
             "/version.json" \
-            "/icons/*"
+            "/icons/*")
+          INV_ID=$(printf "%s" "$INV_JSON" | jq -r '.Invalidation.Id')
+          if [ -n "$INV_ID" ] && [ "$INV_ID" != "null" ]; then
+            echo "Waiting for CloudFront invalidation $INV_ID to complete ..."
+            aws cloudfront wait invalidation-completed --distribution-id "$DIST_ID" --id "$INV_ID" || true
+          fi
 
-      - name: Verify frontend homepage (after invalidation)
+      - name: Wait for frontend homepage (retry up to 5 min)
         run: |
           set +e
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${DOMAIN_NAME}/")
-          echo "Homepage https://${DOMAIN_NAME}/ status: ${CODE}" >> $GITHUB_STEP_SUMMARY
+          ATT=0; MAX=30; SLEEP=10; CODE=000
+          echo "Waiting for frontend homepage to become reachable at https://${DOMAIN_NAME}/ (up to $((MAX*SLEEP/60)) min) ..." >> $GITHUB_STEP_SUMMARY
+          while [ $ATT -lt $MAX ]; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${DOMAIN_NAME}/" || echo 000)
+            echo "attempt=${ATT} status=${CODE}"
+            if [ "$CODE" = "200" ]; then
+              echo "Homepage https://${DOMAIN_NAME}/ status: ${CODE} (OK)" >> $GITHUB_STEP_SUMMARY
+              break
+            fi
+            ATT=$((ATT+1)); sleep $SLEEP
+          done
+          if [ "$CODE" != "200" ]; then
+            echo "Homepage still not reachable (status ${CODE}) after $((MAX*SLEEP/60)) minutes." >> $GITHUB_STEP_SUMMARY
+          fi
           set -e
 
       - name: Compute AllowedOrigins for backend
