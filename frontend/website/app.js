@@ -236,7 +236,7 @@
 
     // Initial route
     if (!location.hash) {
-      location.hash = BACKEND_URL ? '#/login' : '#/tasks';
+      location.hash = isAuthed ? '#/tasks' : '#/tasks';
     }
     route();
   }
@@ -272,22 +272,13 @@
     const raw = (location.hash || '').replace(/^#/, '');
     const parts = raw.split('/').filter(Boolean); // e.g., ['tasks','new'] or ['tasks', '<id>', 'edit']
 
-    // Auth guards when using backend
-    if (BACKEND_URL) {
-      if (!isAuthed) {
-        // force to login unless already there
-        if (!(parts[0] === 'login')) {
-          location.hash = '#/login';
-          if (pageLogin) show(pageLogin);
-          return;
-        }
-      } else {
-        // already authed, avoid staying on login
-        if (parts[0] === 'login') {
-          location.hash = '#/tasks';
-          if (pageTasks) show(pageTasks);
-          return;
-        }
+    // Auth-aware navigation: allow local mode even if a backend is configured.
+    // Only redirect away from the login page when already authenticated.
+    if (BACKEND_URL && isAuthed) {
+      if (parts[0] === 'login') {
+        location.hash = '#/tasks';
+        if (pageTasks) show(pageTasks);
+        return;
       }
     }
 

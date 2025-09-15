@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ticktock-cache-v3';
+const CACHE_NAME = 'ticktock-cache-v4';
 const ASSETS = [
   '/',
   '/index.html',
@@ -7,11 +7,22 @@ const ASSETS = [
   '/icons/logo.svg',
   '/manifest.webmanifest'
 ];
+// Optional assets that may not always exist locally (exist in production). Cache best-effort.
+const OPTIONAL_ASSETS = [
+  '/config.js',
+  '/app-version.js',
+  '/version.json'
+];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+  e.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    // Cache core assets (fail install if these fail)
+    await cache.addAll(ASSETS);
+    // Try to cache optional assets, but ignore failures (e.g., in local dev)
+    await Promise.all(OPTIONAL_ASSETS.map(p => cache.add(p).catch(() => {})));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {
@@ -22,12 +33,35 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (url.origin === location.origin){
+  const req = e.request;
+  const url = new URL(req.url);
+  // Intercept only same-origin requests
+  if (url.origin !== location.origin) return;
+
+  // Navigation requests: try network first, fall back to cached index.html
+  if (req.mode === 'navigate') {
     e.respondWith(
-      caches.match(e.request).then(resp => resp || fetch(e.request))
+      fetch(req).catch(() => caches.match('/index.html'))
     );
+    return;
   }
+
+  // Cache-first, then network; provide safe fallbacks on failure to avoid uncaught rejections
+  e.respondWith(
+    caches.match(req).then(resp => resp || fetch(req)).catch(() => {
+      const path = url.pathname || '';
+      if (req.destination === 'script' && path.endsWith('/config.js')) {
+        return new Response("window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:''});", { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } });
+      }
+      if (req.destination === 'script' && path.endsWith('/app-version.js')) {
+        return new Response("window.APP_VERSION='offline';", { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } });
+      }
+      if (req.destination === 'document') {
+        return caches.match('/index.html');
+      }
+      return new Response('', { status: 504, statusText: 'Offline' });
+    })
+  );
 });
 
 // Handle push messages sent from the backend
