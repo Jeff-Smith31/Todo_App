@@ -203,19 +203,25 @@
     // Connectivity diagnostics UI removed.
 
     if (BACKEND_URL) {
-      try {
-        const me = await API.me();
-        isAuthed = !!me;
-        updateAuthUi(isAuthed);
-        if (isAuthed) {
-          await syncFromBackend();
-          if (Notification.permission === 'granted') {
-            try { await ensurePushSubscribed(); } catch {}
+      if (authToken) {
+        try {
+          const me = await API.me();
+          isAuthed = !!me;
+          updateAuthUi(isAuthed);
+          if (isAuthed) {
+            await syncFromBackend();
+            if (Notification.permission === 'granted') {
+              try { await ensurePushSubscribed(); } catch {}
+            }
           }
+        } catch (e) {
+          // Surface connectivity error if any
+          await updateBackendConnectivityStatus(e);
         }
-      } catch (e) {
-        // Leave in login page, but surface connectivity error if any
-        await updateBackendConnectivityStatus(e);
+      } else {
+        // No token present → skip calling /api/auth/me to avoid 401 noise; remain in local mode
+        isAuthed = false;
+        updateAuthUi(false);
       }
     }
 
