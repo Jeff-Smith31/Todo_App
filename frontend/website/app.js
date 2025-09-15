@@ -46,10 +46,6 @@
     permissionBtn: $('#btn-permission'),
     installBtn: $('#btn-install'),
     template: $('#task-item-template'),
-    backendUrlInput: $('#backend-url-input'),
-    backendUrlSave: $('#backend-url-save'),
-    backendStatus: $('#backend-status'),
-    backendTest: $('#backend-test')
   };
 
   let tasks = loadTasks();
