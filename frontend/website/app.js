@@ -33,6 +33,7 @@
     id: $('#task-id'),
     title: $('#title'),
     notes: $('#notes'),
+    category: $('#category'),
     frequency: $('#frequency'),
     customWrap: $('#custom-days-wrap'),
     nextDue: $('#next-due'),
@@ -45,6 +46,7 @@
     search: $('#search'),
     permissionBtn: $('#btn-permission'),
     installBtn: $('#btn-install'),
+    addCategoryBtn: $('#btn-add-category'),
     template: $('#task-item-template'),
   };
 
@@ -73,6 +75,11 @@
     elements.search.addEventListener('input', render);
 
     elements.permissionBtn.addEventListener('click', requestNotificationPermission);
+
+    // Categories init and UI
+    ensureCategoryState();
+    populateCategorySelect();
+    if (elements.addCategoryBtn) elements.addCategoryBtn.addEventListener('click', addCategoryViaPrompt);
 
 
     // Auth
@@ -299,6 +306,11 @@
           }
           elements.nextDue.value = t.nextDue;
           elements.remindAt.value = t.remindAt;
+          if (elements.category) {
+            ensureCategoryState();
+            populateCategorySelect();
+            elements.category.value = t.category || 'Default';
+          }
           show(pageForm);
           return;
         }
@@ -330,6 +342,7 @@
       id,
       title: elements.title.value.trim(),
       notes: elements.notes.value.trim(),
+      category: elements.category ? (elements.category.value || 'Default') : 'Default',
       everyDays,
       scheduleDays,
       nextDue: elements.nextDue.value,
@@ -367,6 +380,11 @@
     elements.customWrap.classList.add('hidden');
     elements.nextDue.value = todayStr();
     elements.remindAt.value = '09:00';
+    if (elements.category) {
+      ensureCategoryState();
+      populateCategorySelect();
+      elements.category.value = settings.categories[0] || 'Default';
+    }
   }
 
   // CRUD helpers
@@ -426,6 +444,7 @@
     const q = elements.search.value.trim().toLowerCase();
 
     const filtered = tasks.filter(t => {
+      if (!t.category) t.category = 'Default';
       if (q && !(t.title.toLowerCase().includes(q) || (t.notes||'').toLowerCase().includes(q))) return false;
       if (filter === 'today') return isDueToday(t);
       if (filter === 'overdue') return isOverdue(t);
@@ -441,39 +460,73 @@
       elements.empty.style.display = 'none';
     }
 
-    for (const t of filtered){
-      const node = elements.template.content.firstElementChild.cloneNode(true);
-      const checkbox = node.querySelector('input.toggle');
-      const title = node.querySelector('.title');
-      const notes = node.querySelector('.notes');
-      const meta = node.querySelector('.meta');
-      const bPriority = node.querySelector('.badge.priority');
-      const bOverdue = node.querySelector('.badge.overdue');
-      const bToday = node.querySelector('.badge.due-today');
+    // Categories to render: union of known categories and those present in filtered tasks
+    ensureCategoryState();
+    const presentCats = Array.from(new Set(filtered.map(t => t.category || 'Default')));
+    const catOrder = Array.from(new Set([...(settings.categories || []), ...presentCats]));
 
-      title.textContent = t.title;
-      notes.textContent = t.notes || '';
+    for (const catName of catOrder){
+      const catTasks = filtered.filter(t => (t.category || 'Default') === catName);
+      // Build section
+      const details = document.createElement('details');
+      details.className = 'category-section';
+      details.open = settings.categoryOpen[catName] !== false; // default open
+      details.addEventListener('toggle', () => setCategoryOpen(catName, details.open));
 
-      const dueDate = t.nextDue;
-      const dueTime = t.remindAt;
-      const scheduleText = (t.scheduleDays && t.scheduleDays.length)
-        ? `• ${t.scheduleDays.map(d=>['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}`
-        : `• Every ${t.everyDays} day(s)`;
-      meta.textContent = `Due: ${formatDate(dueDate)} at ${formatTime(dueTime)} ${scheduleText}`;
+      const summary = document.createElement('summary');
+      summary.innerHTML = `<strong>${catName}</strong> <span style="opacity:0.7">(${catTasks.length})</span>`;
 
-      // badges
-      toggleHidden(bPriority, !t.priority);
-      toggleHidden(bOverdue, !isOverdue(t));
-      toggleHidden(bToday, !(isDueToday(t) && !isOverdue(t)));
+      // Controls: rename/delete
+      const actions = document.createElement('span');
+      actions.style.float = 'right';
+      const btnRen = document.createElement('button'); btnRen.type = 'button'; btnRen.className = 'btn'; btnRen.textContent = 'Rename'; btnRen.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); renameCategory(catName); });
+      const btnDel = document.createElement('button'); btnDel.type = 'button'; btnDel.className = 'btn'; btnDel.textContent = 'Delete'; btnDel.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); deleteCategory(catName); });
+      if (catName === 'Default') btnDel.disabled = true;
+      actions.appendChild(btnRen); actions.appendChild(btnDel);
+      summary.appendChild(actions);
 
-      // checkbox is always unchecked in list; completion toggles schedule
-      checkbox.checked = false;
-      checkbox.addEventListener('change', () => toggleComplete(t.id, checkbox.checked));
+      details.appendChild(summary);
 
-      node.querySelector('button.edit').addEventListener('click', () => editTask(t.id));
-      node.querySelector('button.delete').addEventListener('click', () => deleteTask(t.id));
+      const ul = document.createElement('ul');
+      ul.className = 'task-list';
 
-      elements.list.appendChild(node);
+      for (const t of catTasks){
+        const node = elements.template.content.firstElementChild.cloneNode(true);
+        const checkbox = node.querySelector('input.toggle');
+        const title = node.querySelector('.title');
+        const notes = node.querySelector('.notes');
+        const meta = node.querySelector('.meta');
+        const bPriority = node.querySelector('.badge.priority');
+        const bOverdue = node.querySelector('.badge.overdue');
+        const bToday = node.querySelector('.badge.due-today');
+
+        title.textContent = t.title;
+        notes.textContent = t.notes || '';
+
+        const dueDate = t.nextDue;
+        const dueTime = t.remindAt;
+        const scheduleText = (t.scheduleDays && t.scheduleDays.length)
+          ? `• ${t.scheduleDays.map(d=>['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}`
+          : `• Every ${t.everyDays} day(s)`;
+        meta.textContent = `Due: ${formatDate(dueDate)} at ${formatTime(dueTime)} ${scheduleText}`;
+
+        // badges
+        toggleHidden(bPriority, !t.priority);
+        toggleHidden(bOverdue, !isOverdue(t));
+        toggleHidden(bToday, !(isDueToday(t) && !isOverdue(t)));
+
+        // checkbox is always unchecked in list; completion toggles schedule
+        checkbox.checked = false;
+        checkbox.addEventListener('change', () => toggleComplete(t.id, checkbox.checked));
+
+        node.querySelector('button.edit').addEventListener('click', () => editTask(t.id));
+        node.querySelector('button.delete').addEventListener('click', () => deleteTask(t.id));
+
+        ul.appendChild(node);
+      }
+
+      details.appendChild(ul);
+      elements.list.appendChild(details);
     }
   }
 
@@ -504,6 +557,80 @@
   }
   function saveSettings(){
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }
+
+  // Categories
+  function ensureCategoryState(){
+    if (!settings.categories || !Array.isArray(settings.categories) || settings.categories.length === 0){
+      settings.categories = ['Default'];
+    }
+    if (!settings.categoryOpen || typeof settings.categoryOpen !== 'object') settings.categoryOpen = {};
+    if (typeof settings.categoryOpen['Default'] === 'undefined') settings.categoryOpen['Default'] = true;
+    // Migrate tasks without category
+    let changed = false;
+    for (const t of tasks){
+      if (!t.category) { t.category = 'Default'; changed = true; }
+    }
+    if (changed) saveTasks();
+    saveSettings();
+  }
+
+  function populateCategorySelect(){
+    if (!elements.category) return;
+    // Clear
+    elements.category.innerHTML = '';
+    for (const name of settings.categories){
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      elements.category.appendChild(opt);
+    }
+    // Ensure a value is selected
+    const cur = elements.category.value;
+    if (!cur || !settings.categories.includes(cur)) elements.category.value = settings.categories[0] || 'Default';
+  }
+
+  function addCategoryViaPrompt(){
+    const name = (prompt('New category name:') || '').trim();
+    if (!name) return;
+    if (settings.categories.includes(name)) { alert('Category already exists'); return; }
+    settings.categories.push(name);
+    settings.categoryOpen[name] = true;
+    saveSettings();
+    populateCategorySelect();
+    render();
+  }
+
+  function renameCategory(oldName){
+    const name = (prompt('Rename category:', oldName) || '').trim();
+    if (!name || name === oldName) return;
+    if (settings.categories.includes(name)) { alert('A category with that name already exists'); return; }
+    const idx = settings.categories.indexOf(oldName);
+    if (idx >= 0) settings.categories[idx] = name;
+    // Update tasks
+    for (const t of tasks){ if (t.category === oldName) t.category = name; }
+    // Open state
+    settings.categoryOpen[name] = !!settings.categoryOpen[oldName];
+    delete settings.categoryOpen[oldName];
+    saveTasks();
+    saveSettings();
+    populateCategorySelect();
+    render();
+  }
+
+  function deleteCategory(name){
+    if (name === 'Default') { alert('Default category cannot be deleted'); return; }
+    const used = tasks.some(t => t.category === name);
+    if (used) { alert('Category has tasks. Move or edit tasks before deleting.'); return; }
+    settings.categories = settings.categories.filter(n => n !== name);
+    delete settings.categoryOpen[name];
+    saveSettings();
+    populateCategorySelect();
+    render();
+  }
+
+  function setCategoryOpen(name, open){
+    settings.categoryOpen[name] = !!open;
+    saveSettings();
   }
 
   async function syncFromBackend(){

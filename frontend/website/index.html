@@ -70,7 +70,10 @@
         <button id="btn-logout" class="btn">Logout</button>
       </div>
 
-      <ul id="task-list" class="task-list"></ul>
+      <div class="list-header-actions" style="margin:0.5rem 0 1rem 0">
+        <button id="btn-add-category" class="btn">Add Category</button>
+      </div>
+      <div id="task-list" class="task-list"></div>
       <p id="empty" class="empty">No tasks yet. Use "Create Task" to add your first one.</p>
     </section>
 
@@ -87,6 +90,10 @@
           <label>
             <span>Notes</span>
             <input id="notes" type="text" placeholder="Optional notes">
+          </label>
+          <label>
+            <span>Category</span>
+            <select id="category"></select>
           </label>
         </div>
         <div class="grid">
