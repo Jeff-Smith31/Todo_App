@@ -105,12 +105,22 @@ jobs:
             --include "manifest.webmanifest" \
             --cache-control "public,max-age=31536000,immutable"
 
-      - name: Upload index.html and sw.js with no-cache
+      - name: Upload index.html and critical JS with no-cache
         run: |
           BUCKET=${{ steps.out.outputs.bucket }}
+          # HTML should never be cached
           aws s3 cp frontend/website/index.html s3://$BUCKET/index.html --cache-control "no-cache, no-store, must-revalidate" --content-type "text/html; charset=utf-8"
+          # Service worker should not be cached to allow immediate updates
           if [ -f frontend/website/sw.js ]; then
             aws s3 cp frontend/website/sw.js s3://$BUCKET/sw.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
+          fi
+          # Optional runtime config and version files are referenced by index.html. If they 404, CloudFront maps 403/404 to index.html (SPA),
+          # which returns HTML with JS content-type and can break script execution. Upload them with no-cache if present.
+          if [ -f frontend/website/app-version.js ]; then
+            aws s3 cp frontend/website/app-version.js s3://$BUCKET/app-version.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
+          fi
+          if [ -f frontend/website/config.js ]; then
+            aws s3 cp frontend/website/config.js s3://$BUCKET/config.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
           fi
 
       - name: Invalidate CloudFront cache
