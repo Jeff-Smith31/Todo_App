@@ -164,8 +164,7 @@
     }
 
     // Backend mode: check session and sync; otherwise local-only
-    // Also show connectivity diagnostics and allow overriding the backend URL from the login page.
-    await updateBackendConnectivityStatus();
+    // Connectivity diagnostics UI removed.
 
     if (BACKEND_URL) {
       try {
