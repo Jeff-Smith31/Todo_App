@@ -899,6 +899,7 @@
       return existing;
     }
     const { key } = await API.getVapidKey();
+    if (!key) return; // push disabled or backend unavailable
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(key)
@@ -964,7 +965,15 @@
       async createTask(t){ return handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
       async updateTask(t){ return handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
       async deleteTask(id){ return handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(id), { method: 'DELETE', ...common, headers: buildHeaders() })); },
-      async getVapidKey(){ return handle(await fetch(baseUrl + '/api/push/vapid-public-key', { ...common, headers: buildHeaders() })); },
+      async getVapidKey(){
+        const res = await fetch(baseUrl + '/api/push/vapid-public-key', { ...common, headers: buildHeaders() });
+        if (res.status === 503) return { key: '' }; // push not configured on backend
+        if (!res.ok) {
+          // Treat any error as push disabled to avoid noisy console errors
+          return { key: '' };
+        }
+        try { return await res.json(); } catch { return { key: '' }; }
+      },
       async subscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(sub) })); },
       async unsubscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'DELETE', ...common, headers: buildHeaders(), body: JSON.stringify({ endpoint: sub.endpoint }) })); },
     };
