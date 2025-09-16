@@ -125,7 +125,7 @@ const taskSchema = Joi.object({
   remindAt: Joi.string().regex(/^\d{2}:\d{2}$/).required(),
   priority: Joi.boolean().optional(),
   lastCompleted: Joi.string().allow(null).optional(),
-});
+}).unknown(true);
 
 const subscriptionSchema = Joi.object({
   endpoint: Joi.string().uri().required(),
