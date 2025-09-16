@@ -10,6 +10,7 @@ RUN npm install --omit=dev
 
 # Copy app source and entrypoint
 COPY backend/index.js ./index.js
+COPY backend/dynamo.js ./dynamo.js
 COPY backend/entrypoint-https.sh ./entrypoint-https.sh
 RUN chmod +x ./entrypoint-https.sh
 
