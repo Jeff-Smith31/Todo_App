@@ -1013,10 +1013,31 @@
           return await handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) }));
         } catch (e) {
           const msg = (e && e.message) ? String(e.message) : '';
-          if (/category/i.test(msg)) {
-            // Compatibility shim: retry without category for older backends that don't allow it
+          if (/category/i.test(msg) || /is not allowed/i.test(msg)) {
+            // 1st fallback: remove category and retry (legacy backend without category support)
             const t2 = { ...t }; delete t2.category;
-            return await handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t2) }));
+            try {
+              return await handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t2) }));
+            } catch (e2) {
+              const msg2 = (e2 && e2.message) ? String(e2.message) : '';
+              if (/is not allowed/i.test(msg2) || /category/i.test(msg2)) {
+                // 2nd fallback: send a minimal legacy-compatible payload
+                const t3 = {
+                  id: t.id,
+                  title: t.title,
+                  notes: t.notes || '',
+                  everyDays: t.everyDays,
+                  scheduleDays: Array.isArray(t.scheduleDays) ? t.scheduleDays : undefined,
+                  nextDue: t.nextDue,
+                  remindAt: t.remindAt,
+                  priority: !!t.priority,
+                  lastCompleted: t.lastCompleted || undefined,
+                };
+                Object.keys(t3).forEach(k => t3[k] === undefined && delete t3[k]);
+                return await handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t3) }));
+              }
+              throw e2;
+            }
           }
           throw e;
         }
@@ -1026,9 +1047,30 @@
           return await handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t) }));
         } catch (e) {
           const msg = (e && e.message) ? String(e.message) : '';
-          if (/category/i.test(msg)) {
+          if (/category/i.test(msg) || /is not allowed/i.test(msg)) {
+            // 1st fallback: remove category and retry
             const t2 = { ...t }; delete t2.category;
-            return await handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t2) }));
+            try {
+              return await handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t2) }));
+            } catch (e2) {
+              const msg2 = (e2 && e2.message) ? String(e2.message) : '';
+              if (/is not allowed/i.test(msg2) || /category/i.test(msg2)) {
+                // 2nd fallback: minimal payload
+                const t3 = {
+                  title: t.title,
+                  notes: t.notes || '',
+                  everyDays: t.everyDays,
+                  scheduleDays: Array.isArray(t.scheduleDays) ? t.scheduleDays : undefined,
+                  nextDue: t.nextDue,
+                  remindAt: t.remindAt,
+                  priority: !!t.priority,
+                  lastCompleted: t.lastCompleted || undefined,
+                };
+                Object.keys(t3).forEach(k => t3[k] === undefined && delete t3[k]);
+                return await handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t3) }));
+              }
+              throw e2;
+            }
           }
           throw e;
         }
