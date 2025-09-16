@@ -214,10 +214,6 @@
       navigator.serviceWorker.register('sw.js').catch(()=>{});
     }
 
-    // Try to request notifications on first run to streamline mobile setup
-    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      try { await requestNotificationPermission(); } catch {}
-    }
 
     // Backend mode: check session and sync; otherwise local-only
     // Connectivity diagnostics UI removed.
@@ -1004,8 +1000,31 @@
       },
       async me(){ try { const r = await fetch(baseUrl + '/api/auth/me', { ...common, headers: buildHeaders() }); if (!r.ok) return null; const j = await r.json(); return j.user; } catch { return null; } },
       async getTasks(){ const j = await handle(await fetch(baseUrl + '/api/tasks', { ...common, headers: buildHeaders() })); return j.tasks; },
-      async createTask(t){ return handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
-      async updateTask(t){ return handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
+      async createTask(t){
+        try {
+          return await handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) }));
+        } catch (e) {
+          const msg = (e && e.message) ? String(e.message) : '';
+          if (/category/i.test(msg)) {
+            // Compatibility shim: retry without category for older backends that don't allow it
+            const t2 = { ...t }; delete t2.category;
+            return await handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t2) }));
+          }
+          throw e;
+        }
+      },
+      async updateTask(t){
+        try {
+          return await handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t) }));
+        } catch (e) {
+          const msg = (e && e.message) ? String(e.message) : '';
+          if (/category/i.test(msg)) {
+            const t2 = { ...t }; delete t2.category;
+            return await handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t2) }));
+          }
+          throw e;
+        }
+      },
       async deleteTask(id){ return handle(await fetch(baseUrl + '/api/tasks/' + encodeURIComponent(id), { method: 'DELETE', ...common, headers: buildHeaders() })); },
       async getVapidKey(){
         const res = await fetch(baseUrl + '/api/push/vapid-public-key', { ...common, headers: buildHeaders() });
