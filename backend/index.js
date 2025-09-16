@@ -18,6 +18,8 @@ import https from 'https';
 dotenv.config();
 
 const app = express();
+// Trust proxy when behind Nginx so rate-limit and IPs work correctly
+app.set('trust proxy', true);
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '8443', 10);
 const HTTPS_CERT_PATH = process.env.HTTPS_CERT_PATH || '';

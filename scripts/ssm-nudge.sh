@@ -32,6 +32,37 @@ DOMAIN_NAME=${DOMAIN_NAME:-ticktocktasks.com}
 APIDOM=${APIDOM:-${API_SUBDOMAIN}.${DOMAIN_NAME}}
 NGINX_CONF=/opt/ticktock/nginx.conf
 
+# Ensure .env contains required runtime vars (especially DDB_REGION)
+REGION_GUESS=${AWS_DEFAULT_REGION:-${AWS_REGION:-us-east-1}}
+if [ -f .env ]; then
+  if grep -q '^DDB_REGION=' .env; then
+    sed -i "s#^DDB_REGION=.*#DDB_REGION=${REGION_GUESS}#" .env || true
+  else
+    echo "DDB_REGION=${REGION_GUESS}" >> .env
+  fi
+  if grep -q '^REDIRECT_HTTP_TO_HTTPS=' .env; then
+    sed -i 's#^REDIRECT_HTTP_TO_HTTPS=.*#REDIRECT_HTTP_TO_HTTPS=false#' .env || true
+  else
+    echo 'REDIRECT_HTTP_TO_HTTPS=false' >> .env
+  fi
+else
+  cat > .env <<ENV
+CORS_ORIGIN=https://${DOMAIN_NAME},https://www.${DOMAIN_NAME}
+JWT_SECRET=$(openssl rand -hex 24 2>/dev/null || echo dev-secret)
+NODE_ENV=production
+REDIRECT_HTTP_TO_HTTPS=false
+DDB_REGION=${REGION_GUESS}
+ENV
+fi
+
+# Build or rebuild backend image to pick up latest code
+log "build backend image"
+if command -v docker-compose >/dev/null 2>&1; then
+  docker-compose build backend || true
+else
+  docker compose build backend || true
+fi
+
 log "ensure docker-compose.override.yml defines nginx/certbot/autoheal"
 cat > /opt/ticktock/docker-compose.override.yml <<'OVR'
 version: '3.8'
@@ -106,9 +137,13 @@ CFG
 
 log "docker compose up -d (start/ensure backend + nginx)"
 if command -v docker-compose >/dev/null 2>&1; then
-  docker-compose up -d || true
+  docker-compose rm -sf backend || true
+  docker-compose up -d backend || true
+  docker-compose up -d nginx autoheal certbot || true
 else
-  docker compose up -d || true
+  docker compose rm -sf backend || true
+  docker compose up -d backend || true
+  docker compose up -d nginx autoheal certbot || true
 fi
 
 # Obtain or renew certs using certbot (webroot)
@@ -142,16 +177,23 @@ http {
   server {
     listen 443 ssl http2;
     server_name ${APIDOM};
+    client_max_body_size 2m;
     ssl_certificate /etc/letsencrypt/live/${APIDOM}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${APIDOM}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
     location = /healthz { proxy_set_header Host \$host; proxy_pass http://ticktock_backend/healthz; }
     location / {
+      proxy_http_version 1.1;
+      proxy_set_header Connection "";
       proxy_set_header Host \$host;
       proxy_set_header X-Real-IP \$remote_addr;
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
       proxy_set_header X-Forwarded-Proto \$scheme;
+      proxy_buffering off;
+      proxy_request_buffering off;
+      proxy_read_timeout 60s;
+      proxy_send_timeout 60s;
       proxy_pass http://ticktock_backend;
     }
   }
