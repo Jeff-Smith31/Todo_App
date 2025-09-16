@@ -42,7 +42,10 @@ app.use(helmet());
 app.use(morgan('dev'));
 app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
-const ORIGINS = (process.env.CORS_ORIGIN || ORIGIN).split(',').map(s => s.trim()).filter(Boolean);
+// Build allowed origins list: env-provided plus safe defaults for our production domains
+const ENV_ORIGINS = (process.env.CORS_ORIGIN || ORIGIN).split(',').map(s => s.trim()).filter(Boolean);
+const SAFE_DEFAULTS = ['https://ticktocktasks.com', 'https://www.ticktocktasks.com'];
+const ORIGINS = Array.from(new Set([...ENV_ORIGINS, ...SAFE_DEFAULTS]));
 // Unified CORS options (ensure preflight is properly handled across environments)
 const corsOptions = {
   origin: function(origin, callback) {
