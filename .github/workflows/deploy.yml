@@ -291,6 +291,7 @@ jobs:
         id: front
         run: |
           set -e
+          # Try to read outputs from the frontend stack
           BUCKET=$(aws cloudformation describe-stacks \
             --region "${FRONTEND_REGION}" \
             --stack-name "${FRONTEND_STACK_NAME}" \
@@ -307,12 +308,32 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue | [0]" \
             --output text 2>/dev/null || echo None)
 
-          # Fallbacks if stack outputs are missing (e.g., CNAME already in use)
+          # If a distribution exists but the bucket output is missing, derive the bucket from the distribution's default origin
+          if { [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; } && { [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; }; then
+            # Ensure jq is installed
+            if ! command -v jq >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y jq; fi
+            DIST_JSON=$(aws cloudfront get-distribution --id "$DIST_ID" --output json 2>/dev/null || true)
+            if [ -n "$DIST_JSON" ]; then
+              TOID=$(echo "$DIST_JSON" | jq -r '.Distribution.DistributionConfig.DefaultCacheBehavior.TargetOriginId // empty')
+              ODOM=$(echo "$DIST_JSON" | jq -r ".Distribution.DistributionConfig.Origins.Items[] | select(.Id==\"${TOID}\").DomainName // empty")
+              if [ -n "$ODOM" ]; then
+                case "$ODOM" in
+                  *.s3.amazonaws.com) BUCKET="${ODOM%%.s3.amazonaws.com}" ;;
+                  *.s3.*.amazonaws.com) BUCKET="${ODOM%%.s3.*.amazonaws.com}" ;;
+                  *.s3-website-*.amazonaws.com) BUCKET="${ODOM%%.s3-website-*.amazonaws.com}" ;;
+                  *) BUCKET="$ODOM" ;;
+                esac
+                BUCKET=$(echo "$BUCKET" | sed -E 's/\.s3(\.[a-z0-9-]+)?\.amazonaws\.com$//')
+              fi
+            fi
+          fi
+
+          # Fallbacks if stack outputs and distribution bucket could not be resolved
           if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
             if [ -n "${FRONT_EXISTING_BUCKET:-}" ]; then
               BUCKET="${FRONT_EXISTING_BUCKET}"
             else
-              # Default naming convention
+              # Default naming convention (only create if not using an existing distribution)
               BUCKET="${DOMAIN_NAME}-site"
               # Create bucket if it doesn't exist (us-east-1 has special rules)
               if ! aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
@@ -325,8 +346,8 @@ jobs:
             fi
           fi
 
+          # If DistributionId is still missing, try to find an existing distribution by alias (CNAME)
           if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
-            # Try to find an existing distribution by alias (CNAME)
             DID=$(aws cloudfront list-distributions \
               --query "DistributionList.Items[?Aliases.Items!=null && contains(join(',',Aliases.Items), '${DOMAIN_NAME}')].[Id,DomainName] | [0]" \
               --output text 2>/dev/null || true)
