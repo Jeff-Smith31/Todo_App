@@ -191,41 +191,41 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/tasks', authMiddleware, async (req, res) => {
-  const { error, value } = taskSchema.validate(req.body, { allowUnknown: true, stripUnknown: true, abortEarly: false });
-  if (error) return res.status(400).json({ error: error.message });
-  const id = value.id || cryptoRandomId();
+  // Be maximally compatible: accept any payload shape and coerce
+  const b = req.body || {};
+  const id = (b.id && String(b.id)) || cryptoRandomId();
   const item = {
     id,
     user_id: String(req.user.id),
-    title: value.title,
-    notes: value.notes || '',
-    category: value.category || 'Default',
-    every_days: value.everyDays,
-    schedule_days: value.scheduleDays,
-    next_due: value.nextDue,
-    remind_at: value.remindAt,
-    priority: !!value.priority,
-    last_completed: value.lastCompleted || null,
+    title: (b.title && String(b.title)) || 'Untitled',
+    notes: (b.notes != null ? String(b.notes) : ''),
+    category: (b.category == null || b.category === '') ? 'Default' : String(b.category),
+    every_days: Number.isFinite(b.everyDays) ? b.everyDays : Number(b.everyDays || 1),
+    schedule_days: Array.isArray(b.scheduleDays) ? b.scheduleDays : undefined,
+    next_due: (b.nextDue && String(b.nextDue)) || new Date().toISOString().slice(0,10),
+    remind_at: (b.remindAt && String(b.remindAt)) || '09:00',
+    priority: !!b.priority,
+    last_completed: b.lastCompleted ? String(b.lastCompleted) : null,
   };
   await ddbPutTask(item);
   res.status(201).json({ id });
 });
 
 app.put('/api/tasks/:id', authMiddleware, async (req, res) => {
-  const { error, value } = taskSchema.validate({ ...req.body, id: req.params.id }, { allowUnknown: true, stripUnknown: true, abortEarly: false });
-  if (error) return res.status(400).json({ error: error.message });
+  // Max compatibility: accept category and other extra fields without error
+  const b = { ...(req.body || {}), id: req.params.id };
   const item = {
-    id: req.params.id,
+    id: String(req.params.id),
     user_id: String(req.user.id),
-    title: value.title,
-    notes: value.notes || '',
-    category: value.category || 'Default',
-    every_days: value.everyDays,
-    schedule_days: value.scheduleDays,
-    next_due: value.nextDue,
-    remind_at: value.remindAt,
-    priority: !!value.priority,
-    last_completed: value.lastCompleted || null,
+    title: (b.title && String(b.title)) || 'Untitled',
+    notes: (b.notes != null ? String(b.notes) : ''),
+    category: (b.category == null || b.category === '') ? 'Default' : String(b.category),
+    every_days: Number.isFinite(b.everyDays) ? b.everyDays : Number(b.everyDays || 1),
+    schedule_days: Array.isArray(b.scheduleDays) ? b.scheduleDays : undefined,
+    next_due: (b.nextDue && String(b.nextDue)) || new Date().toISOString().slice(0,10),
+    remind_at: (b.remindAt && String(b.remindAt)) || '09:00',
+    priority: !!b.priority,
+    last_completed: b.lastCompleted ? String(b.lastCompleted) : null,
   };
   await ddbPutTask(item);
   res.json({ ok: true });
