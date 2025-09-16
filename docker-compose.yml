@@ -16,6 +16,7 @@ services:
       - WEB_PUSH_PRIVATE_KEY=${WEB_PUSH_PRIVATE_KEY}
       - CERT_HOSTS=${CERT_HOSTS:-localhost}
       - REDIRECT_HTTP_TO_HTTPS=false
+      - DDB_REGION=${DDB_REGION:-}
     ports:
       - "8080:8080"
       - "8443:8443"

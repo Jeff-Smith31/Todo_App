@@ -247,6 +247,7 @@ Resources:
           # Prepare env and start backend (write .env with first origin), then widen to all AllowedOrigins
           FRONT_ORIGIN="$(echo "${AllowedOrigins}" | cut -d',' -f1)"
           export CORS_ORIGIN="${AllowedOrigins}"
+          export DDB_REGION="${AWS::Region}"
           ./backend-up.sh "$FRONT_ORIGIN" || true
           if [ -f .env ]; then
             sed -i "s|^CORS_ORIGIN=.*|CORS_ORIGIN=${AllowedOrigins}|" .env || true
@@ -254,6 +255,11 @@ Resources:
               sed -i 's#^REDIRECT_HTTP_TO_HTTPS=.*#REDIRECT_HTTP_TO_HTTPS=false#' .env || true
             else
               echo 'REDIRECT_HTTP_TO_HTTPS=false' >> .env
+            fi
+            if grep -q '^DDB_REGION=' .env; then
+              sed -i "s#^DDB_REGION=.*#DDB_REGION=${AWS::Region}#" .env || true
+            else
+              echo 'DDB_REGION=${AWS::Region}' >> .env
             fi
           fi
 
