@@ -258,7 +258,7 @@
 
     // Initial route
     if (!location.hash) {
-      location.hash = isAuthed ? '#/tasks' : '#/tasks';
+      location.hash = isAuthed ? '#/tasks' : '#/login';
     }
     route();
   }
@@ -306,9 +306,13 @@
 
     // Routes
     if (parts.length === 0) {
-      // default
-      show(pageTasks);
-      render();
+      // default: show login when not authenticated
+      if (!isAuthed) {
+        show(pageLogin);
+      } else {
+        show(pageTasks);
+        render();
+      }
       return;
     }
 
@@ -365,8 +369,12 @@
     }
 
     // Fallback
-    show(pageTasks);
-    render();
+    if (!isAuthed) {
+      show(pageLogin);
+    } else {
+      show(pageTasks);
+      render();
+    }
   }
 
   async function onSaveTask(e){
@@ -1078,11 +1086,8 @@
         if (!latest) return;
         if (latest !== current) {
           // Mobile → show update button; Desktop → auto reload
-          if (isMobile()) {
-            if (btnUpdate) btnUpdate.style.display = 'inline-block';
-          } else {
-            location.reload(true);
-          }
+          // Always let the user choose when to update to avoid unexpected reload loops
+          if (btnUpdate) btnUpdate.style.display = 'inline-block';
         }
       } catch {}
     }
