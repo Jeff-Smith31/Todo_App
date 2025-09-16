@@ -1,12 +1,7 @@
 name: Deploy Frontend (S3 + CloudFront)
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'frontend/website/**'
-      - 'infra/frontend/**'
-      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
 
 permissions:
   id-token: write
