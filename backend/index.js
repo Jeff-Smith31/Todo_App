@@ -138,32 +138,42 @@ const subscriptionSchema = Joi.object({
 
 // Auth routes
 app.post('/api/auth/register', authLimiter, async (req, res) => {
-  const { error, value } = registerSchema.validate(req.body);
-  if (error) return res.status(400).json({ error: error.message });
+  try {
+    const { error, value } = registerSchema.validate(req.body);
+    if (error) return res.status(400).json({ error: error.message });
 
-  const email = value.email.toLowerCase();
-  const existing = await getUserByEmail(email);
-  if (existing) return res.status(409).json({ error: 'Email already registered' });
-  const hash = bcrypt.hashSync(value.password, 10);
-  const userRec = await createUser(email, hash);
-  const user = { id: userRec.id, email: userRec.email };
-  const token = issueToken(user);
-  setAuthCookie(res, token);
-  res.json({ ok: true, token, user: { id: user.id, email: user.email } });
+    const email = value.email.toLowerCase();
+    const existing = await getUserByEmail(email);
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
+    const hash = bcrypt.hashSync(value.password, 10);
+    const userRec = await createUser(email, hash);
+    const user = { id: userRec.id, email: userRec.email };
+    const token = issueToken(user);
+    setAuthCookie(res, token);
+    res.json({ ok: true, token, user: { id: user.id, email: user.email } });
+  } catch (e) {
+    console.error('Auth register error', e?.message || e);
+    return res.status(500).json({ error: 'Registration failed' });
+  }
 });
 
 app.post('/api/auth/login', authLimiter, async (req, res) => {
-  const { error, value } = loginSchema.validate(req.body);
-  if (error) return res.status(400).json({ error: error.message });
+  try {
+    const { error, value } = loginSchema.validate(req.body);
+    if (error) return res.status(400).json({ error: error.message });
 
-  const email = value.email.toLowerCase();
-  const row = await getUserByEmail(email);
-  if (!row) return res.status(401).json({ error: 'Invalid credentials' });
-  const ok = bcrypt.compareSync(value.password, row.password_hash);
-  if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-  const token = issueToken({ id: row.id, email: row.email });
-  setAuthCookie(res, token);
-  res.json({ ok: true, token, user: { id: row.id, email: row.email } });
+    const email = value.email.toLowerCase();
+    const row = await getUserByEmail(email);
+    if (!row) return res.status(401).json({ error: 'Invalid credentials' });
+    const ok = bcrypt.compareSync(value.password, row.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = issueToken({ id: row.id, email: row.email });
+    setAuthCookie(res, token);
+    res.json({ ok: true, token, user: { id: row.id, email: row.email } });
+  } catch (e) {
+    console.error('Auth login error', e?.message || e);
+    return res.status(500).json({ error: 'Login failed' });
+  }
 });
 
 app.post('/api/auth/logout', (req, res) => {
