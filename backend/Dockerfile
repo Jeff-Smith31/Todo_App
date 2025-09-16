@@ -13,9 +13,7 @@ COPY backend/index.js ./index.js
 COPY backend/entrypoint-https.sh ./entrypoint-https.sh
 RUN chmod +x ./entrypoint-https.sh
 
-# Create data and certs paths
-VOLUME ["/data"]
-ENV SQLITE_FILE=/data/data.sqlite
+# Create certs path
 RUN mkdir -p /certs
 
 # Env defaults

@@ -1,7 +1,7 @@
 {
   "name": "ticktock-tasks-server",
   "version": "1.1.0",
-  "description": "Backend for TickTock Tasks - Express + SQLite, JWT cookie auth, Web Push",
+  "description": "Backend for TickTock Tasks - Express + DynamoDB, JWT cookie auth, Web Push",
   "main": "index.js",
   "type": "module",
   "scripts": {

@@ -12,13 +12,10 @@ services:
       - CORS_ORIGIN=${CORS_ORIGIN:-https://ticktocktasks.com}
       - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
       - NODE_ENV=production
-      - SQLITE_FILE=/data/data.sqlite
       - WEB_PUSH_PUBLIC_KEY=${WEB_PUSH_PUBLIC_KEY}
       - WEB_PUSH_PRIVATE_KEY=${WEB_PUSH_PRIVATE_KEY}
       - CERT_HOSTS=${CERT_HOSTS:-localhost}
       - REDIRECT_HTTP_TO_HTTPS=false
-    volumes:
-      - backend_data:/data
     ports:
       - "8080:8080"
       - "8443:8443"
@@ -52,6 +49,5 @@ services:
       start_period: 30s
 
 volumes:
-  backend_data:
   letsencrypt:
   certbot_challenges:
