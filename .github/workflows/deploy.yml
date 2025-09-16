@@ -370,6 +370,15 @@ jobs:
           echo "window.APP_VERSION='${BUILD_ID}'; window.APP_BUILD_TIME='${BUILD_TIME}';" > "$SITE_DIR/app-version.js"
           echo "{\"version\":\"${BUILD_ID}\",\"time\":\"${BUILD_TIME}\"}" > "$SITE_DIR/version.json"
 
+          # Ensure config.js exists to avoid SPA 403/404 → index.html MIME trap
+          if [ ! -f "$SITE_DIR/config.js" ]; then
+            if [ -n "${BACKEND_OVERRIDE_URL:-}" ]; then
+              echo "window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:'${BACKEND_OVERRIDE_URL}'});" > "$SITE_DIR/config.js"
+            else
+              echo "window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:''});" > "$SITE_DIR/config.js"
+            fi
+          fi
+
           # Bump Service Worker cache name so clients fetch fresh assets
           if [ -f "$SITE_DIR/sw.js" ]; then
             sed -i "s|^const CACHE_NAME = .*|const CACHE_NAME = 'ticktock-cache-${BUILD_ID}';|" "$SITE_DIR/sw.js" || true
@@ -384,7 +393,8 @@ jobs:
           if [ -f "$SITE_DIR/sw.js" ]; then
             aws s3 cp "$SITE_DIR/sw.js" "s3://$BUCKET/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
           fi
-          # Also ensure version artifacts are no-cached
+          # Also ensure runtime/version artifacts are no-cached
+          aws s3 cp "$SITE_DIR/config.js" "s3://$BUCKET/config.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
           aws s3 cp "$SITE_DIR/app-version.js" "s3://$BUCKET/app-version.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
           aws s3 cp "$SITE_DIR/version.json" "s3://$BUCKET/version.json" --cache-control "no-cache, no-store, must-revalidate" --content-type application/json
 
@@ -399,6 +409,7 @@ jobs:
               "/sw.js" \
               "/manifest.json" \
               "/manifest.webmanifest" \
+              "/config.js" \
               "/app-version.js" \
               "/version.json" \
               "/icons/*")
