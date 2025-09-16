@@ -1,7 +1,7 @@
 import { DynamoDBClient, CreateTableCommand, DescribeTableCommand } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, DeleteCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 
-const REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || undefined; // let SDK infer on EC2
+const REGION = process.env.DDB_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || undefined; // let SDK infer on EC2
 const TABLE_PREFIX = process.env.DDB_TABLE_PREFIX || 'ttt';
 
 export const TABLES = {

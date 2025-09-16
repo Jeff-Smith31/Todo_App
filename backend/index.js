@@ -118,7 +118,7 @@ const taskSchema = Joi.object({
   id: Joi.string().optional(),
   title: Joi.string().min(1).max(255).required(),
   notes: Joi.string().allow('').max(1000).optional(),
-  category: Joi.string().allow('').max(100).optional(),
+  category: Joi.alternatives().try(Joi.string().allow('', 'Default').max(100), Joi.valid(null)).optional(),
   everyDays: Joi.number().integer().min(1).max(3650).required(),
   scheduleDays: Joi.array().items(Joi.number().integer().min(0).max(6)).optional(),
   nextDue: Joi.string().regex(/^\d{4}-\d{2}-\d{2}$/).required(),
@@ -191,7 +191,7 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/tasks', authMiddleware, async (req, res) => {
-  const { error, value } = taskSchema.validate(req.body, { allowUnknown: true });
+  const { error, value } = taskSchema.validate(req.body, { allowUnknown: true, stripUnknown: true, abortEarly: false });
   if (error) return res.status(400).json({ error: error.message });
   const id = value.id || cryptoRandomId();
   const item = {
@@ -212,7 +212,7 @@ app.post('/api/tasks', authMiddleware, async (req, res) => {
 });
 
 app.put('/api/tasks/:id', authMiddleware, async (req, res) => {
-  const { error, value } = taskSchema.validate({ ...req.body, id: req.params.id }, { allowUnknown: true });
+  const { error, value } = taskSchema.validate({ ...req.body, id: req.params.id }, { allowUnknown: true, stripUnknown: true, abortEarly: false });
   if (error) return res.status(400).json({ error: error.message });
   const item = {
     id: req.params.id,
