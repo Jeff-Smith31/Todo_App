@@ -8,12 +8,13 @@ import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 // SQLite removed. Using DynamoDB for persistence.
-import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent } from './dynamo.js';
+import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES } from './dynamo.js';
 import Joi from 'joi';
 import webpush from 'web-push';
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
+import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 dotenv.config();
 
@@ -359,90 +360,111 @@ async function scanAndNotify() {
   const now = new Date();
   const windowStart = new Date(now.getTime() - SCAN_INTERVAL_MS);
 
-  const rows = await (async () => { const allUsers = []; /* We don't list users here; simply scan tasks table. */ return (await (await import('./dynamo.js')).ddb.send(new (await import('@aws-sdk/lib-dynamodb')).ScanCommand({ TableName: (await import('./dynamo.js')).TABLES.tasks }))).Items || []; })();
+  // Scan all tasks (bounded by table size; PAY_PER_REQUEST handles scaling). 
+  // Minimal approach to avoid secondary indexes. If scale grows, switch to partitioned scans.
+  let rows = [];
+  try {
+    const r = await ddb.send(new ScanCommand({ TableName: TABLES.tasks }));
+    rows = r.Items || [];
+  } catch (e) {
+    console.error('scanAndNotify: Scan tasks failed', e?.message || e);
+    return;
+  }
+
   const todayYmd = ymdLocal(now);
 
   for (const r of rows) {
-    const due = combineDueDateTime(r.next_due, r.remind_at);
-    const baseKey = `${r.next_due}T${r.remind_at}`;
+    try {
+      if (!r.next_due || !r.remind_at || !r.id || !r.user_id) continue;
+      const due = combineDueDateTime(String(r.next_due), String(r.remind_at));
+      const baseKey = `${r.next_due}T${r.remind_at}`;
 
-    // 1) Day-of (send once when it's the due date and before due time)
-    if (r.next_due === todayYmd && now < due) {
-      const key = `${baseKey}|day`;
-      const sent = db.prepare('SELECT 1 FROM notifications_sent WHERE task_id=? AND due_key=?').get(r.id, key);
-      if (!sent) {
-        const body = (r.notes ? `${r.notes}\n` : '') + `Due today at ${r.remind_at}`;
-        await sendPushToUser(r.user_id, {
-          type: 'task-day',
-          taskId: r.id,
-          title: `Today: ${r.title}`,
-          body,
-          icon: '/icons/logo.svg',
-          badge: '/icons/logo.svg',
-        });
-        db.prepare('INSERT INTO notifications_sent (task_id, due_key, sent_at) VALUES (?, ?, ?)')
-          .run(r.id, key, new Date().toISOString());
+      // 1) Day-of (send once when it's the due date and before due time)
+      if (String(r.next_due) === todayYmd && now < due) {
+        const key = `${baseKey}|day`;
+        const sent = await notifWasSent(String(r.id), key);
+        if (!sent) {
+          const body = (r.notes ? `${r.notes}\n` : '') + `Due today at ${r.remind_at}`;
+          await sendPushToUser(r.user_id, {
+            type: 'task-day',
+            taskId: r.id,
+            title: `Today: ${r.title}`,
+            body,
+            icon: '/icons/logo.svg',
+            badge: '/icons/logo.svg',
+          });
+          await markNotifSent(String(r.id), key);
+        }
       }
-    }
 
-    // 2) 1-hour warning
-    const oneHourBefore = new Date(due.getTime() - 60 * 60 * 1000);
-    if (oneHourBefore <= now && oneHourBefore > windowStart && now < due) {
-      const key = `${baseKey}|1h`;
-      const sent = db.prepare('SELECT 1 FROM notifications_sent WHERE task_id=? AND due_key=?').get(r.id, key);
-      if (!sent) {
-        const body = (r.notes ? `${r.notes}\n` : '') + `~1 hour until due (${r.remind_at})`;
-        await sendPushToUser(r.user_id, {
-          type: 'task-hour',
-          taskId: r.id,
-          title: `1 hour left: ${r.title}`,
-          body,
-          icon: '/icons/logo.svg',
-          badge: '/icons/logo.svg',
-        });
-        db.prepare('INSERT INTO notifications_sent (task_id, due_key, sent_at) VALUES (?, ?, ?)')
-          .run(r.id, key, new Date().toISOString());
+      // 2) 1-hour warning
+      const oneHourBefore = new Date(due.getTime() - 60 * 60 * 1000);
+      if (oneHourBefore <= now && oneHourBefore > windowStart && now < due) {
+        const key = `${baseKey}|1h`;
+        const sent = await notifWasSent(String(r.id), key);
+        if (!sent) {
+          const body = (r.notes ? `${r.notes}\n` : '') + `~1 hour until due (${r.remind_at})`;
+          await sendPushToUser(r.user_id, {
+            type: 'task-hour',
+            taskId: r.id,
+            title: `1 hour left: ${r.title}`,
+            body,
+            icon: '/icons/logo.svg',
+            badge: '/icons/logo.svg',
+          });
+          await markNotifSent(String(r.id), key);
+        }
       }
-    }
 
-    // 3) Due time (existing behavior)
-    if (due <= now && due > windowStart) {
-      const key = baseKey;
-      const sent = db.prepare('SELECT 1 FROM notifications_sent WHERE task_id=? AND due_key=?').get(r.id, key);
-      if (!sent) {
-        const body = r.notes ? `${r.notes}\nEvery ${r.every_days} day(s)` : `Every ${r.every_days} day(s)`;
-        await sendPushToUser(r.user_id, {
-          type: 'task-due',
-          taskId: r.id,
-          title: r.title,
-          body,
-          icon: '/icons/logo.svg',
-          badge: '/icons/logo.svg',
-        });
-        db.prepare('INSERT INTO notifications_sent (task_id, due_key, sent_at) VALUES (?, ?, ?)')
-          .run(r.id, key, new Date().toISOString());
+      // 3) Due time
+      if (due <= now && due > windowStart) {
+        const key = baseKey;
+        const sent = await notifWasSent(String(r.id), key);
+        if (!sent) {
+          const body = r.notes ? `${r.notes}\nEvery ${r.every_days} day(s)` : `Every ${r.every_days} day(s)`;
+          await sendPushToUser(r.user_id, {
+            type: 'task-due',
+            taskId: r.id,
+            title: r.title,
+            body,
+            icon: '/icons/logo.svg',
+            badge: '/icons/logo.svg',
+          });
+          await markNotifSent(String(r.id), key);
+        }
       }
-    }
 
-    // 4) Missed (trigger if due is at least one scan window in the past to avoid same-scan with due)
-    if (due <= windowStart) {
-      const key = `${baseKey}|missed`;
-      const sent = db.prepare('SELECT 1 FROM notifications_sent WHERE task_id=? AND due_key=?').get(r.id, key);
-      if (!sent) {
-        const newDue = addDaysYmd(r.next_due, 1);
-        db.prepare('UPDATE tasks SET next_due=?, priority=1 WHERE id=?').run(newDue, r.id);
-        const body = (r.notes ? `${r.notes}\n` : '') + `Missed. New deadline: same time tomorrow`;
-        await sendPushToUser(r.user_id, {
-          type: 'task-missed',
-          taskId: r.id,
-          title: `Missed: ${r.title}`,
-          body,
-          icon: '/icons/logo.svg',
-          badge: '/icons/logo.svg',
-        });
-        db.prepare('INSERT INTO notifications_sent (task_id, due_key, sent_at) VALUES (?, ?, ?)')
-          .run(r.id, key, new Date().toISOString());
+      // 4) Missed (trigger if due is at least one scan window in the past)
+      if (due <= windowStart) {
+        const key = `${baseKey}|missed`;
+        const sent = await notifWasSent(String(r.id), key);
+        if (!sent) {
+          const newDue = addDaysYmd(String(r.next_due), 1);
+          // Update task next_due and priority=true
+          try {
+            await ddb.send(new UpdateCommand({
+              TableName: TABLES.tasks,
+              Key: { user_id: String(r.user_id), id: String(r.id) },
+              UpdateExpression: 'SET next_due = :nd, priority = :p',
+              ExpressionAttributeValues: { ':nd': newDue, ':p': true },
+            }));
+          } catch (e) {
+            console.error('scanAndNotify: failed to roll missed task', r.id, e?.message || e);
+          }
+          const body = (r.notes ? `${r.notes}\n` : '') + `Missed. New deadline: same time tomorrow`;
+          await sendPushToUser(r.user_id, {
+            type: 'task-missed',
+            taskId: r.id,
+            title: `Missed: ${r.title}`,
+            body,
+            icon: '/icons/logo.svg',
+            badge: '/icons/logo.svg',
+          });
+          await markNotifSent(String(r.id), key);
+        }
       }
+    } catch (e) {
+      console.error('scanAndNotify: error for task', r?.id, e?.message || e);
     }
   }
 }
