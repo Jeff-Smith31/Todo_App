@@ -76,6 +76,34 @@
 
     elements.permissionBtn.addEventListener('click', requestNotificationPermission);
 
+    // Test Push button
+    elements.testPushBtn = document.getElementById('btn-test-push');
+    if (elements.testPushBtn) {
+      elements.testPushBtn.addEventListener('click', async () => {
+        try {
+          if (!BACKEND_URL || !isAuthed) {
+            alert('Please log in and ensure the backend is connected to send a test notification.');
+            return;
+          }
+          if (Notification.permission !== 'granted') {
+            await requestNotificationPermission();
+            if (Notification.permission !== 'granted') return;
+          }
+          // Ensure we have a push subscription on this device
+          try { await ensurePushSubscribed(); } catch {}
+          await API.testPush();
+          alert('Test notification requested. If notifications are enabled on this device, you should receive it shortly.');
+        } catch (e) {
+          const msg = (e && e.message) ? String(e.message) : '';
+          if (/Push not configured/i.test(msg) || /503/.test(msg)) {
+            alert('Push is not configured on the server. Please set VAPID keys for push.');
+          } else {
+            alert('Failed to send test notification: ' + (msg || 'unknown error'));
+          }
+        }
+      });
+    }
+
     // Categories init and UI
     ensureCategoryState();
     populateCategorySelect();
@@ -730,6 +758,7 @@
     if (btnLogin) btnLogin.style.display = authed ? 'none' : 'inline-block';
     if (btnRegister) btnRegister.style.display = authed ? 'none' : 'inline-block';
     if (btnLogout) btnLogout.style.display = authed ? 'inline-block' : 'none';
+    updateTestPushVisibility();
   }
 
   // Missed tasks handling: if due time has passed without completion, move to next day and mark priority
@@ -772,6 +801,7 @@
     const state = supported ? Notification.permission : 'denied';
     if (!supported) {
       elements.permissionBtn.style.display = 'none';
+      if (elements.testPushBtn) elements.testPushBtn.style.display = 'none';
       return;
     }
     if (state === 'granted'){
@@ -782,6 +812,7 @@
       elements.permissionBtn.disabled = false;
       elements.permissionBtn.style.display = 'inline-block';
     }
+    updateTestPushVisibility();
   }
 
   async function requestNotificationPermission(){
@@ -988,6 +1019,12 @@
       await sub.unsubscribe().catch(()=>{});
     }
   }
+  function updateTestPushVisibility(){
+    if (!elements || !elements.testPushBtn) return;
+    const canShow = !!(BACKEND_URL && isAuthed && typeof Notification !== 'undefined' && Notification.permission === 'granted');
+    elements.testPushBtn.style.display = canShow ? 'inline-block' : 'none';
+  }
+
   function urlBase64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - base64String.length % 4) % 4);
     const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -1112,6 +1149,7 @@
       },
       async subscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(sub) })); },
       async unsubscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'DELETE', ...common, headers: buildHeaders(), body: JSON.stringify({ endpoint: sub.endpoint }) })); },
+      async testPush(){ return handle(await fetch(baseUrl + '/api/push/test', { method: 'POST', ...common, headers: buildHeaders() })); },
     };
   }
 

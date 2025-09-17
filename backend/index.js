@@ -280,6 +280,29 @@ app.delete('/api/push/subscribe', authMiddleware, async (req, res) => {
   res.json({ ok: true, removed: 1 });
 });
 
+// Send a test push notification to current user's subscriptions
+app.post('/api/push/test', authMiddleware, async (req, res) => {
+  try {
+    if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+      return res.status(503).json({ error: 'Push not configured' });
+    }
+    const userId = String(req.user.id);
+    const payload = {
+      type: 'test',
+      title: 'TickTock Tasks: Test Notification',
+      body: 'If you see this, push notifications are working for your account on this device.',
+      icon: '/icons/logo.svg',
+      badge: '/icons/logo.svg',
+      ts: new Date().toISOString(),
+    };
+    await sendPushToUser(userId, payload);
+    return res.json({ ok: true, sent: true });
+  } catch (e) {
+    console.error('push test failed', e?.message || e);
+    return res.status(500).json({ error: 'Failed to send test push' });
+  }
+});
+
 // Health and ping (no auth)
 app.get('/api/ping', (req, res) => {
   res.json({
