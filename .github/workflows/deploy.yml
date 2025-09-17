@@ -471,26 +471,37 @@ jobs:
             echo "Skipping CloudFront invalidation: no distribution id resolved." >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Verify frontend homepage (after invalidation, retry up to 5 min)
+      - name: Verify frontend homepage (apex and www, after invalidation, retry up to 5 min)
         id: verify1
         run: |
           set +e
-          echo "Waiting for homepage to return 200 (up to 5 minutes)..." >> $GITHUB_STEP_SUMMARY
-          ATT=0; MAX=30; SLEEP=10; CODE="000"
+          echo "Waiting for homepage(s) to return 200 (up to 5 minutes)..." >> $GITHUB_STEP_SUMMARY
+          ATT=0; MAX=30; SLEEP=10; CODE_APEX="000"; CODE_WWW="skip"
+          CHECK_WWW=false
+          if [ "${INCLUDE_WWW}" = "true" ]; then CHECK_WWW=true; fi
           while [ $ATT -lt $MAX ]; do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${DOMAIN_NAME}/" || echo 000)
-            if [ "$CODE" = "200" ]; then
+            CODE_APEX=$(curl -s -o /dev/null -w "%{http_code}" "https://${DOMAIN_NAME}/" || echo 000)
+            if $CHECK_WWW; then
+              CODE_WWW=$(curl -s -o /dev/null -w "%{http_code}" "https://www.${DOMAIN_NAME}/" || echo 000)
+            fi
+            if [ "$CODE_APEX" = "200" ] && { ! $CHECK_WWW || [ "$CODE_WWW" = "200" ]; }; then
               break
             fi
             ATT=$((ATT+1))
             sleep $SLEEP
           done
-          echo "Homepage https://${DOMAIN_NAME}/ status: ${CODE} after $ATT attempts" >> $GITHUB_STEP_SUMMARY
-          echo "code=${CODE}" >> "$GITHUB_OUTPUT"
+          echo "Homepage https://${DOMAIN_NAME}/ status: ${CODE_APEX} after $ATT attempts" >> $GITHUB_STEP_SUMMARY
+          if $CHECK_WWW; then echo "Homepage https://www.${DOMAIN_NAME}/ status: ${CODE_WWW} after $ATT attempts" >> $GITHUB_STEP_SUMMARY; fi
+          NEED_RECOVERY="false"
+          if [ "$CODE_APEX" != "200" ]; then NEED_RECOVERY="true"; fi
+          if $CHECK_WWW && [ "$CODE_WWW" != "200" ]; then NEED_RECOVERY="true"; fi
+          echo "code=${CODE_APEX}" >> "$GITHUB_OUTPUT"
+          echo "code_www=${CODE_WWW}" >> "$GITHUB_OUTPUT"
+          echo "need_recovery=${NEED_RECOVERY}" >> "$GITHUB_OUTPUT"
           set -e
 
       - name: "Recovery: resync to active CloudFront origin if homepage not 200"
-        if: ${{ steps.verify1.outputs.code != '200' }}
+        if: ${{ steps.verify1.outputs.need_recovery == 'true' }}
         run: |
           set -e
           echo "Attempting recovery: determine active CloudFront distribution by alias and resync" >> $GITHUB_STEP_SUMMARY
