@@ -444,6 +444,7 @@ jobs:
           fi
 
       - name: Verify frontend homepage (after invalidation, retry up to 5 min)
+        id: verify1
         run: |
           set +e
           echo "Waiting for homepage to return 200 (up to 5 minutes)..." >> $GITHUB_STEP_SUMMARY
@@ -457,6 +458,94 @@ jobs:
             sleep $SLEEP
           done
           echo "Homepage https://${DOMAIN_NAME}/ status: ${CODE} after $ATT attempts" >> $GITHUB_STEP_SUMMARY
+          echo "code=${CODE}" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: "Recovery: resync to active CloudFront origin if homepage not 200"
+        if: ${{ steps.verify1.outputs.code != '200' }}
+        run: |
+          set -e
+          echo "Attempting recovery: determine active CloudFront distribution by alias and resync" >> $GITHUB_STEP_SUMMARY
+          # Ensure jq installed
+          if ! command -v jq >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y jq; fi
+
+          # Find distribution that serves our DOMAIN_NAME alias
+          DID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Aliases.Items!=null && (contains(Aliases.Items, '${DOMAIN_NAME}') || contains(Aliases.Items, 'www.${DOMAIN_NAME}'))].[Id,DomainName] | [0]" \
+            --output text 2>/dev/null || true)
+          if [ -z "$DID" ] || [ "$DID" = "None" ]; then
+            echo "No existing CloudFront distribution found by alias. Skipping recovery." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          CF_ID=$(echo "$DID" | awk '{print $1}')
+          CF_DOM=$(echo "$DID" | awk '{print $2}')
+          echo "Active distribution by alias: $CF_ID ($CF_DOM)" >> $GITHUB_STEP_SUMMARY
+
+          # Resolve default origin bucket from distribution config
+          DIST_JSON=$(aws cloudfront get-distribution --id "$CF_ID" --output json)
+          TOID=$(echo "$DIST_JSON" | jq -r '.Distribution.DistributionConfig.DefaultCacheBehavior.TargetOriginId // empty')
+          ODOM=$(echo "$DIST_JSON" | jq -r ".Distribution.DistributionConfig.Origins.Items[] | select(.Id==\"${TOID}\").DomainName // empty")
+          if [ -z "$ODOM" ]; then
+            echo "Could not resolve origin domain from distribution $CF_ID" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          BUCKET="$ODOM"
+          BUCKET=$(echo "$BUCKET" | sed -E 's/\.s3(\.[a-z0-9-]+)?\.amazonaws\.com$//')
+          echo "Resolved origin bucket for active distribution: $BUCKET (from $ODOM)" >> $GITHUB_STEP_SUMMARY
+
+          # Stage entire frontend into a temporary dir
+          SITE_DIR=$(mktemp -d)
+          cp -R frontend/website/. "$SITE_DIR/"
+
+          # Cache-bust references in index.html
+          BUILD_ID="${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}"
+          if [ -f "$SITE_DIR/index.html" ]; then
+            sed -i "s|\"app.js\"|\"app.js?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"styles.css\"|\"styles.css?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"manifest.webmanifest\"|\"manifest.webmanifest?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"manifest.json\"|\"manifest.json?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"config.js\"|\"config.js?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"app-version.js\"|\"app-version.js?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+          fi
+
+          # Ensure runtime artifacts exist
+          echo "window.APP_VERSION='${BUILD_ID}';" > "$SITE_DIR/app-version.js"
+          if [ ! -f "$SITE_DIR/config.js" ]; then
+            echo "window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:''});" > "$SITE_DIR/config.js"
+          fi
+
+          # Sync to resolved bucket and force no-cache on critical assets
+          aws s3 sync "$SITE_DIR" "s3://$BUCKET" --delete
+          aws s3 cp "$SITE_DIR/index.html" "s3://$BUCKET/index.html" --cache-control "no-cache, no-store, must-revalidate" --content-type text/html
+          if [ -f "$SITE_DIR/sw.js" ]; then
+            aws s3 cp "$SITE_DIR/sw.js" "s3://$BUCKET/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+          fi
+          aws s3 cp "$SITE_DIR/config.js" "s3://$BUCKET/config.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+          aws s3 cp "$SITE_DIR/app-version.js" "s3://$BUCKET/app-version.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+
+          # Invalidate and wait
+          INV_JSON=$(aws cloudfront create-invalidation --distribution-id "$CF_ID" --paths "/" "/index.html" "/config.js" "/app-version.js" "/sw.js" 2>/dev/null || true)
+          IID=$(echo "$INV_JSON" | jq -r '.Invalidation.Id // empty')
+          if [ -n "$IID" ]; then
+            echo "Waiting for recovery invalidation $IID to complete ..." >> $GITHUB_STEP_SUMMARY
+            aws cloudfront wait invalidation-completed --distribution-id "$CF_ID" --id "$IID" || true
+          fi
+
+      - name: Verify frontend homepage after recovery (retry up to 5 min)
+        if: steps.verify1.outputs.code != '200'
+        run: |
+          set +e
+          echo "Re-checking homepage to return 200 (up to 5 minutes) after recovery..." >> $GITHUB_STEP_SUMMARY
+          ATT=0; MAX=30; SLEEP=10; CODE="000"
+          while [ $ATT -lt $MAX ]; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${DOMAIN_NAME}/" || echo 000)
+            if [ "$CODE" = "200" ]; then
+              break
+            fi
+            ATT=$((ATT+1))
+            sleep $SLEEP
+          done
+          echo "Post-recovery homepage https://${DOMAIN_NAME}/ status: ${CODE} after $ATT attempts" >> $GITHUB_STEP_SUMMARY
           set -e
 
       - name: Compute AllowedOrigins for backend
