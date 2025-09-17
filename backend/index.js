@@ -342,6 +342,7 @@ app.get('/', (req, res) => {
     <ul>
       <li>Frontend origin (CORS): <code>${origin}</code></li>
       <li>Health check: <a href="/healthz">/healthz</a></li>
+      <li>Standalone App (served by backend): <a href="/app/">/app/</a></li>
     </ul>
     <p>Next, set your frontend to use this backend URL:<br>
       <code>${beUrl}</code>
@@ -352,6 +353,28 @@ app.get('/', (req, res) => {
 </body>
 </html>`);
 });
+
+// Serve a standalone copy of the web app from the backend under /app
+// This keeps the app reachable even if the main website (S3/CloudFront) is down.
+app.get(['/app','/app/','/app/index.html'], (req, res) => {
+  try {
+    const html = fs.readFileSync('./public/index.html');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.end(html);
+  } catch (e) {
+    res.status(404).send('App not bundled');
+  }
+});
+
+app.get('/app/config.js', (req, res) => {
+  // Force same-origin relative API when loading the app from backend
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.end("window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:''});\n");
+});
+
+app.use('/app', express.static('public', { maxAge: '30d' }));
 
 // Background scheduler to send due notifications
 const SCAN_INTERVAL_MS = 60 * 1000; // 1 minute
