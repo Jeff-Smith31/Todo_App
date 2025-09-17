@@ -96,7 +96,27 @@ input::placeholder { color: #8b93b3; }
   color: #cbd5e1;
 }
 
+/* Grey out tasks completed today */
+.task-item.completed-today {
+  opacity: 0.6;
+}
+.task-item.completed-today .title {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
 @media (max-width: 640px) {
   .titles h1 { font-size: 18px; }
   .actions { gap: 6px; }
+  /* Make category Rename/Delete buttons smaller on mobile */
+  details.category-section summary .btn,
+  .category-section summary .btn {
+    padding: 6px 8px;
+    font-size: 12px;
+    border-radius: 8px;
+  }
+  /* Slightly smaller task fonts on mobile */
+  .task-item .title { font-size: 15px; }
+  .task-item .notes { font-size: 12px; }
+  .task-item .meta { font-size: 11px; }
 }

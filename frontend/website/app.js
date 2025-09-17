@@ -561,8 +561,15 @@
         toggleHidden(bOverdue, !isOverdue(t));
         toggleHidden(bToday, !(isDueToday(t) && !isOverdue(t)));
 
-        // checkbox is always unchecked in list; completion toggles schedule
-        checkbox.checked = false;
+        // checkbox reflects if task was completed today; keep it checked until next day
+        const todayStrVal = dateToYMD(new Date());
+        const completedToday = !!t.lastCompleted && String(t.lastCompleted).slice(0,10) === todayStrVal;
+        checkbox.checked = completedToday;
+        if (completedToday) {
+          node.classList.add('completed-today');
+        } else {
+          node.classList.remove('completed-today');
+        }
         checkbox.addEventListener('change', () => toggleComplete(t.id, checkbox.checked));
 
         node.querySelector('button.edit').addEventListener('click', () => editTask(t.id));
