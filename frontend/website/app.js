@@ -469,18 +469,22 @@
         scheduleNotificationForTask(t);
       }
     } else {
-      // unchecking will move it back to immediate next due today if we just completed now
+      // Unchecking: revert visual state and due date if we just advanced it
       const d = new Date();
       const todayStrVal = dateToYMD(d);
+      const completedToday = !!t.lastCompleted && String(t.lastCompleted).slice(0,10) === todayStrVal;
+      if (completedToday) {
+        t.lastCompleted = null;
+      }
       if (!isDueTodayRawDateStr(t.nextDue, todayStrVal)){
         // revert by subtracting frequency but not before today
         const prev = addDays(t.nextDue, -t.everyDays);
         if (new Date(prev) >= startOfDay(d)) t.nextDue = prev;
-        if (BACKEND_URL && isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
-        saveTasks();
-        render();
-        scheduleNotificationForTask(t);
       }
+      if (BACKEND_URL && isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
+      saveTasks();
+      render();
+      scheduleNotificationForTask(t);
     }
   }
 
@@ -524,7 +528,7 @@
 
       // Controls: rename/delete
       const actions = document.createElement('span');
-      actions.style.float = 'right';
+      actions.className = 'cat-actions';
       const btnRen = document.createElement('button'); btnRen.type = 'button'; btnRen.className = 'btn'; btnRen.textContent = 'Rename'; btnRen.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); renameCategory(catName); });
       const btnDel = document.createElement('button'); btnDel.type = 'button'; btnDel.className = 'btn'; btnDel.textContent = 'Delete'; btnDel.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); deleteCategory(catName); });
       if (catName === 'Default') btnDel.disabled = true;
@@ -653,21 +657,35 @@
     render();
   }
 
-  function renameCategory(oldName){
+  async function renameCategory(oldName){
     const name = (prompt('Rename category:', oldName) || '').trim();
     if (!name || name === oldName) return;
     if (settings.categories.includes(name)) { alert('A category with that name already exists'); return; }
+
     const idx = settings.categories.indexOf(oldName);
     if (idx >= 0) settings.categories[idx] = name;
-    // Update tasks
-    for (const t of tasks){ if (t.category === oldName) t.category = name; }
-    // Open state
+
+    // Collect tasks to update
+    const toUpdate = tasks.filter(t => (t.category || 'Default') === oldName);
+    for (const t of toUpdate) { t.category = name; }
+
+    // Preserve open/closed state for the renamed section
     settings.categoryOpen[name] = !!settings.categoryOpen[oldName];
     delete settings.categoryOpen[oldName];
+
+    // Persist locally first for instant UX
     saveTasks();
     saveSettings();
     populateCategorySelect();
     render();
+
+    // If connected, persist category change for affected tasks to backend
+    if (BACKEND_URL && isAuthed && toUpdate.length) {
+      try {
+        await Promise.allSettled(toUpdate.map(t => API.updateTask(t)));
+        await syncFromBackend();
+      } catch (e) { console.warn('Category rename sync failed', e); }
+    }
   }
 
   function deleteCategory(name){

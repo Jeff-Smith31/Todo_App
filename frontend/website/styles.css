@@ -105,6 +105,14 @@ input::placeholder { color: #8b93b3; }
   color: var(--muted);
 }
 
+/* Category header layout: ensure actions don't overlap and list can span full width */
+details.category-section > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cat-actions { display: inline-flex; gap: 8px; }
+
 @media (max-width: 640px) {
   .titles h1 { font-size: 18px; }
   .actions { gap: 6px; }
