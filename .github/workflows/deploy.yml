@@ -346,29 +346,49 @@ jobs:
             fi
           fi
 
-          # If DistributionId is still missing, try to find an existing distribution by alias (CNAME)
-          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
-            DID=$(aws cloudfront list-distributions \
-              --query "DistributionList.Items[?Aliases.Items!=null && contains(join(',',Aliases.Items), '${DOMAIN_NAME}')].[Id,DomainName] | [0]" \
-              --output text 2>/dev/null || true)
-            if [ -n "$DID" ] && [ "$DID" != "None" ]; then
-              DIST_ID=$(echo "$DID" | awk '{print $1}')
-              CF_DOMAIN=$(echo "$DID" | awk '{print $2}')
+          # Also resolve any existing distribution by alias (CNAME) and its origin bucket
+          if ! command -v jq >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y jq; fi
+          ALIAS_DID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Aliases.Items!=null && (contains(Aliases.Items, '${DOMAIN_NAME}') || contains(Aliases.Items, 'www.${DOMAIN_NAME}'))].[Id,DomainName] | [0]" \
+            --output text 2>/dev/null || true)
+          ALIAS_DIST_ID=""; ALIAS_CF_DOMAIN=""; ALIAS_BUCKET=""
+          if [ -n "$ALIAS_DID" ] && [ "$ALIAS_DID" != "None" ]; then
+            ALIAS_DIST_ID=$(echo "$ALIAS_DID" | awk '{print $1}')
+            ALIAS_CF_DOMAIN=$(echo "$ALIAS_DID" | awk '{print $2}')
+            ADJSON=$(aws cloudfront get-distribution --id "$ALIAS_DIST_ID" --output json 2>/dev/null || true)
+            if [ -n "$ADJSON" ]; then
+              ATOID=$(echo "$ADJSON" | jq -r '.Distribution.DistributionConfig.DefaultCacheBehavior.TargetOriginId // empty')
+              AODOM=$(echo "$ADJSON" | jq -r ".Distribution.DistributionConfig.Origins.Items[] | select(.Id==\"${ATOID}\").DomainName // empty")
+              if [ -n "$AODOM" ]; then
+                case "$AODOM" in
+                  *.s3.amazonaws.com) ALIAS_BUCKET="${AODOM%%.s3.amazonaws.com}" ;;
+                  *.s3.*.amazonaws.com) ALIAS_BUCKET="${AODOM%%.s3.*.amazonaws.com}" ;;
+                  *.s3-website-*.amazonaws.com) ALIAS_BUCKET="${AODOM%%.s3-website-*.amazonaws.com}" ;;
+                  *) ALIAS_BUCKET="$AODOM" ;;
+                esac
+                ALIAS_BUCKET=$(echo "$ALIAS_BUCKET" | sed -E 's/\.s3(\.[a-z0-9-]+)?\.amazonaws\.com$//')
+              fi
             fi
           fi
 
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
           echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
           echo "cf_domain=$CF_DOMAIN" >> "$GITHUB_OUTPUT"
+          echo "alias_bucket=$ALIAS_BUCKET" >> "$GITHUB_OUTPUT"
+          echo "alias_dist_id=$ALIAS_DIST_ID" >> "$GITHUB_OUTPUT"
+          echo "alias_cf_domain=$ALIAS_CF_DOMAIN" >> "$GITHUB_OUTPUT"
           if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
             echo "Warning: Could not resolve a CloudFront distribution. Subsequent invalidation will fail." >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Sync site to S3 bucket
+      - name: Sync site to S3 bucket(s) (proactive origin sync)
         run: |
           set -e
-          BUCKET='${{ steps.front.outputs.bucket }}'
-          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then echo "Bucket not resolved"; exit 3; fi
+          PRIMARY_BUCKET='${{ steps.front.outputs.bucket }}'
+          ALIAS_BUCKET='${{ steps.front.outputs.alias_bucket }}'
+          if { [ -z "$PRIMARY_BUCKET" ] || [ "$PRIMARY_BUCKET" = "None" ]; } && { [ -z "$ALIAS_BUCKET" ] || [ "$ALIAS_BUCKET" = "None" ]; }; then
+            echo "No target bucket resolved"; exit 3; fi
+
           # Stage entire frontend into a temporary directory so no assets are missed
           SITE_DIR=$(mktemp -d)
           cp -R frontend/website/. "$SITE_DIR/"
@@ -405,22 +425,30 @@ jobs:
             sed -i "s|^const CACHE_NAME = .*|const CACHE_NAME = 'ticktock-cache-${BUILD_ID}';|" "$SITE_DIR/sw.js" || true
           fi
 
-          # Sync staged assets to S3 and delete anything else
-          aws s3 sync "$SITE_DIR" "s3://$BUCKET" --delete
-          # Ensure index.html and sw.js are uploaded with no-cache so browsers revalidate on each visit
-          if [ -f "$SITE_DIR/index.html" ]; then
-            aws s3 cp "$SITE_DIR/index.html" "s3://$BUCKET/index.html" --cache-control "no-cache, no-store, must-revalidate" --content-type text/html
-          fi
-          if [ -f "$SITE_DIR/sw.js" ]; then
-            aws s3 cp "$SITE_DIR/sw.js" "s3://$BUCKET/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
-          fi
-          # Also ensure runtime/version artifacts are no-cached
-          aws s3 cp "$SITE_DIR/config.js" "s3://$BUCKET/config.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
-          aws s3 cp "$SITE_DIR/app-version.js" "s3://$BUCKET/app-version.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
-          aws s3 cp "$SITE_DIR/version.json" "s3://$BUCKET/version.json" --cache-control "no-cache, no-store, must-revalidate" --content-type application/json
+          # Build target bucket list: prefer alias origin bucket first, then stack bucket if different
+          TARGETS=""
+          if [ -n "$ALIAS_BUCKET" ] && [ "$ALIAS_BUCKET" != "None" ]; then TARGETS="$ALIAS_BUCKET"; fi
+          if [ -n "$PRIMARY_BUCKET" ] && [ "$PRIMARY_BUCKET" != "None" ] && [ "$PRIMARY_BUCKET" != "$ALIAS_BUCKET" ]; then TARGETS="$TARGETS $PRIMARY_BUCKET"; fi
+
+          for B in $TARGETS; do
+            echo "Uploading critical no-cache files to s3://$B first..."
+            aws s3 cp "$SITE_DIR/config.js" "s3://$B/config.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+            aws s3 cp "$SITE_DIR/app-version.js" "s3://$B/app-version.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+            aws s3 cp "$SITE_DIR/version.json" "s3://$B/version.json" --cache-control "no-cache, no-store, must-revalidate" --content-type application/json
+            if [ -f "$SITE_DIR/index.html" ]; then
+              aws s3 cp "$SITE_DIR/index.html" "s3://$B/index.html" --cache-control "no-cache, no-store, must-revalidate" --content-type text/html
+            fi
+            if [ -f "$SITE_DIR/sw.js" ]; then
+              aws s3 cp "$SITE_DIR/sw.js" "s3://$B/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+            fi
+
+            echo "Syncing remaining assets to s3://$B (immutable cache)..."
+            aws s3 sync "$SITE_DIR" "s3://$B" --delete --exclude "index.html" --exclude "sw.js" --exclude "config.js" --exclude "app-version.js" --exclude "version.json"
+          done
 
           # Invalidate CloudFront so latest app shell is served and wait for completion
-          DIST_ID='${{ steps.front.outputs.dist_id }}'
+          DIST_ID='${{ steps.front.outputs.alias_dist_id }}'
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then DIST_ID='${{ steps.front.outputs.dist_id }}'; fi
           if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
             INV_JSON=$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
               "/" \
