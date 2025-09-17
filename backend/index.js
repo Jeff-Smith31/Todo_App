@@ -30,11 +30,26 @@ const ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:8000';
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const COOKIE_SECURE = NODE_ENV === 'production';
 // DynamoDB: tables are auto-provisioned. Optionally set DDB_TABLE_PREFIX (default 'ttt').
-const VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || '';
-const VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || '';
+let ACTIVE_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || '';
+let ACTIVE_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || '';
 
-if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(`mailto:admin@example.com`, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+// If not configured via env, generate ephemeral VAPID keys at runtime so push works out of the box.
+if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
+  try {
+    const gen = webpush.generateVAPIDKeys();
+    ACTIVE_PUBLIC_KEY = gen.publicKey;
+    ACTIVE_PRIVATE_KEY = gen.privateKey;
+    // Expose for child modules/diagnostics in this process
+    process.env.WEB_PUSH_PUBLIC_KEY = ACTIVE_PUBLIC_KEY;
+    process.env.WEB_PUSH_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
+    console.warn('[push] WEB_PUSH_* not set. Generated ephemeral VAPID keys for this runtime.');
+  } catch (e) {
+    console.error('[push] Failed to generate VAPID keys:', e?.message || e);
+  }
+}
+
+if (ACTIVE_PUBLIC_KEY && ACTIVE_PRIVATE_KEY) {
+  webpush.setVapidDetails(`mailto:admin@example.com`, ACTIVE_PUBLIC_KEY, ACTIVE_PRIVATE_KEY);
 }
 
 // DB setup → DynamoDB (ensure tables once at startup)
@@ -254,15 +269,15 @@ app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
 
 // Push endpoints (authenticated)
 app.get('/api/push/vapid-public-key', (req, res) => {
-  if (!VAPID_PUBLIC_KEY) {
+  if (!ACTIVE_PUBLIC_KEY) {
     // Return 200 with empty key to avoid frontend console errors/noise when push is not configured
     return res.json({ key: '' });
   }
-  res.json({ key: VAPID_PUBLIC_KEY });
+  res.json({ key: ACTIVE_PUBLIC_KEY });
 });
 
 app.post('/api/push/subscribe', authMiddleware, async (req, res) => {
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(503).json({ error: 'Push not configured' });
+  if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) return res.status(503).json({ error: 'Push not configured' });
   const { error, value } = subscriptionSchema.validate(req.body);
   if (error) return res.status(400).json({ error: error.message });
   try {
@@ -283,7 +298,7 @@ app.delete('/api/push/subscribe', authMiddleware, async (req, res) => {
 // Send a test push notification to current user's subscriptions
 app.post('/api/push/test', authMiddleware, async (req, res) => {
   try {
-    if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+    if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
       return res.status(503).json({ error: 'Push not configured' });
     }
     const userId = String(req.user.id);
