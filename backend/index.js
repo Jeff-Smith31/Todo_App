@@ -14,7 +14,9 @@ import webpush from 'web-push';
 import fs from 'fs';
 import http from 'http';
 import https from 'https';
+import os from 'os';
 import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { CloudWatchLogsClient, CreateLogGroupCommand, CreateLogStreamCommand, DescribeLogStreamsCommand, PutLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 
 dotenv.config();
 
@@ -57,16 +59,90 @@ const VAPID_PUBLIC_KEY = ACTIVE_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
 
 // Structured logging helper for CloudWatch Logs ingestion
+// This creates a dedicated log group/stream and ships push-related logs to CloudWatch Logs,
+// in addition to stdout (which also goes to CloudWatch via the container log driver).
+const PUSH_LOG_GROUP = process.env.PUSH_LOG_GROUP || 'tttBackendNotificationLogs';
+const PUSH_LOG_STREAM = process.env.PUSH_LOG_STREAM || `${os.hostname?.() || 'backend'}-${Date.now()}`;
+const AWS_REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || process.env.AMAZON_REGION || process.env.AWS_SDK_REGION;
+let cwClient = null;
+let cwSeqToken = null;
+
+async function ensureCwSetup(){
+  try {
+    if (!cwClient) cwClient = new CloudWatchLogsClient(AWS_REGION ? { region: AWS_REGION } : {});
+    // Create log group (idempotent)
+    try { await cwClient.send(new CreateLogGroupCommand({ logGroupName: PUSH_LOG_GROUP })); } catch (e) { /* already exists */ }
+    // Create stream (idempotent)
+    try { await cwClient.send(new CreateLogStreamCommand({ logGroupName: PUSH_LOG_GROUP, logStreamName: PUSH_LOG_STREAM })); } catch (e) { /* already exists */ }
+    // Try to find sequence token once
+    try {
+      const ds = await cwClient.send(new DescribeLogStreamsCommand({ logGroupName: PUSH_LOG_GROUP, logStreamNamePrefix: PUSH_LOG_STREAM }));
+      const s = (ds.logStreams || []).find(x => x.logStreamName === PUSH_LOG_STREAM);
+      cwSeqToken = s?.uploadSequenceToken || null;
+    } catch {}
+  } catch (e) {
+    console.warn('[push-log] CloudWatch setup failed:', e?.message || e);
+  }
+}
+
+async function cwPut(message){
+  try {
+    if (!cwClient) await ensureCwSetup();
+    const params = {
+      logGroupName: PUSH_LOG_GROUP,
+      logStreamName: PUSH_LOG_STREAM,
+      logEvents: [{ timestamp: Date.now(), message }],
+      sequenceToken: cwSeqToken || undefined,
+    };
+    const r = await cwClient.send(new PutLogEventsCommand(params));
+    cwSeqToken = r?.nextSequenceToken || cwSeqToken;
+  } catch (e) {
+    const msg = String(e?.message || e || '');
+    // Handle out-of-order token
+    if (/InvalidSequenceToken/i.test(msg) || /DataAlreadyAcceptedException/i.test(msg)) {
+      try {
+        const expected = e?.expectedSequenceToken;
+        if (expected) {
+          cwSeqToken = expected;
+        } else {
+          const ds = await cwClient.send(new DescribeLogStreamsCommand({ logGroupName: PUSH_LOG_GROUP, logStreamNamePrefix: PUSH_LOG_STREAM }));
+          const s = (ds.logStreams || []).find(x => x.logStreamName === PUSH_LOG_STREAM);
+          cwSeqToken = s?.uploadSequenceToken || null;
+        }
+        // retry once
+        const retryParams = {
+          logGroupName: PUSH_LOG_GROUP,
+          logStreamName: PUSH_LOG_STREAM,
+          logEvents: [{ timestamp: Date.now(), message }],
+          sequenceToken: cwSeqToken || undefined,
+        };
+        const r2 = await cwClient.send(new PutLogEventsCommand(retryParams));
+        cwSeqToken = r2?.nextSequenceToken || cwSeqToken;
+        return;
+      } catch (e2) {
+        console.warn('[push-log] retry failed:', e2?.message || e2);
+      }
+    }
+    // Non-fatal: just warn
+    console.warn('[push-log] put failed:', msg);
+  }
+}
+
 function pushLog(event, details) {
   try {
     const entry = Object.assign({
-      log_group: 'tttBackendNotificationLogs',
+      log_group: PUSH_LOG_GROUP,
+      log_stream: PUSH_LOG_STREAM,
       component: 'push',
       event,
       ts: new Date().toISOString(),
       env: NODE_ENV,
     }, details || {});
-    console.log(JSON.stringify(entry));
+    const line = JSON.stringify(entry);
+    // Emit to stdout for existing container logs
+    console.log(line);
+    // Also ship to dedicated CloudWatch Logs group
+    cwPut(line).catch(()=>{});
   } catch (e) {
     // Fallback to plain log
     console.log('[push-log]', event, details);

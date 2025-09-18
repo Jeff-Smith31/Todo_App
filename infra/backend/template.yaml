@@ -149,6 +149,15 @@ Resources:
         - Key: Project
           Value: TickTockTasks
 
+  NotificationLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: tttBackendNotificationLogs
+      RetentionInDays: 30
+      Tags:
+        - Key: Project
+          Value: TickTockTasks
+
   BackendEc2:
     Type: AWS::EC2::Instance
     Properties:
