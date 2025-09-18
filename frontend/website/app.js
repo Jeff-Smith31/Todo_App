@@ -5,6 +5,7 @@
   const STORAGE_KEY = 'ticktock_tasks_v1';
   const SETTINGS_KEY = 'ticktock_settings_v1';
   const STAY_KEY = 'tt_stay_logged_in';
+  const LAST_PUSH_TEST_KEY = 'tt_last_push_test';
   const runtimeCfg = window.RUNTIME_CONFIG || {};
   const hasRuntimeBE = Object.prototype.hasOwnProperty.call(runtimeCfg, 'BACKEND_URL');
   const runtimeBE = hasRuntimeBE ? runtimeCfg.BACKEND_URL : undefined; // allow empty string intentionally
@@ -122,7 +123,7 @@
           await API.login(emailEl.value, passEl.value);
           await syncFromBackend();
           updateAuthUi(true);
-          if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); } catch {} }
+          if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); await maybeTestPush('login'); } catch {} }
           location.hash = '#/tasks';
           route();
         } catch (e) { alert(e.message || 'Login failed'); }
@@ -134,7 +135,7 @@
           await API.register(emailEl.value, passEl.value);
           await syncFromBackend();
           updateAuthUi(true);
-          if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); } catch {} }
+          if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); await maybeTestPush('register'); } catch {} }
           location.hash = '#/tasks';
           route();
         } catch (e) { alert(e.message || 'Registration failed'); }
@@ -246,6 +247,12 @@
       navigator.serviceWorker.register('sw.js').catch(()=>{});
     }
 
+    // Desktop browsers: do not keep push subscriptions. We only support phone notifications.
+    if (!isMobile()) {
+      try { await unsubscribePush(); } catch {}
+      if (elements.permissionBtn) elements.permissionBtn.style.display = 'none';
+    }
+
 
     // Backend mode: check session and sync; otherwise local-only
     // Connectivity diagnostics UI removed.
@@ -288,6 +295,19 @@
     // Version UI and update checks
     setupVersionUiAndUpdater();
 
+    // On focus, ensure we have an active push subscription (Android reliability)
+    window.addEventListener('visibilitychange', async () => {
+      if (document.hidden) return;
+      try {
+        if (!BACKEND_URL || !isAuthed) return;
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (!sub) { await ensurePushSubscribed(); }
+      } catch {}
+    });
+    
     // Initial route
     const stay = localStorage.getItem(STAY_KEY) === 'true';
     if (!location.hash) {
@@ -829,36 +849,68 @@
   // Notifications
   function refreshPermissionButton(){
     if (!elements.permissionBtn) return;
+    // Desktop Chrome/Web: do not offer push; only mobile devices should see this.
+    if (!isMobile()) {
+      elements.permissionBtn.style.display = 'none';
+      return;
+    }
     const supported = typeof Notification !== 'undefined' && Notification && typeof Notification.permission === 'string';
     const state = supported ? Notification.permission : 'denied';
     if (!supported) {
       elements.permissionBtn.style.display = 'none';
       return;
     }
+    const ua = navigator.userAgent || navigator.vendor || '';
+    const isiOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const inStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator && window.navigator.standalone === true);
     if (state === 'granted'){
       // Hide the button completely once enabled
       elements.permissionBtn.style.display = 'none';
     } else {
-      elements.permissionBtn.textContent = 'Enable Notifications';
       elements.permissionBtn.disabled = false;
       elements.permissionBtn.style.display = 'inline-block';
+      if (isiOS && !inStandalone) {
+        elements.permissionBtn.textContent = 'Enable Notifications (Install App Required on iOS)';
+      } else {
+        elements.permissionBtn.textContent = 'Enable Notifications';
+      }
     }
   }
 
   async function requestNotificationPermission(){
+    // Only mobile devices should enable notifications for this app.
+    if (!isMobile()) {
+      alert('Notifications are only available on the mobile app. Please use your phone to receive reminders.');
+      return;
+    }
     if (!('Notification' in window)){
       alert('Notifications are not supported in this browser');
       return;
     }
+    // iOS requires the app to be installed (standalone) to allow Web Push
+    const ua = navigator.userAgent || navigator.vendor || '';
+    const isiOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const inStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator && window.navigator.standalone === true);
+    if (isiOS && !inStandalone) {
+      alert('To enable push notifications on iPhone/iPad, please install the app first: tap the Share button and choose "Add to Home Screen", then open the installed app to enable notifications.');
+      return;
+    }
     try {
       const res = await Notification.requestPermission();
-      if (res !== 'granted') alert('To receive reminders, please allow notifications.');
+      if (res !== 'granted') {
+        alert('To receive reminders, please allow notifications. You can change this in your browser settings.');
+      } else {
+        // Ask for storage persistence to improve reliability on mobile
+        if (navigator.storage && navigator.storage.persist) { try { await navigator.storage.persist(); } catch {} }
+        // Ensure push subscription with backend and run a self-test
+        try {
+          await ensurePushSubscribed();
+          await maybeTestPush('permission-granted');
+        } catch {}
+      }
     } catch (e) {}
     refreshPermissionButton();
     scheduleAllNotificationsForToday();
-    if (Notification.permission === 'granted' && BACKEND_URL && isAuthed) {
-      try { await ensurePushSubscribed(); } catch {}
-    }
   }
 
   function scheduleAllNotificationsForToday(){
@@ -1025,23 +1077,55 @@
   function toggleHidden(el, hidden){ el.classList.toggle('hidden', hidden); }
 
   // Push helpers
+  async function maybeTestPush(reason){
+    try {
+      if (!BACKEND_URL || !isAuthed) return;
+      if (!isMobile()) return; // Do not send test push for desktop
+      // Throttle tests to avoid spamming: max once per 6 hours unless explicitly from permission grant
+      const now = Date.now();
+      const last = parseInt(localStorage.getItem(LAST_PUSH_TEST_KEY) || '0', 10) || 0;
+      if (reason !== 'permission-granted' && now - last < 6 * 60 * 60 * 1000) return;
+      const resp = await API.testPush();
+      localStorage.setItem(LAST_PUSH_TEST_KEY, String(now));
+      // Give user clear feedback
+      alert('A test notification has been sent to your device. If you do not see it within a minute, ensure notifications are allowed for your app and, on iPhone/iPad, that the app is installed from the Home Screen.');
+      return resp;
+    } catch (e) {
+      // If push not configured (503) or other error, inform user gently
+      const msg = (e && e.message) ? String(e.message) : 'Push test failed';
+      alert('Could not send a test notification: ' + msg + '\nIf this persists, try re-enabling notifications, reinstalling the app (on iOS), or logging out and back in.');
+    }
+  }
+
   async function ensurePushSubscribed(){
+    // Ensure environment supports required APIs
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-    const reg = await navigator.serviceWorker.getRegistration();
+    // Wait for the service worker to be active; fixes Android race conditions
+    const reg = await (navigator.serviceWorker.ready.catch(() => navigator.serviceWorker.getRegistration()));
     if (!reg) return;
-    const existing = await reg.pushManager.getSubscription();
+    // If notifications are not granted, do not attempt to subscribe
+    if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') return;
+
+    let existing = null;
+    try { existing = await reg.pushManager.getSubscription(); } catch {}
     if (existing) {
-      // ensure backend has it (idempotent upsert)
-      await API.subscribePush(existing);
+      // Ensure backend has current subscription (idempotent upsert)
+      try { await API.subscribePush(existing); } catch {}
       return existing;
     }
-    const { key } = await API.getVapidKey();
+
+    // Fetch VAPID key from backend
+    let keyResp = null;
+    try { keyResp = await API.getVapidKey(); } catch { keyResp = { key: '' }; }
+    const key = (keyResp && keyResp.key) ? keyResp.key : '';
     if (!key) return; // push disabled or backend unavailable
+
+    // Subscribe
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(key)
     });
-    await API.subscribePush(sub);
+    try { await API.subscribePush(sub); } catch {}
     return sub;
   }
   async function unsubscribePush(){
