@@ -74,6 +74,27 @@
     elements.filterStatus.addEventListener('change', render);
     elements.search.addEventListener('input', render);
 
+    // Search toggle (mobile): show search bar when tapping the icon next to title
+    const btnSearchToggle = document.getElementById('btn-search-toggle');
+    if (btnSearchToggle) {
+      btnSearchToggle.addEventListener('click', (e) => {
+        e.preventDefault();
+        elements.search.classList.toggle('active');
+        if (elements.search.classList.contains('active')) {
+          elements.search.focus();
+        }
+      });
+      // Collapse when clicking outside on mobile
+      document.addEventListener('click', (ev) => {
+        if (!isMobile()) return;
+        const ts = document.querySelector('.title-and-search');
+        if (!ts) return;
+        if (!ts.contains(ev.target)) {
+          elements.search.classList.remove('active');
+        }
+      });
+    }
+
     elements.permissionBtn.addEventListener('click', requestNotificationPermission);
 
 
@@ -339,6 +360,9 @@
             elements.frequency.value = 'custom';
             elements.customWrap.classList.remove('hidden');
             setSelectedWeekdays(t.scheduleDays);
+          } else if (t.oneOff === true) {
+            elements.frequency.value = 'once';
+            elements.customWrap.classList.add('hidden');
           } else if (t.everyDays === 1 || t.everyDays === 7 || t.everyDays === 30) {
             elements.frequency.value = String(t.everyDays);
             elements.customWrap.classList.add('hidden');
@@ -383,7 +407,8 @@
     const id = elements.id.value || cryptoRandomId();
     const freqVal = elements.frequency.value;
     const scheduleDays = (freqVal === 'custom') ? readSelectedWeekdays() : undefined;
-    const everyDays = (freqVal === 'custom') ? 7 : parseInt(freqVal, 10);
+    const isOnce = (freqVal === 'once');
+    const everyDays = (freqVal === 'custom') ? 7 : (isOnce ? 1 : parseInt(freqVal, 10));
 
     const t = {
       id,
@@ -395,6 +420,7 @@
       nextDue: elements.nextDue.value,
       remindAt: elements.remindAt.value,
       priority: false,
+      oneOff: isOnce, 
     };
 
     if (!t.title) return;
@@ -458,6 +484,14 @@
     const nowIso = new Date().toISOString();
 
     if (checked){
+      // If one-off, delete immediately after marking complete
+      if (t.oneOff === true) {
+        // Optionally record completion momentarily before deletion
+        try { t.lastCompleted = nowIso; } catch {}
+        // Perform deletion (also propagates to backend if connected)
+        await deleteTask(t.id);
+        return;
+      }
       // Allow completing even if not due today (early completion). Advance cadence based on current nextDue.
       t.lastCompleted = nowIso;
       t.nextDue = addDays(t.nextDue, t.everyDays);
@@ -557,9 +591,11 @@
 
         const dueDate = t.nextDue;
         const dueTime = t.remindAt;
-        const scheduleText = (t.scheduleDays && t.scheduleDays.length)
-          ? `• ${t.scheduleDays.map(d=>['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}`
-          : `• Every ${t.everyDays} day(s)`;
+        const scheduleText = (t.oneOff === true)
+          ? `• Once`
+          : (t.scheduleDays && t.scheduleDays.length)
+            ? `• ${t.scheduleDays.map(d=>['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}`
+            : `• Every ${t.everyDays} day(s)`;
         meta.textContent = `Due: ${formatDate(dueDate)} at ${formatTime(dueTime)} ${scheduleText}`;
 
         // badges
@@ -909,7 +945,12 @@
   }
 
   function showTaskNotification(t, titleOverride, bodyOverride){
-    const defaultBody = t.notes ? `${t.notes}\nEvery ${t.everyDays} day(s)` : `Every ${t.everyDays} day(s)`;
+    let defaultBody;
+    if (t.oneOff === true) {
+      defaultBody = t.notes ? `${t.notes}\nOne-off task` : 'One-off task';
+    } else {
+      defaultBody = t.notes ? `${t.notes}\nEvery ${t.everyDays} day(s)` : `Every ${t.everyDays} day(s)`;
+    }
     const body = bodyOverride || defaultBody;
     const title = titleOverride || t.title;
     const n = new Notification(title, {

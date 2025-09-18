@@ -33,6 +33,7 @@ body {
 .titles h1 { font-size: 20px; margin: 0; }
 .subtitle { margin: 0; font-size: 12px; color: var(--muted); }
 .actions { display:flex; gap: 8px; align-items: center; }
+.btn.small { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
 .auth { display: flex; gap: 6px; }
 .auth input { padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(7,10,24,0.6); color: var(--text); }
 
@@ -61,6 +62,9 @@ input::placeholder { color: #8b93b3; }
 .btn.icon { padding: 8px 10px; }
 
 .list-header { display:flex; align-items:center; justify-content: space-between; gap: 12px; }
+.title-and-search { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.title-and-search h2 { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.title-and-search #search { max-width: 260px; }
 .filters { display:flex; gap: 8px; }
 
 .task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -121,6 +125,10 @@ details.category-section > summary {
 @media (max-width: 640px) {
   .titles h1 { font-size: 18px; }
   .actions { gap: 6px; }
+  .title-and-search h2 { white-space: nowrap; }
+  /* Hide search input by default on mobile; show when active */
+  #search { display: none; }
+  #search.active { display: inline-block; width: 60vw; }
   /* Make category Rename/Delete buttons smaller on mobile */
   details.category-section summary .btn,
   .category-section summary .btn {
@@ -129,7 +137,7 @@ details.category-section > summary {
     border-radius: 8px;
   }
   /* Slightly smaller task fonts on mobile */
-  .task-item .title { font-size: 15px; }
+  .task-item .title { font-size: 14px; }
   .task-item .notes { font-size: 12px; }
   .task-item .meta { font-size: 11px; }
 }

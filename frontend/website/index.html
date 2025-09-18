@@ -27,6 +27,7 @@
       <button id="btn-permission" class="btn primary">Enable Notifications</button>
       <button id="btn-install" class="btn">Install App</button>
       <button id="btn-update" class="btn" style="display:none">Update</button>
+      <button id="btn-logout" class="btn small" style="display:none">Logout</button>
     </div>
   </header>
 
@@ -54,7 +55,11 @@
     <!-- Tasks List Page -->
     <section id="page-tasks" class="panel hidden">
       <div class="list-header">
-        <h2>Your Tasks</h2>
+        <div class="title-and-search">
+          <h2>Your Tasks</h2>
+          <button id="btn-search-toggle" class="btn icon" aria-label="Search" title="Search">🔍</button>
+          <input id="search" type="search" placeholder="Search tasks…">
+        </div>
         <div class="filters">
           <select id="filter-status">
             <option value="all">All</option>
@@ -62,16 +67,11 @@
             <option value="overdue">Overdue</option>
             <option value="priority">Priority</option>
           </select>
-          <input id="search" type="search" placeholder="Search tasks…">
         </div>
       </div>
 
       <div class="form-actions" style="margin-bottom:1rem">
         <button id="btn-create" class="btn primary">Create Task</button>
-        <button id="btn-logout" class="btn">Logout</button>
-      </div>
-
-      <div class="list-header-actions" style="margin:0.5rem 0 1rem 0">
         <button id="btn-add-category" class="btn">Add Category</button>
       </div>
       <div id="task-list" class="task-list"></div>
@@ -104,6 +104,7 @@
               <option value="1">Daily</option>
               <option value="7">Weekly</option>
               <option value="30">Monthly (approx)</option>
+              <option value="once">Once</option>
               <option value="custom">Custom…</option>
             </select>
           </label>
