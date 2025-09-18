@@ -155,3 +155,14 @@ details.category-section > summary {
 @media (prefers-reduced-motion: reduce) {
   #btn-update.flash { animation: none; }
 }
+
+
+/* Smaller edit/delete icon buttons (reduced ~30%) */
+.item-actions .btn.icon.edit,
+.item-actions .btn.icon.delete,
+.cat-actions .btn.icon.edit,
+.cat-actions .btn.icon.delete {
+  font-size: 12px; /* ~30% smaller than default text size */
+  padding: 6px 8px; /* reduced padding from 8x10 */
+  line-height: 1;
+}

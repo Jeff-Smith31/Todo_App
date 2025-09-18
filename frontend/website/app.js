@@ -601,11 +601,23 @@
       const summary = document.createElement('summary');
       summary.innerHTML = `<strong>${catName}</strong> <span style="opacity:0.7">(${catTasks.length})</span>`;
 
-      // Controls: rename/delete
+      // Controls: rename/delete (icon buttons like task items)
       const actions = document.createElement('span');
       actions.className = 'cat-actions';
-      const btnRen = document.createElement('button'); btnRen.type = 'button'; btnRen.className = 'btn'; btnRen.textContent = 'Rename'; btnRen.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); renameCategory(catName); });
-      const btnDel = document.createElement('button'); btnDel.type = 'button'; btnDel.className = 'btn'; btnDel.textContent = 'Delete'; btnDel.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); deleteCategory(catName); });
+      const btnRen = document.createElement('button');
+      btnRen.type = 'button';
+      btnRen.className = 'btn icon edit';
+      btnRen.title = 'Rename category';
+      btnRen.setAttribute('aria-label', 'Rename category');
+      btnRen.textContent = '✏️';
+      btnRen.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); renameCategory(catName); });
+      const btnDel = document.createElement('button');
+      btnDel.type = 'button';
+      btnDel.className = 'btn icon delete';
+      btnDel.title = 'Delete category';
+      btnDel.setAttribute('aria-label', 'Delete category');
+      btnDel.textContent = '🗑️';
+      btnDel.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); deleteCategory(catName); });
       if (catName === 'Default') btnDel.disabled = true;
       actions.appendChild(btnRen); actions.appendChild(btnDel);
       summary.appendChild(actions);
