@@ -105,6 +105,11 @@ input::placeholder { color: #8b93b3; }
   color: var(--muted);
 }
 
+/* Grey out tasks that are not due today (future) without crossing out */
+.task-item.not-today {
+  opacity: 0.6;
+}
+
 /* Category header layout: ensure actions don't overlap and list can span full width */
 details.category-section > summary {
   display: flex;

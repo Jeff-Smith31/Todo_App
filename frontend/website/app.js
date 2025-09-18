@@ -458,17 +458,14 @@
     const nowIso = new Date().toISOString();
 
     if (checked){
-      // only allow checking if due today or overdue; complete occurrence, then schedule next
-      if (isDueToday(t) || isOverdue(t)){
-        t.lastCompleted = nowIso;
-        // advance next due
-        t.nextDue = addDays(t.nextDue, t.everyDays);
-        t.priority = false; // once completed, clear priority
-        if (BACKEND_URL && isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
-        saveTasks();
-        render();
-        scheduleNotificationForTask(t);
-      }
+      // Allow completing even if not due today (early completion). Advance cadence based on current nextDue.
+      t.lastCompleted = nowIso;
+      t.nextDue = addDays(t.nextDue, t.everyDays);
+      t.priority = false; // once completed, clear priority
+      if (BACKEND_URL && isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
+      saveTasks();
+      render();
+      scheduleNotificationForTask(t);
     } else {
       // Unchecking: revert visual state and due date if we just advanced it
       const d = new Date();
@@ -579,6 +576,16 @@
         } else {
           node.classList.remove('completed-today');
         }
+
+        // Grey out tasks that are not due today (future) without crossing out; keep overdue and today normal prominence
+        const dueToday = isDueToday(t);
+        const overdue = isOverdue(t);
+        if (!completedToday && !overdue && !dueToday) {
+          node.classList.add('not-today');
+        } else {
+          node.classList.remove('not-today');
+        }
+
         checkbox.addEventListener('change', () => toggleComplete(t.id, checkbox.checked));
 
         node.querySelector('button.edit').addEventListener('click', () => editTask(t.id));
