@@ -32,6 +32,14 @@ self.addEventListener('activate', (e) => {
   self.clients.claim();
 });
 
+// Support immediate activation when told by the page
+self.addEventListener('message', (event) => {
+  if (!event.data) return;
+  if (event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   const url = new URL(req.url);

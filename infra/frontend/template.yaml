@@ -11,6 +11,15 @@ Parameters:
     AllowedValues: ['true', 'false']
     Default: 'true'
     Description: Whether to include www.<DomainName> as an alternate domain
+  IncludeAppSubdomain:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: Whether to include app.<DomainName> as an alternate domain
+  AppSubdomain:
+    Type: String
+    Default: 'app'
+    Description: Subdomain to use for the install landing page (e.g., 'app')
   HostedZoneId:
     Type: String
     Description: Route53 Hosted Zone ID for the root domain
@@ -39,12 +48,14 @@ Parameters:
 
 Conditions:
   UseWww: !Equals [ !Ref IncludeWww, 'true' ]
+  UseApp: !Equals [ !Ref IncludeAppSubdomain, 'true' ]
   HasExistingBucket: !Not [ !Equals [ !Ref ExistingBucketName, '' ] ]
   NoExistingBucket: !Equals [ !Ref ExistingBucketName, '' ]
   HasExistingCert: !Not [ !Equals [ !Ref ExistingCertificateArn, '' ] ]
   NoExistingCert: !Equals [ !Ref ExistingCertificateArn, '' ]
   DoDns: !Equals [ !Ref CreateDnsRecords, 'true' ]
   DoWwwDns: !And [ !Condition UseWww, !Condition DoDns ]
+  DoAppDns: !And [ !Condition UseApp, !Condition DoDns ]
   UseAliases: !Equals [ !Ref SkipAliases, 'false' ]
 
 Mappings:
@@ -60,7 +71,16 @@ Resources:
     Properties:
       DomainName: !Ref DomainName
       ValidationMethod: DNS
-      SubjectAlternativeNames: !If [UseWww, [!Sub 'www.${DomainName}'], []]
+      SubjectAlternativeNames: !If
+        - UseWww
+        - !If
+          - UseApp
+          - [!Sub '${AppSubdomain}.${DomainName}', !Sub 'www.${DomainName}']
+          - [!Sub 'www.${DomainName}']
+        - !If
+          - UseApp
+          - [!Sub '${AppSubdomain}.${DomainName}']
+          - []
       DomainValidationOptions:
         - DomainName: !Ref DomainName
           HostedZoneId: !Ref HostedZoneId
@@ -112,8 +132,14 @@ Resources:
           - UseAliases
           - !If
             - UseWww
-            - [!Ref DomainName, !Sub 'www.${DomainName}']
-            - [!Ref DomainName]
+            - !If
+              - UseApp
+              - [!Ref DomainName, !Sub 'www.${DomainName}', !Sub '${AppSubdomain}.${DomainName}']
+              - [!Ref DomainName, !Sub 'www.${DomainName}']
+            - !If
+              - UseApp
+              - [!Ref DomainName, !Sub '${AppSubdomain}.${DomainName}']
+              - [!Ref DomainName]
           - !Ref AWS::NoValue
         ViewerCertificate:
           AcmCertificateArn: !If [HasExistingCert, !Ref ExistingCertificateArn, !Ref SiteCertificate]
@@ -202,6 +228,28 @@ Resources:
     Properties:
       HostedZoneId: !Ref HostedZoneId
       Name: !Sub 'www.${DomainName}'
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: !FindInMap [CloudFront, Global, HostedZoneId]
+
+  AppRecordA:
+    Type: AWS::Route53::RecordSet
+    Condition: DoAppDns
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${AppSubdomain}.${DomainName}'
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        HostedZoneId: !FindInMap [CloudFront, Global, HostedZoneId]
+
+  AppRecordAAAA:
+    Type: AWS::Route53::RecordSet
+    Condition: DoAppDns
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${AppSubdomain}.${DomainName}'
       Type: AAAA
       AliasTarget:
         DNSName: !GetAtt Distribution.DomainName
