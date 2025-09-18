@@ -497,7 +497,11 @@
     const filtered = tasks.filter(t => {
       if (!t.category) t.category = 'Default';
       if (q && !(t.title.toLowerCase().includes(q) || (t.notes||'').toLowerCase().includes(q))) return false;
-      if (filter === 'today') return isDueToday(t);
+      if (filter === 'today') {
+        const lc = t.lastCompleted ? String(t.lastCompleted).slice(0,10) : '';
+        const today = todayStr();
+        return isDueToday(t) || lc === today;
+      }
       if (filter === 'overdue') return isOverdue(t);
       if (filter === 'priority') return !!t.priority;
       return true;
@@ -713,6 +717,8 @@
         tasks = list;
         saveTasks();
         render();
+        // Reschedule local notifications for updated tasks (no-op when backend push is used)
+        scheduleAllNotificationsForToday();
       }
     } catch (e) {
       console.warn('Sync failed', e);
