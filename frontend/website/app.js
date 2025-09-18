@@ -4,6 +4,7 @@
 
   const STORAGE_KEY = 'ticktock_tasks_v1';
   const SETTINGS_KEY = 'ticktock_settings_v1';
+  const STAY_KEY = 'tt_stay_logged_in';
   const runtimeCfg = window.RUNTIME_CONFIG || {};
   const hasRuntimeBE = Object.prototype.hasOwnProperty.call(runtimeCfg, 'BACKEND_URL');
   const runtimeBE = hasRuntimeBE ? runtimeCfg.BACKEND_URL : undefined; // allow empty string intentionally
@@ -110,22 +111,30 @@
     const btnLogout = document.getElementById('btn-logout');
     const emailEl = document.getElementById('auth-email');
     const passEl = document.getElementById('auth-password');
+    const stayEl = document.getElementById('stay-logged-in');
+    if (stayEl) { stayEl.checked = localStorage.getItem(STAY_KEY) === 'true'; }
 
     if (btnLogin && btnRegister && btnLogout) {
       btnLogin.addEventListener('click', async () => {
         try {
+          const stay = !!(stayEl && stayEl.checked);
+          localStorage.setItem(STAY_KEY, stay ? 'true' : 'false');
           await API.login(emailEl.value, passEl.value);
           await syncFromBackend();
           updateAuthUi(true);
+          if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); } catch {} }
           location.hash = '#/tasks';
           route();
         } catch (e) { alert(e.message || 'Login failed'); }
       });
       btnRegister.addEventListener('click', async () => {
         try {
+          const stay = !!(stayEl && stayEl.checked);
+          localStorage.setItem(STAY_KEY, stay ? 'true' : 'false');
           await API.register(emailEl.value, passEl.value);
           await syncFromBackend();
           updateAuthUi(true);
+          if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); } catch {} }
           location.hash = '#/tasks';
           route();
         } catch (e) { alert(e.message || 'Registration failed'); }
@@ -135,6 +144,7 @@
           await unsubscribePush();
         } catch {}
         try { await API.logout(); } catch {}
+        localStorage.setItem(STAY_KEY, 'false');
         updateAuthUi(false);
         tasks = [];
         saveTasks();
@@ -279,8 +289,9 @@
     setupVersionUiAndUpdater();
 
     // Initial route
+    const stay = localStorage.getItem(STAY_KEY) === 'true';
     if (!location.hash) {
-      location.hash = isAuthed ? '#/tasks' : '#/login';
+      location.hash = (stay && isAuthed) ? '#/tasks' : '#/login';
     }
     route();
   }
@@ -317,8 +328,8 @@
     const parts = raw.split('/').filter(Boolean); // e.g., ['tasks','new'] or ['tasks', '<id>', 'edit']
 
     // Auth-aware navigation: allow local mode even if a backend is configured.
-    // Only redirect away from the login page when already authenticated.
-    if (BACKEND_URL && isAuthed) {
+    // Only redirect away from the login page when already authenticated AND Stay Logged In is enabled.
+    if (BACKEND_URL && isAuthed && (localStorage.getItem(STAY_KEY) === 'true')) {
       if (parts[0] === 'login') {
         location.hash = '#/tasks';
         if (pageTasks) show(pageTasks);
