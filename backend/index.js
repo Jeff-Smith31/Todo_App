@@ -52,6 +52,27 @@ if (ACTIVE_PUBLIC_KEY && ACTIVE_PRIVATE_KEY) {
   webpush.setVapidDetails(`mailto:admin@example.com`, ACTIVE_PUBLIC_KEY, ACTIVE_PRIVATE_KEY);
 }
 
+// Back-compat constants used later in the file
+const VAPID_PUBLIC_KEY = ACTIVE_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
+
+// Structured logging helper for CloudWatch Logs ingestion
+function pushLog(event, details) {
+  try {
+    const entry = Object.assign({
+      log_group: 'tttBackendNotificationLogs',
+      component: 'push',
+      event,
+      ts: new Date().toISOString(),
+      env: NODE_ENV,
+    }, details || {});
+    console.log(JSON.stringify(entry));
+  } catch (e) {
+    // Fallback to plain log
+    console.log('[push-log]', event, details);
+  }
+}
+
 // DB setup → DynamoDB (ensure tables once at startup)
 await ensureTables().catch((e)=>{ console.error('DynamoDB ensureTables failed', e); });
 
@@ -299,6 +320,7 @@ app.delete('/api/push/subscribe', authMiddleware, async (req, res) => {
 app.post('/api/push/test', authMiddleware, async (req, res) => {
   try {
     if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
+      pushLog('push_test_skipped', { reason: 'not_configured', userId: String(req.user.id) });
       return res.status(503).json({ error: 'Push not configured' });
     }
     const userId = String(req.user.id);
@@ -310,10 +332,12 @@ app.post('/api/push/test', authMiddleware, async (req, res) => {
       badge: '/icons/logo.svg',
       ts: new Date().toISOString(),
     };
+    pushLog('push_test_request', { userId });
     await sendPushToUser(userId, payload);
+    pushLog('push_test_sent', { userId });
     return res.json({ ok: true, sent: true });
   } catch (e) {
-    console.error('push test failed', e?.message || e);
+    pushLog('push_test_error', { error: e?.message || String(e) });
     return res.status(500).json({ error: 'Failed to send test push' });
   }
 });
@@ -403,17 +427,27 @@ function combineDueDateTime(next_due, remind_at) {
 async function sendPushToUser(userId, payloadObj) {
   const subs = await listSubs(String(userId));
   const payload = JSON.stringify(payloadObj);
+  pushLog('push_send_start', { userId: String(userId), subCount: subs.length, payloadType: payloadObj?.type, title: payloadObj?.title });
+  let ok = 0, failed = 0, removed = 0;
   for (const s of subs) {
-    const sub = { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } };
+    const endpoint = String(s.endpoint || '');
+    const endpointSuffix = endpoint.slice(-16);
+    const sub = { endpoint, keys: { p256dh: s.p256dh, auth: s.auth } };
     try {
       await webpush.sendNotification(sub, payload);
+      ok++;
+      pushLog('push_send_success', { userId: String(userId), endpointSuffix, payloadType: payloadObj?.type });
     } catch (e) {
+      failed++;
       const message = e?.body || e?.message || '';
-      if (e?.statusCode === 404 || e?.statusCode === 410 || message.includes('gone')) {
-        await delSub(String(userId), s.endpoint);
+      const status = e?.statusCode || e?.status || null;
+      pushLog('push_send_error', { userId: String(userId), endpointSuffix, status, error: String(message || e) });
+      if (status === 404 || status === 410 || String(message).toLowerCase().includes('gone')) {
+        try { await delSub(String(userId), endpoint); removed++; pushLog('push_sub_removed', { userId: String(userId), endpointSuffix, reason: 'gone' }); } catch {}
       }
     }
   }
+  pushLog('push_send_done', { userId: String(userId), subCount: subs.length, ok, failed, removed });
 }
 
 async function scanAndNotify() {
