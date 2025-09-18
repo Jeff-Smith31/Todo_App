@@ -473,7 +473,7 @@
       // Unchecking: revert visual state and due date if we just advanced it
       const d = new Date();
       const todayStrVal = dateToYMD(d);
-      const completedToday = !!t.lastCompleted && String(t.lastCompleted).slice(0,10) === todayStrVal;
+      const completedToday = !!t.lastCompleted && dateToYMD(new Date(t.lastCompleted)) === todayStrVal;
       if (completedToday) {
         t.lastCompleted = null;
       }
@@ -498,7 +498,7 @@
       if (!t.category) t.category = 'Default';
       if (q && !(t.title.toLowerCase().includes(q) || (t.notes||'').toLowerCase().includes(q))) return false;
       if (filter === 'today') {
-        const lc = t.lastCompleted ? String(t.lastCompleted).slice(0,10) : '';
+        const lc = t.lastCompleted ? dateToYMD(new Date(t.lastCompleted)) : '';
         const today = todayStr();
         return isDueToday(t) || lc === today;
       }
@@ -572,7 +572,7 @@
 
         // checkbox reflects if task was completed today; keep it checked until next day
         const todayStrVal = dateToYMD(new Date());
-        const completedToday = !!t.lastCompleted && String(t.lastCompleted).slice(0,10) === todayStrVal;
+        const completedToday = !!t.lastCompleted && dateToYMD(new Date(t.lastCompleted)) === todayStrVal;
         checkbox.checked = completedToday;
         if (completedToday) {
           node.classList.add('completed-today');
