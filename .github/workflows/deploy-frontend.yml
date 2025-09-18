@@ -117,6 +117,14 @@ jobs:
             aws s3 cp frontend/website/sw.js s3://$BUCKET/sw.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
           fi
 
+          # Critical assets (JS/CSS) should not be cached to always load latest
+          if [ -f frontend/website/app.js ]; then
+            aws s3 cp frontend/website/app.js s3://$BUCKET/app.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
+          fi
+          if [ -f frontend/website/styles.css ]; then
+            aws s3 cp frontend/website/styles.css s3://$BUCKET/styles.css --cache-control "no-cache, no-store, must-revalidate" --content-type "text/css; charset=utf-8"
+          fi
+
           # Ensure app-version.js exists to avoid SPA 404→index.html MIME trap
           if [ ! -f frontend/website/app-version.js ]; then
             echo "window.APP_VERSION='${GITHUB_RUN_NUMBER:-$GITHUB_SHA}';" > frontend/website/app-version.js

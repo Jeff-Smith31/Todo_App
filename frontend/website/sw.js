@@ -1,9 +1,7 @@
-const CACHE_NAME = 'ticktock-cache-v4';
+const CACHE_NAME = 'ticktock-cache-v5';
 const ASSETS = [
   '/',
   '/index.html',
-  '/styles.css',
-  '/app.js',
   '/icons/logo.svg',
   '/manifest.webmanifest'
 ];
@@ -50,6 +48,14 @@ self.addEventListener('fetch', (e) => {
   if (req.mode === 'navigate') {
     e.respondWith(
       fetch(req).catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
+
+  // For scripts and styles: network-first to ensure latest on every load, fallback to cache offline
+  if (req.destination === 'script' || req.destination === 'style') {
+    e.respondWith(
+      fetch(req, { cache: 'no-store' }).catch(() => caches.match(req))
     );
     return;
   }
