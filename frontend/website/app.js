@@ -1189,6 +1189,8 @@
     const btnUpdate = document.getElementById('btn-update');
     if (btnUpdate) {
       btnUpdate.addEventListener('click', async () => {
+        // Stop flashing once the user acknowledges the update
+        btnUpdate.classList.remove('flash');
         try {
           // Ask SW to update then reload
           if ('serviceWorker' in navigator) {
@@ -1211,7 +1213,7 @@
         if (latest !== current) {
           // Mobile → show update button; Desktop → auto reload
           // Always let the user choose when to update to avoid unexpected reload loops
-          if (btnUpdate) btnUpdate.style.display = 'inline-block';
+          if (btnUpdate) { btnUpdate.style.display = 'inline-block'; btnUpdate.classList.add('flash'); }
         }
       } catch {}
     }
