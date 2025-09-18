@@ -251,6 +251,14 @@
     if (!isMobile()) {
       try { await unsubscribePush(); } catch {}
       if (elements.permissionBtn) elements.permissionBtn.style.display = 'none';
+    } else {
+      // On mobile: verify notification permission on every load; prompt if not granted
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          // Small delay to avoid clashing with browser/UI load
+          setTimeout(() => { try { requestNotificationPermission(); } catch {} }, 800);
+        }
+      } catch {}
     }
 
 
