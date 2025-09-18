@@ -1126,26 +1126,37 @@
     // If notifications are not granted, do not attempt to subscribe
     if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') return;
 
+    // Always fetch current VAPID key first to detect rotations
+    let keyResp = null;
+    try { keyResp = await API.getVapidKey(); } catch { keyResp = { key: '' }; }
+    const currentKey = (keyResp && keyResp.key) ? keyResp.key : '';
+    if (!currentKey) return; // push disabled or backend unavailable
+    const storedKey = localStorage.getItem('tt_vapid_pub') || '';
+
     let existing = null;
     try { existing = await reg.pushManager.getSubscription(); } catch {}
+
+    // If we have an existing subscription but the server key changed, unsubscribe and recreate
+    if (existing && storedKey && storedKey !== currentKey) {
+      try { await API.unsubscribePush(existing); } catch {}
+      try { await existing.unsubscribe(); } catch {}
+      existing = null;
+    }
+
     if (existing) {
-      // Ensure backend has current subscription (idempotent upsert)
+      // Ensure backend has current subscription (idempotent upsert) and stored key matches
       try { await API.subscribePush(existing); } catch {}
+      if (storedKey !== currentKey) { localStorage.setItem('tt_vapid_pub', currentKey); }
       return existing;
     }
 
-    // Fetch VAPID key from backend
-    let keyResp = null;
-    try { keyResp = await API.getVapidKey(); } catch { keyResp = { key: '' }; }
-    const key = (keyResp && keyResp.key) ? keyResp.key : '';
-    if (!key) return; // push disabled or backend unavailable
-
-    // Subscribe
+    // Subscribe with current server key
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(key)
+      applicationServerKey: urlBase64ToUint8Array(currentKey)
     });
     try { await API.subscribePush(sub); } catch {}
+    localStorage.setItem('tt_vapid_pub', currentKey);
     return sub;
   }
   async function unsubscribePush(){

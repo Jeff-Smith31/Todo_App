@@ -35,23 +35,42 @@ const COOKIE_SECURE = NODE_ENV === 'production';
 let ACTIVE_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || '';
 let ACTIVE_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || '';
 
-// If not configured via env, generate ephemeral VAPID keys at runtime so push works out of the box.
+// Persist VAPID keys on disk so they don't rotate across restarts when env vars are not set.
+const VAPID_FILE = './vapid.json';
 if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
   try {
-    const gen = webpush.generateVAPIDKeys();
-    ACTIVE_PUBLIC_KEY = gen.publicKey;
-    ACTIVE_PRIVATE_KEY = gen.privateKey;
+    if (fs.existsSync(VAPID_FILE)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8')) || {};
+        if (parsed.publicKey && parsed.privateKey) {
+          ACTIVE_PUBLIC_KEY = parsed.publicKey;
+          ACTIVE_PRIVATE_KEY = parsed.privateKey;
+        }
+      } catch (e) {
+        console.warn('[push] Failed to read persisted VAPID file:', e?.message || e);
+      }
+    }
+    if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
+      const gen = webpush.generateVAPIDKeys();
+      ACTIVE_PUBLIC_KEY = gen.publicKey;
+      ACTIVE_PRIVATE_KEY = gen.privateKey;
+      try {
+        fs.writeFileSync(VAPID_FILE, JSON.stringify({ publicKey: ACTIVE_PUBLIC_KEY, privateKey: ACTIVE_PRIVATE_KEY }, null, 2));
+      } catch (e) {
+        console.warn('[push] Failed to persist VAPID keys to disk:', e?.message || e);
+      }
+      console.warn('[push] WEB_PUSH_* not set. Generated and persisted VAPID keys to vapid.json.');
+    }
     // Expose for child modules/diagnostics in this process
     process.env.WEB_PUSH_PUBLIC_KEY = ACTIVE_PUBLIC_KEY;
     process.env.WEB_PUSH_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
-    console.warn('[push] WEB_PUSH_* not set. Generated ephemeral VAPID keys for this runtime.');
   } catch (e) {
-    console.error('[push] Failed to generate VAPID keys:', e?.message || e);
+    console.error('[push] Failed to prepare VAPID keys:', e?.message || e);
   }
 }
 
 if (ACTIVE_PUBLIC_KEY && ACTIVE_PRIVATE_KEY) {
-  webpush.setVapidDetails(`mailto:admin@example.com`, ACTIVE_PUBLIC_KEY, ACTIVE_PRIVATE_KEY);
+  webpush.setVapidDetails(`mailto:admin@ticktocktasks.com`, ACTIVE_PUBLIC_KEY, ACTIVE_PRIVATE_KEY);
 }
 
 // Back-compat constants used later in the file
@@ -366,6 +385,7 @@ app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
 
 // Push endpoints (authenticated)
 app.get('/api/push/vapid-public-key', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   if (!ACTIVE_PUBLIC_KEY) {
     // Return 200 with empty key to avoid frontend console errors/noise when push is not configured
     return res.json({ key: '' });
@@ -518,6 +538,10 @@ async function sendPushToUser(userId, payloadObj) {
       const message = e?.body || e?.message || '';
       const status = e?.statusCode || e?.status || null;
       pushLog('push_send_error', { userId: String(userId), endpointSuffix, status, error: String(message || e) });
+      // Detect VAPID mismatch (403) which indicates server keys differ from those used when the client subscribed
+      if (status === 403 && String(message).toLowerCase().includes('vapid')) {
+        pushLog('push_vapid_mismatch', { userId: String(userId), endpointSuffix, hint: 'Server VAPID keys differ from subscription. Client will auto-resubscribe on next app load.' });
+      }
       if (status === 404 || status === 410 || String(message).toLowerCase().includes('gone')) {
         try { await delSub(String(userId), endpoint); removed++; pushLog('push_sub_removed', { userId: String(userId), endpointSuffix, reason: 'gone' }); } catch {}
       }
