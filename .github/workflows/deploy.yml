@@ -431,19 +431,19 @@ jobs:
           if [ -n "$PRIMARY_BUCKET" ] && [ "$PRIMARY_BUCKET" != "None" ] && [ "$PRIMARY_BUCKET" != "$ALIAS_BUCKET" ]; then TARGETS="$TARGETS $PRIMARY_BUCKET"; fi
 
           for B in $TARGETS; do
-            echo "Uploading critical no-cache files to s3://$B first..."
+            echo "Syncing static assets to s3://$B (immutable cache) before index.html..."
+            aws s3 sync "$SITE_DIR" "s3://$B" --delete --exclude "index.html" --exclude "sw.js" --exclude "config.js" --exclude "app-version.js" --exclude "version.json"
+
+            echo "Uploading critical no-cache files to s3://$B (index.html last)..."
+            if [ -f "$SITE_DIR/sw.js" ]; then
+              aws s3 cp "$SITE_DIR/sw.js" "s3://$B/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+            fi
             aws s3 cp "$SITE_DIR/config.js" "s3://$B/config.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
             aws s3 cp "$SITE_DIR/app-version.js" "s3://$B/app-version.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
             aws s3 cp "$SITE_DIR/version.json" "s3://$B/version.json" --cache-control "no-cache, no-store, must-revalidate" --content-type application/json
             if [ -f "$SITE_DIR/index.html" ]; then
               aws s3 cp "$SITE_DIR/index.html" "s3://$B/index.html" --cache-control "no-cache, no-store, must-revalidate" --content-type text/html
             fi
-            if [ -f "$SITE_DIR/sw.js" ]; then
-              aws s3 cp "$SITE_DIR/sw.js" "s3://$B/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
-            fi
-
-            echo "Syncing remaining assets to s3://$B (immutable cache)..."
-            aws s3 sync "$SITE_DIR" "s3://$B" --delete --exclude "index.html" --exclude "sw.js" --exclude "config.js" --exclude "app-version.js" --exclude "version.json"
           done
 
           # Invalidate CloudFront so latest app shell is served and wait for completion
