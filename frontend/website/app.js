@@ -783,7 +783,6 @@
       elements.permissionBtn.disabled = false;
       elements.permissionBtn.style.display = 'inline-block';
     }
-    updateTestPushVisibility();
   }
 
   async function requestNotificationPermission(){
