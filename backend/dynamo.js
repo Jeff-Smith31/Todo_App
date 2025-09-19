@@ -101,8 +101,8 @@ export async function listSubs(user_id){
   const r = await ddb.send(new QueryCommand({ TableName: TABLES.push, KeyConditionExpression: 'user_id = :u', ExpressionAttributeValues: { ':u': user_id } }));
   return r.Items || [];
 }
-export async function putSub(user_id, endpoint, p256dh, auth){
-  await ddb.send(new PutCommand({ TableName: TABLES.push, Item: { user_id, endpoint, p256dh, auth, created_at: new Date().toISOString() } }));
+export async function putSub(user_id, endpoint, p256dh, auth, tzOffsetMinutes){
+  await ddb.send(new PutCommand({ TableName: TABLES.push, Item: { user_id, endpoint, p256dh, auth, tzOffsetMinutes, created_at: new Date().toISOString() } }));
 }
 export async function delSub(user_id, endpoint){
   await ddb.send(new DeleteCommand({ TableName: TABLES.push, Key: { user_id, endpoint } }));

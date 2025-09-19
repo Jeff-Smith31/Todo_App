@@ -291,6 +291,9 @@
     // Handle missed tasks on load
     handleMissedTasks();
 
+    // Rollover: after a day boundary, advance nextDue for tasks completed on a prior day (once)
+    applyCompletionRollover();
+
     // Render UI
     render();
 
@@ -525,32 +528,27 @@
     if (checked){
       // If one-off, delete immediately after marking complete
       if (t.oneOff === true) {
-        // Optionally record completion momentarily before deletion
         try { t.lastCompleted = nowIso; } catch {}
-        // Perform deletion (also propagates to backend if connected)
         await deleteTask(t.id);
         return;
       }
-      // Allow completing even if not due today (early completion). Advance cadence based on current nextDue.
+      // Mark complete but DO NOT advance nextDue until the next day (post-rollover)
       t.lastCompleted = nowIso;
-      t.nextDue = addDays(t.nextDue, t.everyDays);
-      t.priority = false; // once completed, clear priority
+      t.priority = false; // clear priority once completed
+      // Track that we have not yet rolled this completion into the schedule
+      t.rolledFromCompletion = t.rolledFromCompletion || null;
       if (BACKEND_URL && isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
       saveTasks();
       render();
       scheduleNotificationForTask(t);
     } else {
-      // Unchecking: revert visual state and due date if we just advanced it
-      const d = new Date();
-      const todayStrVal = dateToYMD(d);
+      // Unchecking the same day should simply clear lastCompleted; do not modify nextDue
+      const todayStrVal = dateToYMD(new Date());
       const completedToday = !!t.lastCompleted && dateToYMD(new Date(t.lastCompleted)) === todayStrVal;
       if (completedToday) {
         t.lastCompleted = null;
-      }
-      if (!isDueTodayRawDateStr(t.nextDue, todayStrVal)){
-        // revert by subtracting frequency but not before today
-        const prev = addDays(t.nextDue, -t.everyDays);
-        if (new Date(prev) >= startOfDay(d)) t.nextDue = prev;
+        // Also clear any pending rolledFromCompletion marker for today
+        if (t.rolledFromCompletion === todayStrVal) t.rolledFromCompletion = null;
       }
       if (BACKEND_URL && isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
       saveTasks();
@@ -864,6 +862,25 @@
       }
     }
     if (changed) saveTasks();
+  }
+
+  // Completion rollover: advance nextDue the day AFTER a completion, exactly once per completed day
+  function applyCompletionRollover(){
+    const today = todayStr();
+    let changed = false;
+    for (const t of tasks){
+      if (!t.lastCompleted) continue;
+      const lcYmd = dateToYMD(new Date(t.lastCompleted));
+      if (lcYmd < today) {
+        // Only roll once per completion day
+        if (t.rolledFromCompletion !== lcYmd) {
+          t.nextDue = addDays(t.nextDue, t.everyDays);
+          t.rolledFromCompletion = lcYmd;
+          changed = true;
+        }
+      }
+    }
+    if (changed) { saveTasks(); }
   }
 
   // Notifications
@@ -1292,7 +1309,11 @@
         }
         try { return await res.json(); } catch { return { key: '' }; }
       },
-      async subscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(sub) })); },
+      async subscribePush(sub){
+        const tzOffsetMinutes = -new Date().getTimezoneOffset();
+        const payload = Object.assign({}, sub, { tzOffsetMinutes });
+        return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(payload) }));
+      },
       async unsubscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'DELETE', ...common, headers: buildHeaders(), body: JSON.stringify({ endpoint: sub.endpoint }) })); },
       async testPush(){ return handle(await fetch(baseUrl + '/api/push/test', { method: 'POST', ...common, headers: buildHeaders() })); },
     };

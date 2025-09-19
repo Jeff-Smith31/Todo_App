@@ -268,7 +268,8 @@ const subscriptionSchema = Joi.object({
   endpoint: Joi.string().uri().required(),
   expirationTime: Joi.any().allow(null),
   keys: Joi.object({ p256dh: Joi.string().required(), auth: Joi.string().required() }).required(),
-});
+  tzOffsetMinutes: Joi.number().integer().min(-720).max(840).optional(),
+}).unknown(true);
 
 // Auth routes
 app.post('/api/auth/register', authLimiter, async (req, res) => {
@@ -398,7 +399,8 @@ app.post('/api/push/subscribe', authMiddleware, async (req, res) => {
   const { error, value } = subscriptionSchema.validate(req.body);
   if (error) return res.status(400).json({ error: error.message });
   try {
-    await putSub(String(req.user.id), value.endpoint, value.keys.p256dh, value.keys.auth);
+    const tz = Number.isFinite(value.tzOffsetMinutes) ? value.tzOffsetMinutes : undefined;
+    await putSub(String(req.user.id), value.endpoint, value.keys.p256dh, value.keys.auth, tz);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to save subscription' });
@@ -513,11 +515,24 @@ app.use('/app', express.static('public', { maxAge: '30d' }));
 
 // Background scheduler to send due notifications
 const SCAN_INTERVAL_MS = 60 * 1000; // 1 minute
-function combineDueDateTime(next_due, remind_at) {
-  // Due in server's local time
-  const [y, m, d] = next_due.split('-').map(Number);
-  const [hh, mm] = remind_at.split(':').map(Number);
-  return new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0);
+function dueUtcMsForTz(next_due, remind_at, tzOffsetMinutes) {
+  // Interpret next_due/remind_at as LOCAL time in the user's timezone (tzOffsetMinutes),
+  // then convert to a UTC timestamp for comparison with Date.now().
+  const [y, m, d] = String(next_due).split('-').map(Number);
+  const [hh, mm] = String(remind_at).split(':').map(Number);
+  const localUtcMs = Date.UTC(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0);
+  const offset = Number.isFinite(tzOffsetMinutes) ? tzOffsetMinutes : 0;
+  return localUtcMs - offset * 60 * 1000;
+}
+function ymdForTz(date, tzOffsetMinutes) {
+  // Get the YYYY-MM-DD for the user's timezone
+  const offset = Number.isFinite(tzOffsetMinutes) ? tzOffsetMinutes : 0;
+  const ms = date.getTime();
+  const local = new Date(ms + offset * 60 * 1000);
+  const y = local.getUTCFullYear();
+  const m = String(local.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(local.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 async function sendPushToUser(userId, payloadObj) {
@@ -553,10 +568,10 @@ async function sendPushToUser(userId, payloadObj) {
 async function scanAndNotify() {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return; // push disabled
   const now = new Date();
-  const windowStart = new Date(now.getTime() - SCAN_INTERVAL_MS);
+  const nowMs = now.getTime();
+  const windowStartMs = nowMs - SCAN_INTERVAL_MS;
 
-  // Scan all tasks (bounded by table size; PAY_PER_REQUEST handles scaling). 
-  // Minimal approach to avoid secondary indexes. If scale grows, switch to partitioned scans.
+  // Scan all tasks
   let rows = [];
   try {
     const r = await ddb.send(new ScanCommand({ TableName: TABLES.tasks }));
@@ -566,21 +581,48 @@ async function scanAndNotify() {
     return;
   }
 
-  const todayYmd = ymdLocal(now);
+  // Cache user -> tzOffsetMinutes (from any subscription); default to 0 if absent
+  const userTzCache = new Map();
+  async function getUserTz(userId) {
+    if (userTzCache.has(userId)) return userTzCache.get(userId);
+    try {
+      const subs = await listSubs(String(userId));
+      const tz = (subs.find(s => Number.isFinite(s.tzOffsetMinutes))?.tzOffsetMinutes) ?? 0;
+      userTzCache.set(userId, tz);
+      return tz;
+    } catch { userTzCache.set(userId, 0); return 0; }
+  }
+
+  // Aggregate for daily summaries
+  const userCounts = new Map(); // userId -> { tz, todayYmd, dueCount }
 
   for (const r of rows) {
     try {
       if (!r.next_due || !r.remind_at || !r.id || !r.user_id) continue;
-      const due = combineDueDateTime(String(r.next_due), String(r.remind_at));
+      const userId = String(r.user_id);
+      const tz = await getUserTz(userId);
+      const userToday = ymdForTz(now, tz);
+
+      // Track summary counts (exclude tasks already completed today in user local time)
+      const completedToday = r.last_completed ? (ymdForTz(new Date(r.last_completed), tz) === userToday) : false;
+      if (!userCounts.has(userId)) userCounts.set(userId, { tz, todayYmd: userToday, dueCount: 0 });
+      if (String(r.next_due) === userToday && !completedToday) {
+        userCounts.get(userId).dueCount += 1;
+      }
+
+      const dueMs = dueUtcMsForTz(String(r.next_due), String(r.remind_at), tz);
       const baseKey = `${r.next_due}T${r.remind_at}`;
 
-      // 1) Day-of (send once when it's the due date and before due time)
-      if (String(r.next_due) === todayYmd && now < due) {
+      // If completed today (user-local), skip all notifications for this task today
+      if (completedToday) continue;
+
+      // 1) Day-of (send once when it's the due date and before due time) in user-local day
+      if (String(r.next_due) === userToday && nowMs < dueMs) {
         const key = `${baseKey}|day`;
         const sent = await notifWasSent(String(r.id), key);
         if (!sent) {
           const body = (r.notes ? `${r.notes}\n` : '') + `Due today at ${r.remind_at}`;
-          await sendPushToUser(r.user_id, {
+          await sendPushToUser(userId, {
             type: 'task-day',
             taskId: r.id,
             title: `Today: ${r.title}`,
@@ -593,13 +635,13 @@ async function scanAndNotify() {
       }
 
       // 2) 1-hour warning
-      const oneHourBefore = new Date(due.getTime() - 60 * 60 * 1000);
-      if (oneHourBefore <= now && oneHourBefore > windowStart && now < due) {
+      const oneHourBeforeMs = dueMs - 60 * 60 * 1000;
+      if (oneHourBeforeMs <= nowMs && oneHourBeforeMs > windowStartMs && nowMs < dueMs) {
         const key = `${baseKey}|1h`;
         const sent = await notifWasSent(String(r.id), key);
         if (!sent) {
           const body = (r.notes ? `${r.notes}\n` : '') + `~1 hour until due (${r.remind_at})`;
-          await sendPushToUser(r.user_id, {
+          await sendPushToUser(userId, {
             type: 'task-hour',
             taskId: r.id,
             title: `1 hour left: ${r.title}`,
@@ -612,12 +654,12 @@ async function scanAndNotify() {
       }
 
       // 3) Due time
-      if (due <= now && due > windowStart) {
+      if (dueMs <= nowMs && dueMs > windowStartMs) {
         const key = baseKey;
         const sent = await notifWasSent(String(r.id), key);
         if (!sent) {
           const body = r.notes ? `${r.notes}\nEvery ${r.every_days} day(s)` : `Every ${r.every_days} day(s)`;
-          await sendPushToUser(r.user_id, {
+          await sendPushToUser(userId, {
             type: 'task-due',
             taskId: r.id,
             title: r.title,
@@ -630,7 +672,7 @@ async function scanAndNotify() {
       }
 
       // 4) Missed (trigger if due is at least one scan window in the past)
-      if (due <= windowStart) {
+      if (dueMs <= windowStartMs) {
         const key = `${baseKey}|missed`;
         const sent = await notifWasSent(String(r.id), key);
         if (!sent) {
@@ -639,7 +681,7 @@ async function scanAndNotify() {
           try {
             await ddb.send(new UpdateCommand({
               TableName: TABLES.tasks,
-              Key: { user_id: String(r.user_id), id: String(r.id) },
+              Key: { user_id: String(userId), id: String(r.id) },
               UpdateExpression: 'SET next_due = :nd, priority = :p',
               ExpressionAttributeValues: { ':nd': newDue, ':p': true },
             }));
@@ -647,7 +689,7 @@ async function scanAndNotify() {
             console.error('scanAndNotify: failed to roll missed task', r.id, e?.message || e);
           }
           const body = (r.notes ? `${r.notes}\n` : '') + `Missed. New deadline: same time tomorrow`;
-          await sendPushToUser(r.user_id, {
+          await sendPushToUser(userId, {
             type: 'task-missed',
             taskId: r.id,
             title: `Missed: ${r.title}`,
@@ -660,6 +702,28 @@ async function scanAndNotify() {
       }
     } catch (e) {
       console.error('scanAndNotify: error for task', r?.id, e?.message || e);
+    }
+  }
+
+  // Send 8am local summaries per user
+  for (const [userId, info] of userCounts.entries()) {
+    try {
+      const { tz, todayYmd, dueCount } = info;
+      // 08:00 local converted to UTC ms
+      const summaryMs = dueUtcMsForTz(todayYmd, '08:00', tz);
+      if (summaryMs <= nowMs && summaryMs > windowStartMs) {
+        const taskId = `__summary__:${userId}`;
+        const dueKey = `summary|${todayYmd}`;
+        const sent = await notifWasSent(taskId, dueKey);
+        if (!sent) {
+          const title = 'Today\'s tasks';
+          const body = dueCount === 1 ? 'You have 1 task due today.' : `You have ${dueCount} tasks due today.`;
+          await sendPushToUser(String(userId), { type: 'daily-summary', title, body, icon: '/icons/logo.svg', badge: '/icons/logo.svg' });
+          await markNotifSent(taskId, dueKey);
+        }
+      }
+    } catch (e) {
+      console.error('scanAndNotify: summary error for user', userId, e?.message || e);
     }
   }
 }
