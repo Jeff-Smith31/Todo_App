@@ -9,7 +9,8 @@ const ASSETS = [
 const OPTIONAL_ASSETS = [
   '/config.js',
   '/app-version.js',
-  '/version.json'
+  '/version.json',
+  '/family/manifest.webmanifest'
 ];
 
 self.addEventListener('install', (e) => {

@@ -39,6 +39,21 @@
       .brand h1 { font-size: 16px; }
     }
   </style>
+  <script>
+    // Capture the beforeinstallprompt event as early as possible so auto-install works reliably
+    (function(){
+      try {
+        window.__famBip = null;
+        window.addEventListener('beforeinstallprompt', function(e){
+          e.preventDefault();
+          window.__famBip = e;
+          // Expose a flag so app.js can enable the Install button immediately
+          try { var b = document.getElementById('btn-install'); if (b) b.disabled = false; } catch {}
+        });
+        window.addEventListener('appinstalled', function(){ window.__famBip = null; });
+      } catch {}
+    })();
+  </script>
 </head>
 <body>
   <header>
