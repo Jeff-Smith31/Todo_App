@@ -117,14 +117,36 @@
     // Prefer any early-captured event from index.html
     let deferredPrompt = window.__famBip || null;
 
+    // Track whether user provided a gesture on this page (required by some browsers to call prompt())
+    let wantInstall = autoInstall;
+    let hadGesture = false;
+    const gestureOnce = () => {
+      hadGesture = true;
+      // If we want to auto-install and have a prompt ready, do it now under user gesture
+      if (wantInstall && deferredPrompt) {
+        tryInstall();
+      }
+      // Remove after first gesture
+      document.removeEventListener('pointerdown', gestureOnce);
+      document.removeEventListener('click', gestureOnce, true);
+    };
+    document.addEventListener('pointerdown', gestureOnce, { once: true });
+    // Fallback for older browsers that may not fire pointer events
+    document.addEventListener('click', gestureOnce, true);
+
     // Capture later events as well
     window.addEventListener('beforeinstallprompt', async (e) => {
       e.preventDefault();
       deferredPrompt = e;
       window.__famBip = e;
       btn.disabled = false;
-      if (autoInstall) {
-        try { await tryInstall(); } catch {}
+      // If user requested install via the main site button, either prompt immediately when we have a gesture
+      // or store the intent and let the first tap trigger it.
+      if (wantInstall) {
+        if (hadGesture) {
+          try { await tryInstall(); } catch {}
+        }
+        // else: will run on first user gesture via gestureOnce
       }
     });
     // Disable until we have a prompt (if any); will be enabled by early capture or listener above
@@ -145,6 +167,7 @@
         try { deferredPrompt.prompt(); await deferredPrompt.userChoice; } catch {}
         deferredPrompt = null;
         window.__famBip = null;
+        wantInstall = false;
       } else {
         // If we don't yet have a prompt (e.g., Chrome hasn’t fired it), focus the button and show guidance
         btn.focus();
@@ -152,10 +175,10 @@
       }
     }
 
-    // Button click handler
-    btn.addEventListener('click', tryInstall);
+    // Button click handler always counts as a user gesture
+    btn.addEventListener('click', () => { wantInstall = true; tryInstall(); });
 
-    // If autoInstall requested, attempt prompt shortly after load in case early event already captured
+    // If autoInstall requested, attempt a best-effort prompt shortly after load in case early event already captured
     if (autoInstall) {
       setTimeout(() => { try { tryInstall(); } catch {} }, 300);
       const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent||'');
@@ -166,7 +189,7 @@
     }
 
     // Clear stored prompt when installed
-    window.addEventListener('appinstalled', () => { deferredPrompt = null; window.__famBip = null; });
+    window.addEventListener('appinstalled', () => { deferredPrompt = null; window.__famBip = null; wantInstall = false; });
   }
 
   function authHeaders(){ const h = { 'Content-Type': 'application/json' }; if (authToken) h.Authorization = 'Bearer ' + authToken; return h; }
