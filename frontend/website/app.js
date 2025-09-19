@@ -191,10 +191,16 @@
         try { window.matchMedia('(display-mode: standalone)').addEventListener('change', () => { if (isStandalone()) hideInstall(); }); } catch {}
       }
     }
+    // Use early-captured prompt if available (set in index.html <head>)
+    if (window.__mainBip) {
+      deferredPrompt = window.__mainBip;
+      showInstall();
+    }
     window.addEventListener('beforeinstallprompt', (e) => {
       if (isStandalone() || isNativeWebView()) return; // do not show inside mobile app or installed PWA
       e.preventDefault();
       deferredPrompt = e;
+      window.__mainBip = e;
       showInstall();
     });
     function isAndroid(){
@@ -225,21 +231,44 @@
       }
       alert('Your browser did not offer an install prompt. You can still add this app from your browser menu (Add to Home Screen or Install app).');
     }
+    // Auto-install support via query param (?install=1) with first-gesture fallback
+    let installIntent = (new URLSearchParams(location.search)).get('install') === '1';
+    let hadGesture = false;
+    const onFirstGesture = () => {
+      hadGesture = true;
+      if (installIntent && deferredPrompt) {
+        try { deferredPrompt.prompt(); } catch {}
+        installIntent = false;
+      }
+      document.removeEventListener('pointerdown', onFirstGesture);
+      document.removeEventListener('click', onFirstGesture, true);
+    };
+    document.addEventListener('pointerdown', onFirstGesture, { once: true });
+    document.addEventListener('click', onFirstGesture, true);
+
     if (elements.installBtn){
       elements.installBtn.addEventListener('click', async () => {
         if (isStandalone() || isNativeWebView()) { hideInstall(); return; }
+        // Mark explicit user intent
+        installIntent = true;
         if (deferredPrompt){
           try {
             deferredPrompt.prompt();
             await deferredPrompt.userChoice;
           } catch {}
           deferredPrompt = null;
+          window.__mainBip = null;
           hideInstall();
         } else {
           // Fallback: show simple guidance when no install prompt is available yet (e.g., iOS Safari)
           showInstallHelp();
         }
       });
+    }
+
+    // If auto-install was requested, attempt shortly after load (best-effort)
+    if (installIntent) {
+      setTimeout(() => { try { if (deferredPrompt) { deferredPrompt.prompt(); installIntent = false; } } catch {} }, 350);
     }
 
     // Service worker
