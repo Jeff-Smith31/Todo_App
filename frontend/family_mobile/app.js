@@ -19,6 +19,57 @@
     render();
     if (authToken) { await fetchMe(); await loadTasks(); }
     $('#btn-refresh').addEventListener('click', () => refreshAnalytics());
+
+    // Setup Update button behavior and version polling (match main app functionality)
+    setupVersionUiAndUpdater();
+  }
+
+  function setupVersionUiAndUpdater(){
+    const current = (window.APP_VERSION || 'dev').toString();
+    const btnUpdate = $('#btn-update');
+    if (btnUpdate) {
+      btnUpdate.addEventListener('click', async () => {
+        btnUpdate.classList.remove('flash');
+        try {
+          if ('serviceWorker' in navigator) {
+            // Prefer root registration so scope is entire site
+            const reg = (await navigator.serviceWorker.getRegistration('/')) || (await navigator.serviceWorker.getRegistration());
+            if (reg) {
+              try { await reg.update(); } catch {}
+              if (reg.waiting) {
+                try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch {}
+              }
+            }
+          }
+        } catch {}
+        location.reload(true);
+      });
+    }
+
+    async function checkLatest(){
+      try {
+        const res = await fetch(`/version.json?ts=${Date.now()}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json().catch(()=>null);
+        const latest = (data && data.version) ? String(data.version) : null;
+        if (!latest) return;
+        if (latest !== current && btnUpdate) {
+          btnUpdate.style.display = 'inline-block';
+          btnUpdate.classList.add('flash');
+        }
+      } catch {}
+    }
+
+    checkLatest();
+    setInterval(checkLatest, 30000);
+    window.addEventListener('visibilitychange', () => { if (!document.hidden) checkLatest(); });
+
+    // If SW updates and takes control, we have latest
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (btnUpdate) btnUpdate.classList.remove('flash');
+      });
+    }
   }
 
   function bindTabs(){
