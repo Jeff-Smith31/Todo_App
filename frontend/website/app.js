@@ -647,10 +647,11 @@
             : `• Every ${t.everyDays} day(s)`;
         meta.textContent = `Due: ${formatDate(dueDate)} at ${formatTime(dueTime)} ${scheduleText}`;
 
-        // badges
-        toggleHidden(bPriority, !t.priority);
-        toggleHidden(bOverdue, !isOverdue(t));
-        toggleHidden(bToday, !(isDueToday(t) && !isOverdue(t)));
+        // badges: hide all status badges when task is completed today
+        const hideBadges = !!(t.lastCompleted && dateToYMD(new Date(t.lastCompleted)) === dateToYMD(new Date()));
+        toggleHidden(bPriority, hideBadges || !t.priority);
+        toggleHidden(bOverdue, hideBadges || !isOverdue(t));
+        toggleHidden(bToday, hideBadges || !(isDueToday(t) && !isOverdue(t)));
 
         // checkbox reflects if task was completed today; keep it checked until next day
         const todayStrVal = dateToYMD(new Date());
