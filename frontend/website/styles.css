@@ -131,6 +131,11 @@ details.category-section > summary {
 }
 .cat-actions { display: inline-flex; gap: 8px; }
 
+/* Tabs */
+.tabs { display:flex; gap:8px; margin-bottom: 12px; }
+.tab { padding: 8px 12px; border-radius: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--text); cursor: pointer; }
+.tab.active { background: linear-gradient(135deg, var(--primary), var(--primary-600)); border: none; }
+
 @media (max-width: 640px) {
   .titles h1 { font-size: 18px; }
   .actions { gap: 6px; }
@@ -168,6 +173,10 @@ details.category-section > summary {
   #btn-update.flash { animation: none; }
 }
 
+/* Irene plus button */
+.btn.icon.plus { font-size: 18px; font-weight: 700; background: rgba(34,197,94,0.2); border: 1px solid rgba(34,197,94,0.4); width: 32px; height: 32px; display:inline-flex; align-items:center; justify-content:center; border-radius: 8px; color: #a7f3d0; }
+.btn.icon.plus.pulse { animation: irene-pulse 0.4s ease-out 1; }
+@keyframes irene-pulse { 0%{ transform: scale(1); } 50%{ transform: scale(1.15); } 100%{ transform: scale(1); } }
 
 /* Smaller edit/delete icon buttons (reduced ~30%) */
 .item-actions .btn.icon.edit,

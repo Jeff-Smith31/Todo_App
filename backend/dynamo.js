@@ -10,6 +10,8 @@ export const TABLES = {
   push: `${TABLE_PREFIX}-push`,
   notifs: `${TABLE_PREFIX}-notifs`,
   config: `${TABLE_PREFIX}-config`,
+  irene_tasks: `${TABLE_PREFIX}-irene-tasks`,
+  irene_logs: `${TABLE_PREFIX}-irene-logs`,
 };
 
 const client = new DynamoDBClient({ region: REGION });
@@ -76,6 +78,28 @@ async function ensureTableConfig(){
   }));
 }
 
+async function ensureTableIreneTasks(){
+  const TableName = TABLES.irene_tasks;
+  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
+  await client.send(new CreateTableCommand({
+    TableName,
+    BillingMode: 'PAY_PER_REQUEST',
+    KeySchema: [ { AttributeName: 'user_id', KeyType: 'HASH' }, { AttributeName: 'id', KeyType: 'RANGE' } ],
+    AttributeDefinitions: [ { AttributeName: 'user_id', AttributeType: 'S' }, { AttributeName: 'id', AttributeType: 'S' } ],
+  }));
+}
+
+async function ensureTableIreneLogs(){
+  const TableName = TABLES.irene_logs;
+  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
+  await client.send(new CreateTableCommand({
+    TableName,
+    BillingMode: 'PAY_PER_REQUEST',
+    KeySchema: [ { AttributeName: 'user_id', KeyType: 'HASH' }, { AttributeName: 'ts', KeyType: 'RANGE' } ],
+    AttributeDefinitions: [ { AttributeName: 'user_id', AttributeType: 'S' }, { AttributeName: 'ts', AttributeType: 'S' } ],
+  }));
+}
+
 export async function ensureTables(){
   await Promise.all([
     ensureTableUsers(),
@@ -83,6 +107,8 @@ export async function ensureTables(){
     ensureTablePush(),
     ensureTableNotifs(),
     ensureTableConfig(),
+    ensureTableIreneTasks(),
+    ensureTableIreneLogs(),
   ]);
 }
 
@@ -119,6 +145,34 @@ export async function putSub(user_id, endpoint, p256dh, auth, tzOffsetMinutes){
 }
 export async function delSub(user_id, endpoint){
   await ddb.send(new DeleteCommand({ TableName: TABLES.push, Key: { user_id, endpoint } }));
+}
+
+// Irene tasks
+export async function listIreneTasks(user_id){
+  const r = await ddb.send(new QueryCommand({ TableName: TABLES.irene_tasks, KeyConditionExpression: 'user_id = :u', ExpressionAttributeValues: { ':u': user_id } }));
+  return r.Items || [];
+}
+export async function putIreneTask(task){
+  await ddb.send(new PutCommand({ TableName: TABLES.irene_tasks, Item: task }));
+}
+export async function deleteIreneTask(user_id, id){
+  await ddb.send(new DeleteCommand({ TableName: TABLES.irene_tasks, Key: { user_id, id } }));
+}
+
+// Irene logs
+export async function logIreneCompletion(user_id, task_id, ts){
+  const item = { user_id, ts, task_id };
+  await ddb.send(new PutCommand({ TableName: TABLES.irene_logs, Item: item }));
+  return item;
+}
+export async function queryIreneLogs(user_id, fromTs, toTs){
+  // Simple scan by range using begins_with on prefix or between; ts stored as ISO string allows lexicographic ordering
+  const r = await ddb.send(new QueryCommand({
+    TableName: TABLES.irene_logs,
+    KeyConditionExpression: 'user_id = :u AND ts BETWEEN :from AND :to',
+    ExpressionAttributeValues: { ':u': user_id, ':from': fromTs, ':to': toTs },
+  }));
+  return r.Items || [];
 }
 
 // Notifs (idempotence keys)

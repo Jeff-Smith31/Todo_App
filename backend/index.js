@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 // SQLite removed. Using DynamoDB for persistence.
-import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES } from './dynamo.js';
+import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES, listIreneTasks, putIreneTask, deleteIreneTask, logIreneCompletion, queryIreneLogs } from './dynamo.js';
 import Joi from 'joi';
 import webpush from 'web-push';
 import fs from 'fs';
@@ -296,6 +296,18 @@ const taskSchema = Joi.object({
   lastCompleted: Joi.string().allow(null).optional(),
 }).unknown(true);
 
+// Irene (simple increment/logging tasks)
+const ireneTaskSchema = Joi.object({
+  id: Joi.string().optional(),
+  title: Joi.string().min(1).max(255).required(),
+  notes: Joi.string().allow('').max(1000).optional(),
+  category: Joi.alternatives().try(Joi.string().allow('', 'Default').max(100), Joi.valid(null)).optional(),
+}).unknown(true);
+const ireneLogSchema = Joi.object({
+  taskId: Joi.string().required(),
+  ts: Joi.string().isoDate().optional(),
+}).unknown(true);
+
 const subscriptionSchema = Joi.object({
   endpoint: Joi.string().uri().required(),
   expirationTime: Joi.any().allow(null),
@@ -414,6 +426,67 @@ app.put('/api/tasks/:id', authMiddleware, async (req, res) => {
 app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
   await ddbDeleteTask(String(req.user.id), req.params.id);
   res.json({ ok: true });
+});
+
+// Irene routes (authenticated)
+app.get('/api/irene/tasks', authMiddleware, async (req, res) => {
+  try {
+    const rows = await listIreneTasks(String(req.user.id));
+    const tasks = rows.map(r => ({ id: r.id, title: r.title, notes: r.notes || '', category: r.category || 'Default' }));
+    res.json({ tasks });
+  } catch (e) { res.status(500).json({ error: 'Failed to list tasks' }); }
+});
+app.post('/api/irene/tasks', authMiddleware, async (req, res) => {
+  try {
+    const { error, value } = ireneTaskSchema.validate(req.body || {});
+    if (error) return res.status(400).json({ error: error.message });
+    const id = (value.id && String(value.id)) || cryptoRandomId();
+    const item = { user_id: String(req.user.id), id, title: String(value.title), notes: (value.notes != null ? String(value.notes) : ''), category: (value.category == null || value.category === '' ? 'Default' : String(value.category)) };
+    await putIreneTask(item);
+    res.status(201).json({ id });
+  } catch (e) { res.status(500).json({ error: 'Failed to save task' }); }
+});
+app.delete('/api/irene/tasks/:id', authMiddleware, async (req, res) => {
+  try { await deleteIreneTask(String(req.user.id), String(req.params.id)); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: 'Failed to delete task' }); }
+});
+app.post('/api/irene/log', authMiddleware, async (req, res) => {
+  try {
+    const { error, value } = ireneLogSchema.validate(req.body || {});
+    if (error) return res.status(400).json({ error: error.message });
+    const ts = value.ts && typeof value.ts === 'string' ? value.ts : new Date().toISOString();
+    const out = await logIreneCompletion(String(req.user.id), String(value.taskId), ts);
+    res.json({ ok: true, log: out });
+  } catch (e) { res.status(500).json({ error: 'Failed to log completion' }); }
+});
+app.get('/api/irene/analytics', authMiddleware, async (req, res) => {
+  try {
+    const range = String(req.query.range || 'day');
+    const days = Math.max(1, Math.min(365, parseInt(String(req.query.days || (range === 'month' ? '30' : range === 'week' ? '14' : '7')), 10)));
+    const now = new Date();
+    const toTs = now.toISOString();
+    const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    const fromTs = from.toISOString();
+    const logs = await queryIreneLogs(String(req.user.id), fromTs, toTs);
+    // Aggregate by day (local ISO date) and taskId
+    const by = {};
+    for (const l of logs) {
+      const d = (l.ts || '').slice(0,10);
+      const key = d + '|' + (l.task_id || l.taskId || 'unknown');
+      by[key] = (by[key] || 0) + 1;
+    }
+    // Build buckets per day
+    const buckets = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const dt = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const d = dt.toISOString().slice(0,10);
+      buckets.push(d);
+    }
+    // Series per task
+    const taskIds = Array.from(new Set(logs.map(l => l.task_id))).filter(Boolean);
+    const series = taskIds.map(tid => ({ taskId: tid, data: buckets.map(d => by[d+'|'+tid] || 0) }));
+    res.json({ range, days, buckets, series });
+  } catch (e) { res.status(500).json({ error: 'Failed to compute analytics' }); }
 });
 
 // Push endpoints (authenticated)

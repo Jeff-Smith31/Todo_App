@@ -50,9 +50,27 @@
     installBtn: $('#btn-install'),
     addCategoryBtn: $('#btn-add-category'),
     template: $('#task-item-template'),
+    tabs: $('#tabs'),
+    tabIndividual: $('#tab-individual'),
+    tabIrene: $('#tab-irene'),
+    tabAnalytics: $('#tab-analytics'),
+    // Irene elements
+    ireneList: $('#irene-list'),
+    ireneEmpty: $('#irene-empty'),
+    ireneForm: $('#irene-form'),
+    ireneId: $('#irene-id'),
+    ireneTitle: $('#irene-title'),
+    ireneNotes: $('#irene-notes'),
+    ireneCategory: $('#irene-category'),
+    ireneSearch: $('#irene-search'),
+    ireneCreateBtn: $('#btn-irene-create'),
+    // Analytics
+    analyticsRange: $('#analytics-range'),
+    analyticsCanvas: $('#analytics-canvas'),
   };
 
   let tasks = loadTasks();
+  let ireneTasks = [];
   let settings = loadSettings();
   let isAuthed = false;
   let deferredPrompt = null; // for PWA install
@@ -106,6 +124,11 @@
     if (elements.addCategoryBtn) elements.addCategoryBtn.addEventListener('click', addCategoryViaPrompt);
 
 
+    // Tabs click handlers
+    if (elements.tabIndividual) elements.tabIndividual.addEventListener('click', () => { location.hash = '#/tasks'; route(); });
+    if (elements.tabIrene) elements.tabIrene.addEventListener('click', () => { location.hash = '#/irene'; route(); });
+    if (elements.tabAnalytics) elements.tabAnalytics.addEventListener('click', () => { location.hash = '#/analytics'; route(); });
+
     // Auth
     const btnLogin = document.getElementById('btn-login');
     const btnRegister = document.getElementById('btn-register');
@@ -123,6 +146,7 @@
           await API.login(emailEl.value, passEl.value);
           await syncFromBackend();
           updateAuthUi(true);
+          await loadIrene();
           if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); await maybeTestPush('login'); } catch {} }
           location.hash = '#/tasks';
           route();
@@ -163,6 +187,9 @@
 
     // Router events
     window.addEventListener('hashchange', route);
+
+    // Analytics range change
+    if (elements.analyticsRange) elements.analyticsRange.addEventListener('change', renderAnalytics);
 
     // PWA install
     function isStandalone(){
@@ -273,6 +300,7 @@
           updateAuthUi(isAuthed);
           if (isAuthed) {
             await syncFromBackend();
+            await loadIrene();
             if (Notification.permission === 'granted') {
               try { await ensurePushSubscribed(); } catch {}
             }
@@ -347,10 +375,14 @@
     const pageLogin = document.getElementById('page-login');
     const pageTasks = document.getElementById('page-tasks');
     const pageForm = document.getElementById('page-task-form');
+    const pageIrene = document.getElementById('page-irene');
+    const pageAnalytics = document.getElementById('page-analytics');
     const show = (pg) => {
       if (pageLogin) pageLogin.classList.add('hidden');
       if (pageTasks) pageTasks.classList.add('hidden');
       if (pageForm) pageForm.classList.add('hidden');
+      if (pageIrene) pageIrene.classList.add('hidden');
+      if (pageAnalytics) pageAnalytics.classList.add('hidden');
       if (pg) pg.classList.remove('hidden');
       // focus management could be added here if needed
     };
@@ -389,6 +421,7 @@
       if (p1 === 'new') {
         resetForm();
         show(pageForm);
+        setActiveTab('individual');
         return;
       }
       if (p2 === 'edit' && p1) {
@@ -421,17 +454,34 @@
             elements.category.value = t.category || 'Default';
           }
           show(pageForm);
+          setActiveTab('individual');
           return;
         }
         // if task not found, go back to list
         location.hash = '#/tasks';
         show(pageTasks);
         render();
+        setActiveTab('individual');
         return;
       }
       // default tasks list
       show(pageTasks);
       render();
+      setActiveTab('individual');
+      return;
+    }
+
+    if (root === 'irene') {
+      show(pageIrene);
+      setActiveTab('irene');
+      renderIrene();
+      return;
+    }
+
+    if (root === 'analytics') {
+      show(pageAnalytics);
+      setActiveTab('analytics');
+      renderAnalytics();
       return;
     }
 
@@ -836,6 +886,8 @@
     if (btnLogin) btnLogin.style.display = authed ? 'none' : 'inline-block';
     if (btnRegister) btnRegister.style.display = authed ? 'none' : 'inline-block';
     if (btnLogout) btnLogout.style.display = authed ? 'inline-block' : 'none';
+    // Toggle tabs visibility
+    if (elements.tabs) elements.tabs.classList.toggle('hidden', !authed);
   }
 
   // Missed tasks handling: if due time has passed without completion, move to next day and mark priority
@@ -1340,8 +1392,137 @@
       },
       async unsubscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'DELETE', ...common, headers: buildHeaders(), body: JSON.stringify({ endpoint: sub.endpoint }) })); },
       async testPush(){ return handle(await fetch(baseUrl + '/api/push/test', { method: 'POST', ...common, headers: buildHeaders() })); },
+      // Irene endpoints
+      async getIreneTasks(){ const j = await handle(await fetch(baseUrl + '/api/irene/tasks', { ...common, headers: buildHeaders() })); return j.tasks || []; },
+      async createIreneTask(t){ return handle(await fetch(baseUrl + '/api/irene/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
+      async deleteIreneTask(id){ return handle(await fetch(baseUrl + '/api/irene/tasks/' + encodeURIComponent(id), { method: 'DELETE', ...common, headers: buildHeaders() })); },
+      async logIrene(taskId){ return handle(await fetch(baseUrl + '/api/irene/log', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ taskId }) })); },
+      async getIreneAnalytics(days){ const j = await handle(await fetch(baseUrl + '/api/irene/analytics?range=day&days=' + encodeURIComponent(days), { ...common, headers: buildHeaders() })); return j; },
     };
   }
+
+  function setActiveTab(name){
+    if (!elements.tabs) return;
+    const map = { individual: elements.tabIndividual, irene: elements.tabIrene, analytics: elements.tabAnalytics };
+    for (const key of Object.keys(map)){
+      const btn = map[key]; if (!btn) continue;
+      if (key === name) btn.classList.add('active'); else btn.classList.remove('active');
+    }
+  }
+
+  // Irene: load tasks from backend
+  async function loadIrene(){
+    if (!(BACKEND_URL && isAuthed)) { ireneTasks = []; renderIrene(); return; }
+    try {
+      const list = await API.getIreneTasks();
+      ireneTasks = Array.isArray(list) ? list : [];
+      renderIrene();
+    } catch (e) { console.warn('Irene load failed', e); }
+  }
+
+  // Irene: show create form
+  function showIreneForm(edit){
+    if (!elements.ireneForm) return;
+    elements.ireneForm.classList.remove('hidden');
+    ensureCategoryState();
+    populateIreneCategorySelect();
+    if (!edit){
+      elements.ireneId.value = '';
+      elements.ireneTitle.value = '';
+      elements.ireneNotes.value = '';
+      elements.ireneCategory.value = settings.categories[0] || 'Default';
+    }
+  }
+  function hideIreneForm(){ if (elements.ireneForm) elements.ireneForm.classList.add('hidden'); }
+  function populateIreneCategorySelect(){
+    if (!elements.ireneCategory) return;
+    elements.ireneCategory.innerHTML='';
+    for (const name of settings.categories){ const opt = document.createElement('option'); opt.value = name; opt.textContent = name; elements.ireneCategory.appendChild(opt); }
+  }
+
+  function renderIrene(){
+    if (!elements.ireneList) return;
+    const q = (elements.ireneSearch?.value || '').trim().toLowerCase();
+    const list = ireneTasks.filter(t => !q || t.title.toLowerCase().includes(q) || (t.notes||'').toLowerCase().includes(q));
+    elements.ireneList.innerHTML='';
+    elements.ireneEmpty.style.display = list.length ? 'none' : 'block';
+    for (const t of list){
+      const li = document.createElement('li'); li.className='task-item';
+      const plus = document.createElement('button'); plus.className='btn icon plus'; plus.title='Log completion'; plus.setAttribute('aria-label','Log completion'); plus.textContent = '+';
+      plus.addEventListener('click', async () => {
+        try { await API.logIrene(t.id); plus.classList.add('pulse'); setTimeout(()=>plus.classList.remove('pulse'), 400); } catch (e) { alert('Failed to log'); }
+      });
+      const main = document.createElement('div'); main.className='task-main';
+      const row1 = document.createElement('div'); row1.className='row1';
+      const title = document.createElement('span'); title.className='title'; title.textContent=t.title;
+      row1.appendChild(title);
+      const row2 = document.createElement('div'); row2.className='row2';
+      const notes = document.createElement('span'); notes.className='notes'; notes.textContent=t.notes||'';
+      row2.appendChild(notes);
+      const row3 = document.createElement('div'); row3.className='row3 meta'; row3.textContent = t.category ? `Category: ${t.category}` : '';
+      main.appendChild(row1); main.appendChild(row2); main.appendChild(row3);
+      const actions = document.createElement('div'); actions.className='item-actions';
+      const btnDel = document.createElement('button'); btnDel.className='btn icon delete'; btnDel.title='Delete'; btnDel.textContent='🗑️';
+      btnDel.addEventListener('click', async ()=>{ if (!confirm('Delete this task?')) return; try { await API.deleteIreneTask(t.id); await loadIrene(); } catch (e) { alert('Delete failed'); } });
+      actions.appendChild(btnDel);
+      li.appendChild(plus); li.appendChild(main); li.appendChild(actions);
+      elements.ireneList.appendChild(li);
+    }
+  }
+
+  async function renderAnalytics(){
+    try {
+      const days = parseInt(elements.analyticsRange?.value || '7', 10);
+      const data = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(days) : { buckets: [], series: [] };
+      const canvas = elements.analyticsCanvas; if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      const buckets = data.buckets || [];
+      const series = data.series || [];
+      if (!buckets.length || !series.length){ document.getElementById('analytics-empty').style.display='block'; return; } else { document.getElementById('analytics-empty').style.display='none'; }
+      const W = canvas.width, H = canvas.height; const padding = 40; const chartW = W - padding*2; const chartH = H - padding*2;
+      // total per bucket to scale
+      const totals = buckets.map((_,i)=> series.reduce((s,ser)=> s + (ser.data[i]||0), 0));
+      const maxV = Math.max(1, ...totals);
+      const barW = chartW / buckets.length * 0.7; const gap = chartW / buckets.length * 0.3;
+      const colors = series.map((_,i)=> `hsl(${(i*67)%360} 70% 60%)`);
+      ctx.font='12px sans-serif'; ctx.fillStyle='#ccc'; ctx.textAlign='center';
+      for (let i=0;i<buckets.length;i++){
+        let x = padding + i*(barW+gap) + gap*0.5;
+        let y = padding + chartH;
+        let acc = 0;
+        for (let s=0;s<series.length;s++){
+          const val = series[s].data[i]||0;
+          const h = Math.round((val/maxV)*chartH);
+          ctx.fillStyle = colors[s];
+          ctx.fillRect(x, y - acc - h, barW, h);
+          acc += h;
+        }
+        // x labels
+        ctx.fillStyle='#aab'; ctx.fillText(String(buckets[i]).slice(5), x+barW/2, H-10);
+      }
+      // y-axis line
+      ctx.strokeStyle='#556'; ctx.beginPath(); ctx.moveTo(padding, padding); ctx.lineTo(padding, H-padding); ctx.stroke();
+    } catch (e) {
+      console.warn('analytics render failed', e);
+    }
+  }
+
+  // Irene form events
+  if (elements.ireneCreateBtn) elements.ireneCreateBtn.addEventListener('click', () => showIreneForm(false));
+  if (elements.ireneForm) elements.ireneForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    try {
+      const t = { id: elements.ireneId.value || undefined, title: elements.ireneTitle.value.trim(), notes: elements.ireneNotes.value.trim(), category: elements.ireneCategory.value };
+      if (!t.title) return;
+      await API.createIreneTask(t);
+      hideIreneForm();
+      await loadIrene();
+    } catch (e) { alert('Save failed'); }
+  });
+  if (elements.ireneSearch) elements.ireneSearch.addEventListener('input', renderIrene);
+  const btnIreneCancel = document.getElementById('btn-irene-cancel');
+  if (btnIreneCancel) btnIreneCancel.addEventListener('click', hideIreneForm);
 
   // Delegation for clicks on list (ensure keyboard friendliness out of the box)
   elements.list.addEventListener('keydown', (e) => {

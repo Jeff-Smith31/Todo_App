@@ -32,6 +32,13 @@
   </header>
 
   <main class="container">
+    <!-- Tabs (visible when logged in) -->
+    <nav id="tabs" class="tabs hidden" aria-label="Sections">
+      <button id="tab-individual" class="tab active">Individual</button>
+      <button id="tab-irene" class="tab">Irene's</button>
+      <button id="tab-analytics" class="tab">Analytics</button>
+    </nav>
+
     <!-- Login Page -->
     <section id="page-login" class="panel">
       <h2>Welcome back</h2>
@@ -140,6 +147,62 @@
           <button type="button" class="btn" id="btn-cancel">Cancel</button>
         </div>
       </form>
+    </section>
+
+    <!-- Irene's Page (plus-only logging) -->
+    <section id="page-irene" class="panel hidden">
+      <div class="list-header">
+        <div class="title-and-search">
+          <h2>Irene's Tasks</h2>
+          <input id="irene-search" type="search" placeholder="Search tasks…">
+        </div>
+        <div class="filters">
+          <button id="btn-irene-create" class="btn primary">Add Task</button>
+        </div>
+      </div>
+      <div id="irene-list" class="task-list"></div>
+      <p id="irene-empty" class="empty">No tasks yet. Use "Add Task" to create one.</p>
+
+      <!-- Simple inline form modal substitute -->
+      <form id="irene-form" class="hidden" autocomplete="off" style="margin-top:12px">
+        <input type="hidden" id="irene-id">
+        <div class="grid">
+          <label>
+            <span>Title</span>
+            <input id="irene-title" type="text" placeholder="e.g., Dishes" required>
+          </label>
+          <label>
+            <span>Notes</span>
+            <input id="irene-notes" type="text" placeholder="Optional notes">
+          </label>
+          <label>
+            <span>Category</span>
+            <select id="irene-category"></select>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn primary" id="btn-irene-save">Save</button>
+          <button type="button" class="btn" id="btn-irene-cancel">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Analytics Page -->
+    <section id="page-analytics" class="panel hidden">
+      <div class="list-header">
+        <div class="title-and-search">
+          <h2>Analytics</h2>
+        </div>
+        <div class="filters">
+          <select id="analytics-range">
+            <option value="7">Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+          </select>
+        </div>
+      </div>
+      <canvas id="analytics-canvas" width="800" height="320" style="width:100%;height:auto;background:rgba(0,0,0,0.1);border-radius:12px"></canvas>
+      <p class="empty" id="analytics-empty" style="display:none">No data yet. Start logging tasks on Irene's tab.</p>
     </section>
   </main>
 
