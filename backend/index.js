@@ -636,21 +636,23 @@ async function scanAndNotify() {
       const tz = await getUserTz(userId);
       const userToday = ymdForTz(now, tz);
 
+      // Compute the exact due instant (in UTC ms) and the user-local YMD for that instant
+      const dueMs = dueUtcMsForTz(String(r.next_due), String(r.remind_at), tz);
+      const dueLocalYmd = ymdForTz(new Date(dueMs), tz);
+      const baseKey = `${r.next_due}T${r.remind_at}`;
+
       // Track summary counts (exclude tasks already completed today in user local time)
       const completedToday = r.last_completed ? (ymdForTz(new Date(r.last_completed), tz) === userToday) : false;
       if (!userCounts.has(userId)) userCounts.set(userId, { tz, todayYmd: userToday, dueCount: 0 });
-      if (String(r.next_due) === userToday && !completedToday) {
+      if (dueLocalYmd === userToday && !completedToday) {
         userCounts.get(userId).dueCount += 1;
       }
-
-      const dueMs = dueUtcMsForTz(String(r.next_due), String(r.remind_at), tz);
-      const baseKey = `${r.next_due}T${r.remind_at}`;
 
       // If completed today (user-local), skip all notifications for this task today
       if (completedToday) continue;
 
       // 1) Day-of (send once when it's the due date and before due time) in user-local day
-      if (String(r.next_due) === userToday && nowMs < dueMs) {
+      if (dueLocalYmd === userToday && nowMs < dueMs) {
         const key = `${baseKey}|day`;
         const sent = await notifWasSent(String(r.id), key);
         if (!sent) {
