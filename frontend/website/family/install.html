@@ -19,6 +19,20 @@
     button.secondary { background: transparent; border: 2px solid #94a3b8; color: #e2e8f0; box-shadow: none; margin-left: 10px; }
     #status { margin-top: 14px; font-size: 14px; color: #a5f3fc; min-height: 1.2em; }
   </style>
+  <script>
+    // Early-capture of beforeinstallprompt so we can prompt under user gesture
+    (function(){
+      try {
+        window.__famInstallBip = null;
+        window.addEventListener('beforeinstallprompt', function(e){
+          e.preventDefault();
+          window.__famInstallBip = e;
+          try { var b = document.getElementById('btn-install'); if (b) b.disabled = false; } catch {}
+        });
+        window.addEventListener('appinstalled', function(){ window.__famInstallBip = null; });
+      } catch {}
+    })();
+  </script>
 </head>
 <body>
   <div class="card">

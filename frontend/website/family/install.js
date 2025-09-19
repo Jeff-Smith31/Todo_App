@@ -13,10 +13,14 @@
     }).catch(()=>{});
   }
 
-  // Capture PWA install prompt
+  // Support early-captured event from install.html <head>
+  deferredPrompt = window.__famInstallBip || null;
+
+  // Capture PWA install prompt (in case early capture missed it)
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     deferredPrompt = e;
+    window.__famInstallBip = e;
     if (btnInstall) btnInstall.disabled = false;
     setStatus('Ready to install.');
   });
@@ -24,11 +28,38 @@
   // Installed event
   window.addEventListener('appinstalled', () => {
     setStatus('TTT Family installed!');
-    deferredPrompt = null;
+    deferredPrompt = null; window.__famInstallBip = null;
   });
 
   function isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent || ''); }
   function isInStandaloneMode(){ return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; }
+
+  // Auto-install intent via query param (?install=1)
+  const params = new URLSearchParams(location.search);
+  let wantInstall = params.get('install') === '1';
+  let hadGesture = false;
+  function onGesture(){
+    hadGesture = true;
+    if (wantInstall && deferredPrompt) { tryInstall(); }
+    document.removeEventListener('pointerdown', onGesture);
+    document.removeEventListener('click', onGesture, true);
+  }
+  document.addEventListener('pointerdown', onGesture, { once: true });
+  document.addEventListener('click', onGesture, true);
+
+  async function tryInstall(){
+    if (isIOS() && !isInStandaloneMode()) {
+      setStatus('On iOS: Tap the Share icon, then "Add to Home Screen" to install TTT Family.');
+      return;
+    }
+    if (!deferredPrompt && window.__famInstallBip) { deferredPrompt = window.__famInstallBip; }
+    if (deferredPrompt) {
+      try { deferredPrompt.prompt(); const { outcome } = await deferredPrompt.userChoice; setStatus(outcome === 'accepted' ? 'Installing…' : 'Install dismissed.'); } catch {}
+      deferredPrompt = null; window.__famInstallBip = null; wantInstall = false;
+    } else {
+      setStatus('If your browser did not offer Install, open the menu and choose "Install app" or "Add to Home screen".');
+    }
+  }
 
   if (btnInstall) {
     btnInstall.addEventListener('click', async () => {
@@ -37,18 +68,14 @@
         setStatus('On iOS: Tap the Share icon, then "Add to Home Screen" to install TTT Family.');
         return;
       }
-      if (deferredPrompt) {
-        try {
-          deferredPrompt.prompt();
-          const { outcome } = await deferredPrompt.userChoice;
-          setStatus(outcome === 'accepted' ? 'Installing…' : 'Install dismissed.');
-        } catch {}
-        deferredPrompt = null;
-      } else {
-        setStatus('If already installed, you can check for updates.');
-        tryUpdate();
-      }
+      wantInstall = true;
+      await tryInstall();
     });
+  }
+
+  if (wantInstall) {
+    // best-effort attempt shortly after load
+    setTimeout(() => { try { tryInstall(); } catch {} }, 300);
   }
 
   if (btnUpdate) {
@@ -76,5 +103,5 @@
   }
 
   // Small UX: disable install until prompt captured
-  if (btnInstall) btnInstall.disabled = true;
+  if (btnInstall) btnInstall.disabled = !deferredPrompt;
 })();
