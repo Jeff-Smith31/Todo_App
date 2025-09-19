@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 // SQLite removed. Using DynamoDB for persistence.
-import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES, famListTasks, famPutTask, famDeleteTask, famAddLog, famListLogs } from './dynamo.js';
+import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES } from './dynamo.js';
 import Joi from 'joi';
 import webpush from 'web-push';
 import fs from 'fs';
@@ -447,6 +447,42 @@ app.delete('/api/push/subscribe', authMiddleware, async (req, res) => {
 });
 
 // Send a test push notification to current user's subscriptions
+app.get('/api/push/diagnose', authMiddleware, async (req, res) => {
+  try {
+    const userId = String(req.user.id);
+    const subs = await listSubs(userId);
+    const tz = (subs.find(s => Number.isFinite(s.tzOffsetMinutes))?.tzOffsetMinutes) ?? 0;
+    // List tasks
+    const { QueryCommand } = await import('@aws-sdk/lib-dynamodb');
+    const r = await ddb.send(new QueryCommand({ TableName: TABLES.tasks, KeyConditionExpression: 'user_id = :u', ExpressionAttributeValues: { ':u': userId } }));
+    const items = r.Items || [];
+    const now = new Date();
+    const nowMs = now.getTime();
+    const windowStartMs = nowMs - SCAN_INTERVAL_MS;
+    const tasks = items.map(it => {
+      const dueMs = dueUtcMsForTz(String(it.next_due), String(it.remind_at), tz);
+      const dueLocalYmd = ymdForTz(new Date(dueMs), tz);
+      const oneHourBeforeMs = dueMs - 60*60*1000;
+      return {
+        id: it.id,
+        title: it.title,
+        next_due: it.next_due,
+        remind_at: it.remind_at,
+        tzOffsetMinutes: tz,
+        dueMs,
+        dueLocalYmd,
+        nowMs,
+        willSendHour: oneHourBeforeMs <= nowMs && oneHourBeforeMs > windowStartMs && nowMs < dueMs,
+        willSendDue: dueMs <= nowMs && dueMs > windowStartMs,
+      };
+    });
+    const redactedSubs = subs.map(s => ({ endpointSuffix: String(s.endpoint||'').slice(-16), tzOffsetMinutes: s.tzOffsetMinutes ?? null }));
+    res.json({ ok: true, tzOffsetMinutes: tz, subs: redactedSubs, tasks });
+  } catch (e) {
+    res.status(500).json({ error: 'diagnose failed' });
+  }
+});
+
 app.post('/api/push/test', authMiddleware, async (req, res) => {
   try {
     if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
@@ -596,6 +632,9 @@ async function sendPushToUser(userId, payloadObj) {
     }
   }
   pushLog('push_send_done', { userId: String(userId), subCount: subs.length, ok, failed, removed });
+  if (ok === 0 && failed > 0) {
+    pushLog('push_all_failed_for_user', { userId: String(userId), hint: 'All push attempts failed; if removed>0, clients must reopen app to re-subscribe.', removed });
+  }
 }
 
 async function scanAndNotify() {
@@ -640,6 +679,16 @@ async function scanAndNotify() {
       const dueMs = dueUtcMsForTz(String(r.next_due), String(r.remind_at), tz);
       const dueLocalYmd = ymdForTz(new Date(dueMs), tz);
       const baseKey = `${r.next_due}T${r.remind_at}`;
+      // Debug schedule log for visibility
+      pushLog('push_schedule_debug', {
+        userId,
+        taskId: String(r.id),
+        tzOffsetMinutes: tz,
+        nowMs,
+        dueMs,
+        dueLocalYmd,
+        userToday,
+      });
 
       // Track summary counts (exclude tasks already completed today in user local time)
       const completedToday = r.last_completed ? (ymdForTz(new Date(r.last_completed), tz) === userToday) : false;
@@ -651,23 +700,8 @@ async function scanAndNotify() {
       // If completed today (user-local), skip all notifications for this task today
       if (completedToday) continue;
 
-      // 1) Day-of (send once when it's the due date and before due time) in user-local day
-      if (dueLocalYmd === userToday && nowMs < dueMs) {
-        const key = `${baseKey}|day`;
-        const sent = await notifWasSent(String(r.id), key);
-        if (!sent) {
-          const body = (r.notes ? `${r.notes}\n` : '') + `Due today at ${r.remind_at}`;
-          await sendPushToUser(userId, {
-            type: 'task-day',
-            taskId: r.id,
-            title: `Today: ${r.title}`,
-            body,
-            icon: '/icons/logo.svg',
-            badge: '/icons/logo.svg',
-          });
-          await markNotifSent(String(r.id), key);
-        }
-      }
+      // 1) Day-of per-task notification removed to avoid batching at day start. Daily 8am summary covers awareness.
+      // Previously, a "day-of" notification could batch many tasks at local midnight. We rely on 8am summary + 1h + due-time.
 
       // 2) 1-hour warning
       const oneHourBeforeMs = dueMs - 60 * 60 * 1000;
@@ -839,100 +873,3 @@ function addDaysYmd(ymd, n) {
   dt.setDate(dt.getDate() + n);
   return ymdLocal(dt);
 }
-
-
-// --- TTT Family API ---
-const famTaskSchema = Joi.object({
-  id: Joi.string().optional(),
-  title: Joi.string().min(1).max(255).required(),
-  notes: Joi.string().allow('').max(1000).optional(),
-  category: Joi.string().allow('', 'Default').max(100).optional(),
-}).unknown(true);
-
-// List family tasks with simple total counts
-app.get('/api/family/tasks', authMiddleware, async (req, res) => {
-  try {
-    const owner = String(req.user.id);
-    const items = await famListTasks(owner);
-    // naive count aggregation over last 365 days
-    const now = new Date(); const from = new Date(now.getTime() - 365*24*60*60*1000).toISOString();
-    const logs = await famListLogs(owner, from, now.toISOString());
-    const counts = logs.reduce((m, l) => { m[l.task_id] = (m[l.task_id]||0)+1; return m; }, {});
-    const tasks = (items||[]).map(it => ({ id: it.id, title: it.title, notes: it.notes||'', category: it.category||'Default', count: counts[it.id]||0 }));
-    res.json({ tasks });
-  } catch (e) { res.status(500).json({ error: 'Failed to list tasks' }); }
-});
-
-// Create family task
-app.post('/api/family/tasks', authMiddleware, async (req, res) => {
-  try {
-    const { error, value } = famTaskSchema.validate(req.body||{});
-    if (error) return res.status(400).json({ error: error.message });
-    const owner = String(req.user.id);
-    const id = (value.id && String(value.id)) || cryptoRandomId();
-    await famPutTask({ owner_id: owner, id, title: value.title, notes: value.notes||'', category: value.category||'Default', created_at: new Date().toISOString() });
-    res.status(201).json({ id });
-  } catch (e) { res.status(500).json({ error: 'Failed to create task' }); }
-});
-
-app.delete('/api/family/tasks/:id', authMiddleware, async (req, res) => {
-  try { await famDeleteTask(String(req.user.id), String(req.params.id)); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: 'Failed to delete task' }); }
-});
-
-// Log a completion (+)
-app.post('/api/family/tasks/:id/complete', authMiddleware, async (req, res) => {
-  try {
-    const owner = String(req.user.id);
-    const taskId = String(req.params.id);
-    const ts = new Date().toISOString();
-    await famAddLog(owner, { task_id: taskId, user: String(req.user.email), ts });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: 'Failed to log completion' }); }
-});
-
-// Associations (list/set)
-app.get('/api/family/associations', authMiddleware, async (req, res) => {
-  try {
-    const { GetCommand } = await import('@aws-sdk/lib-dynamodb');
-    const r = await ddb.send(new GetCommand({ TableName: TABLES.users, Key: { email: String(req.user.id) } }));
-    const assoc = (r.Item && r.Item.family_associated) || [];
-    res.json({ emails: assoc });
-  } catch { res.json({ emails: [] }); }
-});
-
-app.post('/api/family/associations', authMiddleware, async (req, res) => {
-  try {
-    const emails = Array.isArray(req.body?.emails) ? req.body.emails.map(e => String(e).toLowerCase()).filter(Boolean) : [];
-    const { UpdateCommand } = await import('@aws-sdk/lib-dynamodb');
-    await ddb.send(new UpdateCommand({ TableName: TABLES.users, Key: { email: String(req.user.id) }, UpdateExpression: 'SET family_associated = :a', ExpressionAttributeValues: { ':a': emails } }));
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: 'Failed to save associations' }); }
-});
-
-// Analytics
-app.get('/api/family/analytics', authMiddleware, async (req, res) => {
-  try {
-    const owner = String(req.user.id);
-    const range = String(req.query.range || 'week');
-    const now = new Date();
-    const days = range === 'day' ? 1 : range === 'month' ? 30 : 7;
-    const from = new Date(now.getTime() - (days-1)*24*60*60*1000);
-    const labels = [];
-    for (let i = days-1; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate()-i);
-      labels.push(`${d.getMonth()+1}/${d.getDate()}`);
-    }
-    const logs = await famListLogs(owner, new Date(from.getFullYear(), from.getMonth(), from.getDate()).toISOString(), new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23,59,59,999).toISOString());
-    const users = {};
-    let max = 0;
-    for (const l of logs) {
-      const dt = new Date(l.ts);
-      const idx = days-1 - Math.floor((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()))/(24*60*60*1000));
-      if (idx < 0 || idx >= days) continue;
-      const u = String(l.user||'unknown');
-      if (!users[u]) users[u] = Array.from({length: days}, ()=>0);
-      users[u][idx] += 1; if (users[u][idx] > max) max = users[u][idx];
-    }
-    res.json({ labels, users, max });
-  } catch (e) { res.status(500).json({ error: 'Failed to compute analytics' }); }
-});

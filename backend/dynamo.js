@@ -10,8 +10,6 @@ export const TABLES = {
   push: `${TABLE_PREFIX}-push`,
   notifs: `${TABLE_PREFIX}-notifs`,
   config: `${TABLE_PREFIX}-config`,
-  family_tasks: `${TABLE_PREFIX}-family-tasks`,
-  family_logs: `${TABLE_PREFIX}-family-logs`,
 };
 
 const client = new DynamoDBClient({ region: REGION });
@@ -85,8 +83,6 @@ export async function ensureTables(){
     ensureTablePush(),
     ensureTableNotifs(),
     ensureTableConfig(),
-    ensureTableFamilyTasks(),
-    ensureTableFamilyLogs(),
   ]);
 }
 
@@ -132,52 +128,4 @@ export async function notifWasSent(task_id, due_key){
 }
 export async function markNotifSent(task_id, due_key){
   await ddb.send(new PutCommand({ TableName: TABLES.notifs, Item: { task_id, due_key, sent_at: new Date().toISOString() } }));
-}
-
-// Family tables
-async function ensureTableFamilyTasks(){
-  const TableName = TABLES.family_tasks;
-  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
-  await client.send(new CreateTableCommand({
-    TableName,
-    BillingMode: 'PAY_PER_REQUEST',
-    KeySchema: [ { AttributeName: 'owner_id', KeyType: 'HASH' }, { AttributeName: 'id', KeyType: 'RANGE' } ],
-    AttributeDefinitions: [ { AttributeName: 'owner_id', AttributeType: 'S' }, { AttributeName: 'id', AttributeType: 'S' } ],
-  }));
-}
-async function ensureTableFamilyLogs(){
-  const TableName = TABLES.family_logs;
-  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
-  await client.send(new CreateTableCommand({
-    TableName,
-    BillingMode: 'PAY_PER_REQUEST',
-    KeySchema: [ { AttributeName: 'owner_id', KeyType: 'HASH' }, { AttributeName: 'log_id', KeyType: 'RANGE' } ],
-    AttributeDefinitions: [ { AttributeName: 'owner_id', AttributeType: 'S' }, { AttributeName: 'log_id', AttributeType: 'S' } ],
-  }));
-}
-
-// Family helpers
-export async function famListTasks(owner_id){
-  const r = await ddb.send(new QueryCommand({ TableName: TABLES.family_tasks, KeyConditionExpression: 'owner_id = :o', ExpressionAttributeValues: { ':o': owner_id } }));
-  return r.Items || [];
-}
-export async function famPutTask(task){
-  await ddb.send(new PutCommand({ TableName: TABLES.family_tasks, Item: task }));
-}
-export async function famDeleteTask(owner_id, id){
-  await ddb.send(new DeleteCommand({ TableName: TABLES.family_tasks, Key: { owner_id, id } }));
-}
-export async function famAddLog(owner_id, log){
-  await ddb.send(new PutCommand({ TableName: TABLES.family_logs, Item: { ...log, owner_id, log_id: log.log_id || (Date.now()+':' + Math.random().toString(36).slice(2)) } }));
-}
-export async function famListLogs(owner_id, fromIso, toIso){
-  // naive scan by prefix window; relying on RANGE log_id starting with epoch to allow between comparisons
-  const fromKey = (new Date(fromIso).getTime())+':';
-  const toKey = (new Date(toIso).getTime()+1)+':~';
-  const r = await ddb.send(new QueryCommand({
-    TableName: TABLES.family_logs,
-    KeyConditionExpression: 'owner_id = :o AND log_id BETWEEN :a AND :b',
-    ExpressionAttributeValues: { ':o': owner_id, ':a': fromKey, ':b': toKey }
-  }));
-  return r.Items || [];
 }
