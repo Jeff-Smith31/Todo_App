@@ -740,12 +740,13 @@ async function scanAndNotify() {
         }
       }
 
-      // 4) Missed (trigger if due is at least one scan window in the past)
-      if (dueMs <= windowStartMs) {
-        const key = `${baseKey}|missed`;
+      // 4) Missed carry-forward: only roll on the NEXT LOCAL DAY
+      // If the stored due local date is before the user's current local date, carry it forward to TODAY and mark priority.
+      if (dueLocalYmd < userToday) {
+        const key = `${baseKey}|missed|${userToday}`;
         const sent = await notifWasSent(String(r.id), key);
         if (!sent) {
-          const newDue = addDaysYmd(String(r.next_due), 1);
+          const newDue = userToday;
           // Update task next_due and priority=true
           try {
             await ddb.send(new UpdateCommand({
@@ -757,7 +758,7 @@ async function scanAndNotify() {
           } catch (e) {
             console.error('scanAndNotify: failed to roll missed task', r.id, e?.message || e);
           }
-          const body = (r.notes ? `${r.notes}\n` : '') + `Missed. New deadline: same time tomorrow`;
+          const body = (r.notes ? `${r.notes}\n` : '') + `Missed. New deadline: today at ${String(r.remind_at)}`;
           await sendPushToUser(userId, {
             type: 'task-missed',
             taskId: r.id,

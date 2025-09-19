@@ -839,30 +839,24 @@
 
   // Missed tasks handling: if due time has passed without completion, move to next day and mark priority
   function handleMissedTasks(){
-    // In local-only mode, roll missed tasks and show a local notification about new deadline.
-    if (BACKEND_URL && isAuthed) return; // backend handles missed
+    // Local-only behavior: Do NOT roll within the same day. Keep task due today (white) and just show Overdue badge.
+    // Only when we are on a later day than the stored nextDue, carry the task forward to TODAY and mark priority.
+    if (BACKEND_URL && isAuthed) return; // backend handles missed in server mode
     const now = new Date();
+    const today = dateToYMD(now);
     let changed = false;
     for (const t of tasks){
-      const dueDt = parseDueDateTime(t.nextDue, t.remindAt);
-      if (dueDt.getTime() < now.getTime()){
-        // de-dup missed notification by base key
-        const baseKey = `${t.nextDue}T${t.remindAt}|missed`;
-        if (!settings.sent) settings.sent = {};
-        if (!settings.sent[baseKey]){
-          // Show local missed notification if permission is granted
-          try {
-            if (typeof Notification !== 'undefined' && Notification.permission === 'granted'){
-              const body = (t.notes ? `${t.notes}\n` : '') + `Missed. New deadline: tomorrow at ${t.remindAt}`;
-              new Notification(`Missed: ${t.title}`, { body, icon: 'icons/logo.svg', badge: 'icons/logo.svg', tag: `task-${t.id}` });
-            }
-          } catch {}
-          settings.sent[baseKey] = true;
-          saveSettings();
-        }
-        // Move to next day and mark priority
-        const nextDay = addDays(t.nextDue, 1);
-        t.nextDue = nextDay;
+      const dueYmd = t.nextDue;
+      // If due date is before today (local), carry it forward to today and mark priority
+      if (isDueTodayRawDateStr(dueYmd, today)) {
+        // Still the same day → do nothing (stay white, may show Overdue if time passed)
+        continue;
+      }
+      // Compare local YMD values safely
+      const dueLocal = parseLocalYMD(dueYmd);
+      const todayLocal = parseLocalYMD(today);
+      if (dueLocal.getTime() < todayLocal.getTime()){
+        t.nextDue = today;
         t.priority = true;
         changed = true;
       }
