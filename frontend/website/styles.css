@@ -145,8 +145,11 @@ details.category-section > summary {
     font-size: 12px;
     border-radius: 8px;
   }
-  /* Slightly smaller task fonts on mobile */
-  .task-item .title { font-size: 14px; }
+  /* Unified background under the navbar on mobile */
+  body { background: var(--bg) !important; }
+  .app-header { background: var(--bg) !important; backdrop-filter: none; }
+  /* Slightly smaller task fonts on mobile and brighter titles */
+  .task-item .title { font-size: 14px; color: #ffffff; }
   .task-item .notes { font-size: 12px; }
   .task-item .meta { font-size: 11px; }
 }
