@@ -1092,9 +1092,11 @@
     return new Date(y, mo-1, da, h||0, m||0, 0, 0);
   }
   function addDays(dateStr, n){
-    const d = new Date(dateStr);
-    d.setDate(d.getDate() + n);
-    return dateToYMD(d);
+    // Parse YYYY-MM-DD as a LOCAL date to avoid UTC off-by-one errors
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    const dt = new Date(Number.isFinite(y)?y:1970, (Number.isFinite(m)?m:1)-1, Number.isFinite(d)?d:1, 0, 0, 0, 0);
+    dt.setDate(dt.getDate() + n);
+    return dateToYMD(dt);
   }
   function isOverdue(t){
     const now = new Date();
@@ -1105,13 +1107,17 @@
     const today = todayStr();
     return isDueTodayRawDateStr(t.nextDue, today);
   }
+  function parseLocalYMD(ymd){
+    const [y, m, d] = String(ymd).split('-').map(Number);
+    return new Date(Number.isFinite(y)?y:1970, (Number.isFinite(m)?m:1)-1, Number.isFinite(d)?d:1, 0, 0, 0, 0);
+  }
   function isDueTodayRawDateStr(target, today){
-    // Be robust against string formatting/whitespace and always interpret as local date
+    // Interpret YYYY-MM-DD strings as LOCAL dates to avoid UTC off-by-one issues
     try {
-      const ymd = dateToYMD(new Date(String(target)));
-      return ymd === today;
+      const ymd = dateToYMD(parseLocalYMD(target));
+      return ymd === String(today).trim();
     } catch {
-      return String(target).trim() === today;
+      return String(target).trim() === String(today).trim();
     }
   }
   function formatDate(dateStr){
