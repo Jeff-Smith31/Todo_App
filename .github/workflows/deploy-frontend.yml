@@ -115,6 +115,10 @@ jobs:
               --include "icons/*" \
               --include "manifest.webmanifest" \
               --cache-control "public,max-age=31536000,immutable"
+            # Ensure correct MIME type for the Family manifest
+            if [ -f frontend/family_mobile/manifest.webmanifest ]; then
+              aws s3 cp frontend/family_mobile/manifest.webmanifest s3://$BUCKET/family/manifest.webmanifest --cache-control "public,max-age=31536000,immutable" --content-type "application/manifest+json"
+            fi
             # Upload app.js with no-cache
             if [ -f frontend/family_mobile/app.js ]; then
               aws s3 cp frontend/family_mobile/app.js s3://$BUCKET/family/app.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
@@ -153,6 +157,10 @@ jobs:
           if [ -f frontend/website/styles.css ]; then
             aws s3 cp frontend/website/styles.css s3://$BUCKET/styles.css --cache-control "no-cache, no-store, must-revalidate" --content-type "text/css; charset=utf-8"
           fi
+          # Ensure correct MIME for main manifest
+          if [ -f frontend/website/manifest.webmanifest ]; then
+            aws s3 cp frontend/website/manifest.webmanifest s3://$BUCKET/manifest.webmanifest --cache-control "public,max-age=31536000,immutable" --content-type "application/manifest+json"
+          fi
 
           # Ensure app-version.js exists to avoid SPA 404→index.html MIME trap
           if [ ! -f frontend/website/app-version.js ]; then
@@ -181,6 +189,8 @@ jobs:
             "/family/config.js" \
             "/family/install.html" \
             "/family/install.js" \
+            "/family/manifest.webmanifest" \
+            "/manifest.webmanifest" \
             "/sw.js" \
             "/config.js" \
             "/app-version.js"
