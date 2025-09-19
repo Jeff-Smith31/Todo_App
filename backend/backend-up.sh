@@ -39,6 +39,7 @@ if [ ! -f "$ENV_FILE" ]; then
     echo "JWT_SECRET=${JWT_SECRET_VAL}"
     echo "WEB_PUSH_PUBLIC_KEY=${WEB_PUSH_PUBLIC_KEY:-}"
     echo "WEB_PUSH_PRIVATE_KEY=${WEB_PUSH_PRIVATE_KEY:-}"
+    echo "DDB_TABLE_PREFIX=${DDB_TABLE_PREFIX:-ttt}"
   } > "$ENV_FILE"
 else
   # Update CORS_ORIGIN if provided

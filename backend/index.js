@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 // SQLite removed. Using DynamoDB for persistence.
-import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES } from './dynamo.js';
+import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES, famListTasks, famPutTask, famDeleteTask, famAddLog, famListLogs } from './dynamo.js';
 import Joi from 'joi';
 import webpush from 'web-push';
 import fs from 'fs';
@@ -839,3 +839,100 @@ function addDaysYmd(ymd, n) {
   dt.setDate(dt.getDate() + n);
   return ymdLocal(dt);
 }
+
+
+// --- TTT Family API ---
+const famTaskSchema = Joi.object({
+  id: Joi.string().optional(),
+  title: Joi.string().min(1).max(255).required(),
+  notes: Joi.string().allow('').max(1000).optional(),
+  category: Joi.string().allow('', 'Default').max(100).optional(),
+}).unknown(true);
+
+// List family tasks with simple total counts
+app.get('/api/family/tasks', authMiddleware, async (req, res) => {
+  try {
+    const owner = String(req.user.id);
+    const items = await famListTasks(owner);
+    // naive count aggregation over last 365 days
+    const now = new Date(); const from = new Date(now.getTime() - 365*24*60*60*1000).toISOString();
+    const logs = await famListLogs(owner, from, now.toISOString());
+    const counts = logs.reduce((m, l) => { m[l.task_id] = (m[l.task_id]||0)+1; return m; }, {});
+    const tasks = (items||[]).map(it => ({ id: it.id, title: it.title, notes: it.notes||'', category: it.category||'Default', count: counts[it.id]||0 }));
+    res.json({ tasks });
+  } catch (e) { res.status(500).json({ error: 'Failed to list tasks' }); }
+});
+
+// Create family task
+app.post('/api/family/tasks', authMiddleware, async (req, res) => {
+  try {
+    const { error, value } = famTaskSchema.validate(req.body||{});
+    if (error) return res.status(400).json({ error: error.message });
+    const owner = String(req.user.id);
+    const id = (value.id && String(value.id)) || cryptoRandomId();
+    await famPutTask({ owner_id: owner, id, title: value.title, notes: value.notes||'', category: value.category||'Default', created_at: new Date().toISOString() });
+    res.status(201).json({ id });
+  } catch (e) { res.status(500).json({ error: 'Failed to create task' }); }
+});
+
+app.delete('/api/family/tasks/:id', authMiddleware, async (req, res) => {
+  try { await famDeleteTask(String(req.user.id), String(req.params.id)); res.json({ ok: true }); } catch (e) { res.status(500).json({ error: 'Failed to delete task' }); }
+});
+
+// Log a completion (+)
+app.post('/api/family/tasks/:id/complete', authMiddleware, async (req, res) => {
+  try {
+    const owner = String(req.user.id);
+    const taskId = String(req.params.id);
+    const ts = new Date().toISOString();
+    await famAddLog(owner, { task_id: taskId, user: String(req.user.email), ts });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to log completion' }); }
+});
+
+// Associations (list/set)
+app.get('/api/family/associations', authMiddleware, async (req, res) => {
+  try {
+    const { GetCommand } = await import('@aws-sdk/lib-dynamodb');
+    const r = await ddb.send(new GetCommand({ TableName: TABLES.users, Key: { email: String(req.user.id) } }));
+    const assoc = (r.Item && r.Item.family_associated) || [];
+    res.json({ emails: assoc });
+  } catch { res.json({ emails: [] }); }
+});
+
+app.post('/api/family/associations', authMiddleware, async (req, res) => {
+  try {
+    const emails = Array.isArray(req.body?.emails) ? req.body.emails.map(e => String(e).toLowerCase()).filter(Boolean) : [];
+    const { UpdateCommand } = await import('@aws-sdk/lib-dynamodb');
+    await ddb.send(new UpdateCommand({ TableName: TABLES.users, Key: { email: String(req.user.id) }, UpdateExpression: 'SET family_associated = :a', ExpressionAttributeValues: { ':a': emails } }));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to save associations' }); }
+});
+
+// Analytics
+app.get('/api/family/analytics', authMiddleware, async (req, res) => {
+  try {
+    const owner = String(req.user.id);
+    const range = String(req.query.range || 'week');
+    const now = new Date();
+    const days = range === 'day' ? 1 : range === 'month' ? 30 : 7;
+    const from = new Date(now.getTime() - (days-1)*24*60*60*1000);
+    const labels = [];
+    for (let i = days-1; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate()-i);
+      labels.push(`${d.getMonth()+1}/${d.getDate()}`);
+    }
+    const logs = await famListLogs(owner, new Date(from.getFullYear(), from.getMonth(), from.getDate()).toISOString(), new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23,59,59,999).toISOString());
+    const users = {};
+    let max = 0;
+    for (const l of logs) {
+      const dt = new Date(l.ts);
+      const idx = days-1 - Math.floor((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()))/(24*60*60*1000));
+      if (idx < 0 || idx >= days) continue;
+      const u = String(l.user||'unknown');
+      if (!users[u]) users[u] = Array.from({length: days}, ()=>0);
+      users[u][idx] += 1; if (users[u][idx] > max) max = users[u][idx];
+    }
+    res.json({ labels, users, max });
+  } catch (e) { res.status(500).json({ error: 'Failed to compute analytics' }); }
+});

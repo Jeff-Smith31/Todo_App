@@ -90,3 +90,20 @@ This project is licensed under the MIT License. See LICENSE for details.
 Backend status quick check
 - scripts/check-backend.sh https://api.ticktocktasks.com
 - Or via npm: BACKEND_URL=https://api.ticktocktasks.com npm run check:backend
+
+
+## TTT Family app:
+
+- Code location
+  - API routes: backend/index.js (section marked `--- TTT Family API ---`). Endpoints include:
+    - GET /api/family/tasks
+    - POST /api/family/tasks
+    - DELETE /api/family/tasks/:id
+    - POST /api/family/tasks/:id/complete
+    - GET /api/family/associations
+    - POST /api/family/associations
+    - GET /api/family/analytics?range=day|week|month
+  - Data tables (DynamoDB): backend/dynamo.js defines tables created automatically on startup:
+    - <prefix>-family-tasks
+    - <prefix>-family-logs
+    - The prefix is controlled by env var DDB_TABLE_PREFIX (default: `ttt`).
