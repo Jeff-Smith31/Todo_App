@@ -16,6 +16,8 @@
     $('#btn-add-task').addEventListener('click', onAddTask);
     $('#btn-login').addEventListener('click', loginPrompt);
     if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('/sw.js'); } catch {} }
+    // Hook up install flow for the Family app page itself
+    setupInstallUi();
     render();
     if (authToken) { await fetchMe(); await loadTasks(); }
     $('#btn-refresh').addEventListener('click', () => refreshAnalytics());
@@ -81,6 +83,52 @@
       $('#tab-analytics').style.display = tab==='analytics'?'' : 'none';
       if (tab==='analytics') refreshAnalytics();
     }));
+  }
+
+  function setupInstallUi(){
+    const btn = document.getElementById('btn-install');
+    if (!btn) return;
+    const params = new URLSearchParams(location.search);
+    const autoInstall = params.get('install') === '1';
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', async (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      btn.disabled = false;
+      if (autoInstall) {
+        try { await tryInstall(); } catch {}
+      }
+    });
+    btn.disabled = true;
+
+    async function tryInstall(){
+      const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent||'');
+      const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+      if (isiOS && !standalone) {
+        alert('On iPhone/iPad: Tap the Share icon, then "Add to Home Screen" to install TTT Family.');
+        return;
+      }
+      if (deferredPrompt) {
+        try { deferredPrompt.prompt(); await deferredPrompt.userChoice; } catch {}
+        deferredPrompt = null;
+      } else {
+        // If we don't yet have a prompt (e.g., Chrome hasn’t fired it), focus the button and show guidance
+        btn.focus();
+        alert('If your browser did not offer Install, open the menu and choose "Install app" or "Add to Home screen".');
+      }
+    }
+
+    // Button click handler
+    btn.addEventListener('click', tryInstall);
+
+    // On initial load with ?install=1 on iOS not in standalone, immediately guide the user
+    if (autoInstall) {
+      const isiOS = /iphone|ipad|ipod/i.test(navigator.userAgent||'');
+      const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+      if (isiOS && !standalone) {
+        alert('On iPhone/iPad: Tap the Share icon, then "Add to Home Screen" to install TTT Family.');
+      }
+    }
   }
 
   function authHeaders(){ const h = { 'Content-Type': 'application/json' }; if (authToken) h.Authorization = 'Bearer ' + authToken; return h; }
