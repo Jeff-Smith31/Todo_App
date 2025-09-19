@@ -1106,7 +1106,13 @@
     return isDueTodayRawDateStr(t.nextDue, today);
   }
   function isDueTodayRawDateStr(target, today){
-    return target === today;
+    // Be robust against string formatting/whitespace and always interpret as local date
+    try {
+      const ymd = dateToYMD(new Date(String(target)));
+      return ymd === today;
+    } catch {
+      return String(target).trim() === today;
+    }
   }
   function formatDate(dateStr){
     const d = new Date(dateStr);
