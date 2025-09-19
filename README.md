@@ -107,3 +107,23 @@ Backend status quick check
     - <prefix>-family-tasks
     - <prefix>-family-logs
     - The prefix is controlled by env var DDB_TABLE_PREFIX (default: `ttt`).
+
+### Run the TTT Family app locally (preview on your laptop/phone)
+
+- Quick preview (no backend required):
+  1) Start the local dev server that serves the main site and the Family app together:
+     - node scripts/serve-family.js --port 8000
+  2) Open the Family app in your browser/phone:
+     - http://localhost:8000/family/
+  3) You can install it as a PWA from Chrome (⋮ → Install app) or Add to Home Screen on iOS.
+
+- Optional: Connect to a local backend for login and data
+  1) Start the backend in Docker (self-signed HTTPS):
+     - bash backend/backend-up.sh http://localhost:8000
+  2) Start the dev server and point the Family app to that backend:
+     - node scripts/serve-family.js --port 8000 --backend https://localhost:8443
+  3) Open http://localhost:8000/family/ and use Login. You may need to trust the self-signed cert once by visiting https://localhost:8443 in your browser.
+
+Notes
+- The dev server sets /family/config.js at runtime, so you don’t need to edit any files to switch backends.
+- Service worker is served from the site root (/sw.js) to match production behavior. If you need to hard-refresh updates, use the Update button in the UI or do a “Empty cache and hard reload” in DevTools.

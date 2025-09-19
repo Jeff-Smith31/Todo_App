@@ -14,16 +14,77 @@
 
   document.addEventListener('DOMContentLoaded', init);
 
+  const STAY_KEY = 'ttf_stay_logged_in';
+
   async function init(){
     bindTabs();
-    $('#btn-add-task').addEventListener('click', onAddTask);
-    $('#btn-login').addEventListener('click', loginPrompt);
+    // Service worker at root for full scope
     if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('/sw.js'); } catch {} }
     // Hook up install flow for the Family app page itself
     setupInstallUi();
-    render();
-    if (authToken) { await fetchMe(); await loadTasks(); try { if (user && isMobile() && typeof Notification !== 'undefined' && Notification.permission === 'granted') { await ensurePushSubscribed(); } } catch {} }
-    $('#btn-refresh').addEventListener('click', () => refreshAnalytics());
+
+    // Wire Family UI actions
+    const btnAdd = $('#btn-add-task'); if (btnAdd) btnAdd.addEventListener('click', onAddTask);
+    const btnRefresh = $('#btn-refresh'); if (btnRefresh) btnRefresh.addEventListener('click', () => refreshAnalytics());
+
+    // Auth UI
+    const emailEl = $('#auth-email');
+    const passEl = $('#auth-password');
+    const stayEl = $('#stay-logged-in'); if (stayEl) stayEl.checked = localStorage.getItem(STAY_KEY) === 'true';
+    const btnLogin = $('#btn-login');
+    const btnRegister = $('#btn-register');
+    const btnLogout = $('#btn-logout');
+
+    function updateAuthUi(authed){
+      const pageLogin = document.getElementById('page-login');
+      const pageFam = document.getElementById('page-family');
+      if (authed) {
+        if (btnLogout) btnLogout.style.display = 'inline-block';
+        if (pageLogin) pageLogin.classList.add('hidden');
+        if (pageFam) pageFam.classList.remove('hidden');
+      } else {
+        if (btnLogout) btnLogout.style.display = 'none';
+        if (pageFam) pageFam.classList.add('hidden');
+        if (pageLogin) pageLogin.classList.remove('hidden');
+      }
+    }
+
+    if (btnLogin) btnLogin.addEventListener('click', async () => {
+      try {
+        const stay = !!(stayEl && stayEl.checked);
+        localStorage.setItem(STAY_KEY, stay ? 'true' : 'false');
+        const data = await call('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: emailEl.value, password: passEl.value }) });
+        if (data && data.token) { authToken = data.token; localStorage.setItem('ttf_auth', authToken); user = data.user; }
+        updateAuthUi(!!user);
+        await loadTasks();
+        try { if (isMobile() && typeof Notification !== 'undefined' && Notification.permission === 'granted') { await ensurePushSubscribed(); await maybeTestPush('login'); } } catch {}
+      } catch (e) { alert(e.message || 'Login failed'); }
+    });
+
+    if (btnRegister) btnRegister.addEventListener('click', async () => {
+      try {
+        const stay = !!(stayEl && stayEl.checked);
+        localStorage.setItem(STAY_KEY, stay ? 'true' : 'false');
+        const data = await call('/api/auth/register', { method: 'POST', body: JSON.stringify({ email: emailEl.value, password: passEl.value }) });
+        if (data && data.token) { authToken = data.token; localStorage.setItem('ttf_auth', authToken); user = data.user; }
+        updateAuthUi(!!user);
+        await loadTasks();
+        try { if (isMobile() && typeof Notification !== 'undefined' && Notification.permission === 'granted') { await ensurePushSubscribed(); await maybeTestPush('register'); } } catch {}
+      } catch (e) { alert(e.message || 'Registration failed'); }
+    });
+
+    if (btnLogout) btnLogout.addEventListener('click', async () => {
+      try { await unsubscribePush(); } catch {}
+      try { await call('/api/auth/logout', { method:'POST' }); } catch {}
+      localStorage.setItem(STAY_KEY, 'false');
+      authToken = ''; localStorage.removeItem('ttf_auth'); user = null;
+      tasks = []; render(); updateAuthUi(false);
+    });
+
+    // Initialize auth state
+    if (authToken) { await fetchMe(); }
+    updateAuthUi(!!user);
+    if (user) { await loadTasks(); }
 
     // Setup Update button behavior and version polling (match main app functionality)
     setupVersionUiAndUpdater();
