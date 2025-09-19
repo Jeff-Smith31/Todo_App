@@ -665,10 +665,16 @@
         // Grey out tasks that are not due today (future) without crossing out; keep overdue and today normal prominence
         const dueToday = isDueToday(t);
         const overdue = isOverdue(t);
+        // Highlight due-today (uncompleted) items and grey out only future (not-today) ones
         if (!completedToday && !overdue && !dueToday) {
           node.classList.add('not-today');
         } else {
           node.classList.remove('not-today');
+        }
+        if (!completedToday && dueToday && !overdue) {
+          node.classList.add('due-today-item');
+        } else {
+          node.classList.remove('due-today-item');
         }
 
         checkbox.addEventListener('change', () => toggleComplete(t.id, checkbox.checked));

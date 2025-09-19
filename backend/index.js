@@ -35,47 +35,12 @@ const COOKIE_SECURE = NODE_ENV === 'production';
 let ACTIVE_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || '';
 let ACTIVE_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || '';
 
-// Persist VAPID keys on disk so they don't rotate across restarts when env vars are not set.
+// VAPID keys will be initialized after DynamoDB tables are ensured via initVapid() below.
 const VAPID_FILE = './vapid.json';
-if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
-  try {
-    if (fs.existsSync(VAPID_FILE)) {
-      try {
-        const parsed = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8')) || {};
-        if (parsed.publicKey && parsed.privateKey) {
-          ACTIVE_PUBLIC_KEY = parsed.publicKey;
-          ACTIVE_PRIVATE_KEY = parsed.privateKey;
-        }
-      } catch (e) {
-        console.warn('[push] Failed to read persisted VAPID file:', e?.message || e);
-      }
-    }
-    if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
-      const gen = webpush.generateVAPIDKeys();
-      ACTIVE_PUBLIC_KEY = gen.publicKey;
-      ACTIVE_PRIVATE_KEY = gen.privateKey;
-      try {
-        fs.writeFileSync(VAPID_FILE, JSON.stringify({ publicKey: ACTIVE_PUBLIC_KEY, privateKey: ACTIVE_PRIVATE_KEY }, null, 2));
-      } catch (e) {
-        console.warn('[push] Failed to persist VAPID keys to disk:', e?.message || e);
-      }
-      console.warn('[push] WEB_PUSH_* not set. Generated and persisted VAPID keys to vapid.json.');
-    }
-    // Expose for child modules/diagnostics in this process
-    process.env.WEB_PUSH_PUBLIC_KEY = ACTIVE_PUBLIC_KEY;
-    process.env.WEB_PUSH_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
-  } catch (e) {
-    console.error('[push] Failed to prepare VAPID keys:', e?.message || e);
-  }
-}
 
-if (ACTIVE_PUBLIC_KEY && ACTIVE_PRIVATE_KEY) {
-  webpush.setVapidDetails(`mailto:admin@ticktocktasks.com`, ACTIVE_PUBLIC_KEY, ACTIVE_PRIVATE_KEY);
-}
-
-// Back-compat constants used later in the file
-const VAPID_PUBLIC_KEY = ACTIVE_PUBLIC_KEY;
-const VAPID_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
+// Back-compat constants used later in the file (will be updated by initVapid)
+let VAPID_PUBLIC_KEY = ACTIVE_PUBLIC_KEY;
+let VAPID_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
 
 // Structured logging helper for CloudWatch Logs ingestion
 // This creates a dedicated log group/stream and ships push-related logs to CloudWatch Logs,
@@ -170,6 +135,73 @@ function pushLog(event, details) {
 
 // DB setup → DynamoDB (ensure tables once at startup)
 await ensureTables().catch((e)=>{ console.error('DynamoDB ensureTables failed', e); });
+
+// Initialize VAPID keys from ENV → DynamoDB → file → generate, then configure webpush
+async function initVapid(){
+  try {
+    // 1) ENV wins
+    if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
+      // 2) Try DynamoDB config table (ttt-config, key='vapid')
+      try {
+        const { GetCommand, PutCommand } = await import('@aws-sdk/lib-dynamodb');
+        const key = { TableName: TABLES.config || `${(process.env.DDB_TABLE_PREFIX||'ttt')}-config`, Key: { key: 'vapid' } };
+        const r = await ddb.send(new GetCommand(key));
+        const item = r.Item;
+        if (item && item.publicKey && item.privateKey) {
+          ACTIVE_PUBLIC_KEY = item.publicKey;
+          ACTIVE_PRIVATE_KEY = item.privateKey;
+        }
+        // If still missing, try file next; if we generate, persist to DDB too
+        if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
+          // 3) File fallback
+          if (fs.existsSync(VAPID_FILE)) {
+            try {
+              const parsed = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8')) || {};
+              if (parsed.publicKey && parsed.privateKey) {
+                ACTIVE_PUBLIC_KEY = parsed.publicKey;
+                ACTIVE_PRIVATE_KEY = parsed.privateKey;
+              }
+            } catch (e) {
+              console.warn('[push] Failed to read persisted VAPID file:', e?.message || e);
+            }
+          }
+          // 4) Generate new keys and persist to both DDB and file
+          if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
+            const gen = webpush.generateVAPIDKeys();
+            ACTIVE_PUBLIC_KEY = gen.publicKey;
+            ACTIVE_PRIVATE_KEY = gen.privateKey;
+            try {
+              const put = new PutCommand({ TableName: TABLES.config || `${(process.env.DDB_TABLE_PREFIX||'ttt')}-config`, Item: { key: 'vapid', publicKey: ACTIVE_PUBLIC_KEY, privateKey: ACTIVE_PRIVATE_KEY, updated_at: new Date().toISOString() } });
+              await ddb.send(put);
+            } catch (e) {
+              console.warn('[push] Failed to persist VAPID keys to DynamoDB:', e?.message || e);
+            }
+            try {
+              fs.writeFileSync(VAPID_FILE, JSON.stringify({ publicKey: ACTIVE_PUBLIC_KEY, privateKey: ACTIVE_PRIVATE_KEY }, null, 2));
+            } catch (e) {
+              console.warn('[push] Failed to persist VAPID keys to disk:', e?.message || e);
+            }
+            console.warn('[push] WEB_PUSH_* not set. Generated and persisted VAPID keys to DynamoDB and vapid.json.');
+          }
+        }
+      } catch (e) {
+        console.warn('[push] DynamoDB VAPID init warning:', e?.message || e);
+      }
+    }
+
+    // Expose and configure webpush
+    if (ACTIVE_PUBLIC_KEY && ACTIVE_PRIVATE_KEY) {
+      process.env.WEB_PUSH_PUBLIC_KEY = ACTIVE_PUBLIC_KEY;
+      process.env.WEB_PUSH_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
+      webpush.setVapidDetails(`mailto:admin@ticktocktasks.com`, ACTIVE_PUBLIC_KEY, ACTIVE_PRIVATE_KEY);
+      VAPID_PUBLIC_KEY = ACTIVE_PUBLIC_KEY;
+      VAPID_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
+    }
+  } catch (e) {
+    console.error('[push] Failed to prepare VAPID keys:', e?.message || e);
+  }
+}
+await initVapid();
 
 // Security middleware
 app.use(helmet());
@@ -555,7 +587,8 @@ async function sendPushToUser(userId, payloadObj) {
       pushLog('push_send_error', { userId: String(userId), endpointSuffix, status, error: String(message || e) });
       // Detect VAPID mismatch (403) which indicates server keys differ from those used when the client subscribed
       if (status === 403 && String(message).toLowerCase().includes('vapid')) {
-        pushLog('push_vapid_mismatch', { userId: String(userId), endpointSuffix, hint: 'Server VAPID keys differ from subscription. Client will auto-resubscribe on next app load.' });
+        pushLog('push_vapid_mismatch', { userId: String(userId), endpointSuffix, hint: 'Server VAPID keys differ from subscription. Removing stale sub; client will auto-resubscribe on next app load.' });
+        try { await delSub(String(userId), endpoint); removed++; pushLog('push_sub_removed', { userId: String(userId), endpointSuffix, reason: 'vapid_mismatch' }); } catch {}
       }
       if (status === 404 || status === 410 || String(message).toLowerCase().includes('gone')) {
         try { await delSub(String(userId), endpoint); removed++; pushLog('push_sub_removed', { userId: String(userId), endpointSuffix, reason: 'gone' }); } catch {}

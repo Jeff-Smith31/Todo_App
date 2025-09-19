@@ -114,6 +114,15 @@ input::placeholder { color: #8b93b3; }
   opacity: 0.6;
 }
 
+/* Make uncompleted due-today tasks brighter for clear contrast */
+.task-item.due-today-item {
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.24);
+}
+.task-item.due-today-item .title {
+  color: #ffffff;
+}
+
 /* Category header layout: ensure actions don't overlap and list can span full width */
 details.category-section > summary {
   display: flex;

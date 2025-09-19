@@ -9,6 +9,7 @@ export const TABLES = {
   tasks: `${TABLE_PREFIX}-tasks`,
   push: `${TABLE_PREFIX}-push`,
   notifs: `${TABLE_PREFIX}-notifs`,
+  config: `${TABLE_PREFIX}-config`,
 };
 
 const client = new DynamoDBClient({ region: REGION });
@@ -64,12 +65,24 @@ async function ensureTableNotifs(){
   }));
 }
 
+async function ensureTableConfig(){
+  const TableName = TABLES.config;
+  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
+  await client.send(new CreateTableCommand({
+    TableName,
+    BillingMode: 'PAY_PER_REQUEST',
+    KeySchema: [ { AttributeName: 'key', KeyType: 'HASH' } ],
+    AttributeDefinitions: [ { AttributeName: 'key', AttributeType: 'S' } ],
+  }));
+}
+
 export async function ensureTables(){
   await Promise.all([
     ensureTableUsers(),
     ensureTableTasks(),
     ensureTablePush(),
     ensureTableNotifs(),
+    ensureTableConfig(),
   ]);
 }
 
