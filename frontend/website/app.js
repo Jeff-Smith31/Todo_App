@@ -1115,8 +1115,19 @@
     }
   }
   function formatDate(dateStr){
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    try {
+      const [y, m, d] = String(dateStr).split('-').map(Number);
+      if (Number.isFinite(y) && Number.isFinite(m) && Number.isFinite(d)) {
+        // Interpret YYYY-MM-DD as a LOCAL date to avoid UTC off-by-one when displaying
+        const local = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+        return local.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+      }
+    } catch {}
+    // Fallback: try native Date parsing, or return raw string
+    try {
+      const dt = new Date(dateStr);
+      return dt.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch { return String(dateStr); }
   }
   function formatTime(timeStr){
     const [h,m] = timeStr.split(':').map(Number);
