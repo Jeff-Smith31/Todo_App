@@ -54,6 +54,7 @@
     tabIndividual: $('#tab-individual'),
     tabIrene: $('#tab-irene'),
     tabAnalytics: $('#tab-analytics'),
+    tabDiagnostics: $('#tab-diagnostics'),
     // Irene elements
     ireneList: $('#irene-list'),
     ireneEmpty: $('#irene-empty'),
@@ -128,6 +129,7 @@
     if (elements.tabIndividual) elements.tabIndividual.addEventListener('click', () => { location.hash = '#/tasks'; route(); });
     if (elements.tabIrene) elements.tabIrene.addEventListener('click', () => { location.hash = '#/irene'; route(); });
     if (elements.tabAnalytics) elements.tabAnalytics.addEventListener('click', () => { location.hash = '#/analytics'; route(); });
+    if (elements.tabDiagnostics) elements.tabDiagnostics.addEventListener('click', () => { location.hash = '#/diagnostics'; route(); });
 
     // Auth
     const btnLogin = document.getElementById('btn-login');
@@ -380,12 +382,14 @@
     const pageForm = document.getElementById('page-task-form');
     const pageIrene = document.getElementById('page-irene');
     const pageAnalytics = document.getElementById('page-analytics');
+    const pageDiagnostics = document.getElementById('page-diagnostics');
     const show = (pg) => {
       if (pageLogin) pageLogin.classList.add('hidden');
       if (pageTasks) pageTasks.classList.add('hidden');
       if (pageForm) pageForm.classList.add('hidden');
       if (pageIrene) pageIrene.classList.add('hidden');
       if (pageAnalytics) pageAnalytics.classList.add('hidden');
+      if (pageDiagnostics) pageDiagnostics.classList.add('hidden');
       if (pg) pg.classList.remove('hidden');
       // focus management could be added here if needed
     };
@@ -485,6 +489,13 @@
       show(pageAnalytics);
       setActiveTab('analytics');
       renderAnalytics();
+      return;
+    }
+
+    if (root === 'diagnostics') {
+      show(pageDiagnostics);
+      setActiveTab('diagnostics');
+      setupDiagnosticsUi();
       return;
     }
 
@@ -1436,7 +1447,7 @@
 
   function setActiveTab(name){
     if (!elements.tabs) return;
-    const map = { individual: elements.tabIndividual, irene: elements.tabIrene, analytics: elements.tabAnalytics };
+    const map = { individual: elements.tabIndividual, irene: elements.tabIrene, analytics: elements.tabAnalytics, diagnostics: elements.tabDiagnostics };
     for (const key of Object.keys(map)){
       const btn = map[key]; if (!btn) continue;
       if (key === name) btn.classList.add('active'); else btn.classList.remove('active');
@@ -1639,6 +1650,81 @@
   // Hidden diagnostics UI for push troubleshooting
   function setupDiagnosticsUi(){
     try {
+      const diagPage = document.getElementById('page-diagnostics');
+      if (diagPage) {
+        // Populate basic fields
+        const vapid = localStorage.getItem('tt_vapid_pub') || '';
+        const vapidSuffix = vapid ? vapid.slice(-12) : '(none)';
+        const perm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
+        const permEl = document.getElementById('diag-perm'); if (permEl) permEl.textContent = perm;
+        const vapEl = document.getElementById('diag-vapid'); if (vapEl) vapEl.textContent = vapidSuffix;
+        (async () => {
+          try {
+            if ('serviceWorker' in navigator) {
+              const reg = await navigator.serviceWorker.getRegistration();
+              const st = reg ? (reg.active ? 'active' : (reg.installing ? 'installing' : 'registered')) : 'none';
+              const swEl = document.getElementById('diag-sw'); if (swEl) swEl.textContent = st;
+            } else {
+              const swEl = document.getElementById('diag-sw'); if (swEl) swEl.textContent = 'unsupported';
+            }
+          } catch { const swEl = document.getElementById('diag-sw'); if (swEl) swEl.textContent = 'error'; }
+        })();
+        // Wire buttons (idempotent: remove existing listeners by cloning)
+        const ids = ['btn-diag-test','btn-diag-test-detailed','btn-diag-resub','btn-diag-purge','btn-diag-subs','btn-diag-diagnose'];
+        for (const id of ids){ const old = document.getElementById(id); if (old){ const newBtn = old.cloneNode(true); old.parentNode.replaceChild(newBtn, old); } }
+        const btnTest = document.getElementById('btn-diag-test');
+        const btnDet = document.getElementById('btn-diag-test-detailed');
+        const btnResub = document.getElementById('btn-diag-resub');
+        const btnPurge = document.getElementById('btn-diag-purge');
+        const btnSubs = document.getElementById('btn-diag-subs');
+        const btnDiag = document.getElementById('btn-diag-diagnose');
+        if (btnTest) btnTest.addEventListener('click', async () => { try { await maybeTestPush('manual'); } catch (e) { alert('Test failed'); } });
+        if (btnDet) btnDet.addEventListener('click', async () => {
+          try {
+            if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/test-detailed', { method: 'POST', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', 'Content-Type':'application/json' } });
+            const j = await res.json().catch(()=>null);
+            alert('Detailed test results: ' + JSON.stringify(j, null, 2));
+          } catch { alert('Detailed test failed'); }
+        });
+        if (btnResub) btnResub.addEventListener('click', async () => {
+          try {
+            await unsubscribePush();
+            await ensurePushSubscribed();
+            alert('Re-subscribed (if supported). You should receive a test next.');
+            try { await maybeTestPush('manual'); } catch {}
+          } catch { alert('Re-subscribe failed'); }
+        });
+        if (btnPurge) btnPurge.addEventListener('click', async () => {
+          try {
+            if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+            await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions/all', { method: 'DELETE', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '' } });
+            await unsubscribePush();
+            await ensurePushSubscribed();
+            alert('Purged old subscriptions and re-subscribed. Sending a test…');
+            try { await maybeTestPush('manual'); } catch {}
+          } catch { alert('Purge/resubscribe failed'); }
+        });
+        if (btnSubs) btnSubs.addEventListener('click', async () => {
+          try {
+            if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '' } });
+            const j = await res.json().catch(()=>null);
+            alert('Subscriptions: ' + JSON.stringify(j, null, 2));
+          } catch { alert('Failed to load subscriptions'); }
+        });
+        if (btnDiag) btnDiag.addEventListener('click', async () => {
+          try {
+            if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/diagnose', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '' } });
+            const j = await res.json().catch(()=>null);
+            alert('Diagnose: ' + JSON.stringify(j, null, 2));
+          } catch { alert('Failed to diagnose'); }
+        });
+        return;
+      }
+
+      // Legacy overlay: only when explicitly requested and on mobile
       const url = new URL(location.href);
       if (url.searchParams.get('diag') !== '1') return;
       if (!isMobile()) return;
