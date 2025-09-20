@@ -12,6 +12,7 @@
   // No auto-derivation of api.<domain>; rely on config.js or user override in localStorage
   const BACKEND_URL = (runtimeBE ?? window.BACKEND_URL ?? '');
   let authToken = localStorage.getItem('tt_auth_token') || '';
+  let currentUserEmail = '';
   const API = createApiClient(BACKEND_URL);
 
   /** Data Types
@@ -145,7 +146,9 @@
         try {
           const stay = !!(stayEl && stayEl.checked);
           localStorage.setItem(STAY_KEY, stay ? 'true' : 'false');
-          await API.login(emailEl.value, passEl.value);
+          const emailVal = (emailEl.value || '').trim();
+          await API.login(emailVal, passEl.value);
+          currentUserEmail = emailVal;
           await syncFromBackend();
           updateAuthUi(true);
           await loadIrene();
@@ -158,7 +161,9 @@
         try {
           const stay = !!(stayEl && stayEl.checked);
           localStorage.setItem(STAY_KEY, stay ? 'true' : 'false');
-          await API.register(emailEl.value, passEl.value);
+          const emailVal = (emailEl.value || '').trim();
+          await API.register(emailVal, passEl.value);
+          currentUserEmail = emailVal;
           await syncFromBackend();
           updateAuthUi(true);
           if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); await maybeTestPush('register'); } catch {} }
@@ -172,6 +177,7 @@
         } catch {}
         try { await API.logout(); } catch {}
         localStorage.setItem(STAY_KEY, 'false');
+        currentUserEmail = '';
         updateAuthUi(false);
         tasks = [];
         saveTasks();
@@ -299,6 +305,7 @@
         try {
           const me = await API.me();
           isAuthed = !!me;
+          currentUserEmail = me && me.email ? String(me.email) : currentUserEmail;
           updateAuthUi(isAuthed);
           if (isAuthed) {
             await syncFromBackend();
@@ -1242,7 +1249,7 @@
       const now = Date.now();
       const last = parseInt(localStorage.getItem(LAST_PUSH_TEST_KEY) || '0', 10) || 0;
       if (reason !== 'permission-granted' && now - last < 6 * 60 * 60 * 1000) return;
-      const resp = await API.testPush();
+      const resp = await API.testPush(currentUserEmail || undefined);
       localStorage.setItem(LAST_PUSH_TEST_KEY, String(now));
       // Give user clear feedback
       alert('A test notification has been sent to your device. If you do not see it within a minute, ensure notifications are allowed for your app and, on iPhone/iPad, that the app is installed from the Home Screen.');
@@ -1435,7 +1442,12 @@
         return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(payload) }));
       },
       async unsubscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'DELETE', ...common, headers: buildHeaders(), body: JSON.stringify({ endpoint: sub.endpoint }) })); },
-      async testPush(){ return handle(await fetch(baseUrl + '/api/push/test', { method: 'POST', ...common, headers: buildHeaders() })); },
+      async testPush(email){
+        const hasBody = !!(email && String(email).includes('@'));
+        const init = { method: 'POST', ...common, headers: buildHeaders() };
+        if (hasBody) { init.body = JSON.stringify({ email: String(email) }); }
+        return handle(await fetch(baseUrl + '/api/push/test', init));
+      },
       // Irene endpoints
       async getIreneTasks(){ const j = await handle(await fetch(baseUrl + '/api/irene/tasks', { ...common, headers: buildHeaders() })); return j.tasks || []; },
       async createIreneTask(t){ return handle(await fetch(baseUrl + '/api/irene/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
@@ -1682,7 +1694,7 @@
         if (btnDet) btnDet.addEventListener('click', async () => {
           try {
             if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
-            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/test-detailed', { method: 'POST', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', 'Content-Type':'application/json' } });
+            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/test-detailed', { method: 'POST', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', 'Content-Type':'application/json', ...(currentUserEmail? { 'X-User-Email': currentUserEmail } : {}) }, body: JSON.stringify(currentUserEmail? { email: currentUserEmail } : {}) });
             const j = await res.json().catch(()=>null);
             alert('Detailed test results: ' + JSON.stringify(j, null, 2));
           } catch { alert('Detailed test failed'); }
@@ -1698,7 +1710,7 @@
         if (btnPurge) btnPurge.addEventListener('click', async () => {
           try {
             if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
-            await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions/all', { method: 'DELETE', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '' } });
+            await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions/all', { method: 'DELETE', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', ...(currentUserEmail? { 'X-User-Email': currentUserEmail } : {}) } });
             await unsubscribePush();
             await ensurePushSubscribed();
             alert('Purged old subscriptions and re-subscribed. Sending a test…');
@@ -1708,7 +1720,7 @@
         if (btnSubs) btnSubs.addEventListener('click', async () => {
           try {
             if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
-            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '' } });
+            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', ...(currentUserEmail? { 'X-User-Email': currentUserEmail } : {}) } });
             const j = await res.json().catch(()=>null);
             alert('Subscriptions: ' + JSON.stringify(j, null, 2));
           } catch { alert('Failed to load subscriptions'); }
@@ -1716,7 +1728,7 @@
         if (btnDiag) btnDiag.addEventListener('click', async () => {
           try {
             if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
-            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/diagnose', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '' } });
+            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/diagnose', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', ...(currentUserEmail? { 'X-User-Email': currentUserEmail } : {}) } });
             const j = await res.json().catch(()=>null);
             alert('Diagnose: ' + JSON.stringify(j, null, 2));
           } catch { alert('Failed to diagnose'); }
