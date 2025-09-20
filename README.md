@@ -90,3 +90,66 @@ This project is licensed under the MIT License. See LICENSE for details.
 Backend status quick check
 - scripts/check-backend.sh https://api.ticktocktasks.com
 - Or via npm: BACKEND_URL=https://api.ticktocktasks.com npm run check:backend
+
+
+## Diagnostics & Push Test Guide
+
+Use the built‑in diagnostics panel to verify service worker, notification permission, and push subscription status, and to send test notifications to your phone.
+
+Quick links
+- Production diagnostics: https://ticktocktasks.com/?diag=1
+- Local (when serving frontend locally on port 8000): http://localhost:8000/?diag=1
+
+Prerequisites
+- Use your phone (Android Chrome or iOS Safari in the installed PWA). Desktop push is intentionally disabled.
+- Be signed in to your TickTock Tasks account in the app.
+- Ensure your backend is reachable (the site should already be linked via config.js in production).
+
+How to open the diagnostics panel
+1) On your phone, open the main app URL with the query parameter diag=1:
+   - Production: https://ticktocktasks.com/?diag=1
+   - Local dev: http://localhost:8000/?diag=1
+2) Log in if you aren’t already. The diagnostics panel appears as an overlay at the bottom of the screen when diag=1 is present.
+
+What the diagnostics panel shows
+- Service Worker status (registered/active) and version.
+- Notification permission (default/denied/granted).
+- Push subscription status (exists/missing) and last action result.
+
+Sending test notifications (recommended sequence)
+1) Ensure permission
+   - If the panel shows permission = default or denied, tap Enable Notifications and follow prompts.
+   - On iOS: Push only works in the installed PWA. If you’re in Safari, install the app (Share → Add to Home Screen), open it from the Home Screen, then enable notifications inside the installed app.
+2) Re‑subscribe push
+   - Tap Re‑subscribe Push. This fetches the current VAPID public key, ensures the browser PushManager subscription exists, and upserts it to the backend for your account. It also auto‑heals if the server’s key rotated.
+3) Send a simple test push
+   - Tap Send Test Push. You should receive a notification on your phone within a few seconds. If it fails, the panel will show an error summary.
+4) Run a detailed test (per‑subscription results)
+   - Tap Detailed Test. This calls the backend to send a test to each of your stored subscriptions and returns per‑subscription results (ok/status/error). Use this to identify stale or mismatched entries.
+5) Recover from stale/mismatched subscriptions
+   - Tap Purge Subs + Re‑subscribe. This deletes all of your stored subscriptions on the server, unsubscribes locally, recreates a fresh subscription, and then sends a test.
+
+Interpreting common results
+- Success: You should see push_send_success in the app panel and a notification on the device.
+- 403 VAPID mismatch: Old subscriptions created with a different server key were removed. After Purge Subs + Re‑subscribe, Send Test Push again.
+- 404/410 gone: Subscription was invalid and has been removed. Re‑subscribe Push and retry.
+
+Troubleshooting tips
+- Android
+  - Make sure Battery optimization isn’t overly restrictive for the browser or the installed PWA.
+  - Keep the app installed (PWA icon on Home Screen) for best reliability.
+- iOS
+  - Push only works from the installed PWA (iOS 16.4+). Use Add to Home Screen, then enable notifications inside the installed app.
+  - If you don’t see prompts, toggle Allow Notifications in iOS Settings → Notifications → [App Name].
+- Network
+  - Ensure the backend URL is correct (config.js). If using local backend, trust the dev certificate at https://localhost:8443 once.
+
+Optional: Server‑side diagnostics
+- While logged in on your phone, you can hit the auth‑protected diagnostics endpoint in a desktop browser (using the same account cookies) to see computed timing/debug info:
+  - /api/push/diagnose — summarizes your subscriptions and today’s expected notification windows.
+  - /api/push/subscriptions — lists your stored push subscriptions (redacted).
+  - /api/push/test-detailed — same detailed test called by the panel.
+
+Notes
+- The diagnostics panel is intentionally hidden for normal users and only appears when ?diag=1 is present on mobile.
+- In production, CloudWatch will record push events with component=push; look for push_send_success or push_send_error for deeper debugging.
