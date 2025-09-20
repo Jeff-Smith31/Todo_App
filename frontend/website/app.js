@@ -9,8 +9,11 @@
   const runtimeCfg = window.RUNTIME_CONFIG || {};
   const hasRuntimeBE = Object.prototype.hasOwnProperty.call(runtimeCfg, 'BACKEND_URL');
   const runtimeBE = hasRuntimeBE ? runtimeCfg.BACKEND_URL : undefined; // allow empty string intentionally
-  // No auto-derivation of api.<domain>; rely on config.js or user override in localStorage
-  const BACKEND_URL = (runtimeBE ?? window.BACKEND_URL ?? '');
+  const lsBE = (typeof localStorage !== 'undefined') ? (localStorage.getItem('tt_backend_url') || '') : '';
+  // Resolve backend URL in priority order:
+  // 1) Explicit runtime config if provided; 2) localStorage override (tt_backend_url);
+  // 3) window.BACKEND_URL; otherwise empty (local-only mode)
+  const BACKEND_URL = (hasRuntimeBE ? (runtimeBE || '') : (lsBE || window.BACKEND_URL || ''));
   let authToken = localStorage.getItem('tt_auth_token') || '';
   let currentUserEmail = '';
   const API = createApiClient(BACKEND_URL);
@@ -1670,6 +1673,7 @@
         const perm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
         const permEl = document.getElementById('diag-perm'); if (permEl) permEl.textContent = perm;
         const vapEl = document.getElementById('diag-vapid'); if (vapEl) vapEl.textContent = vapidSuffix;
+        const beEl = document.getElementById('diag-backend'); if (beEl) beEl.textContent = (BACKEND_URL ? BACKEND_URL : '(unset)');
         (async () => {
           try {
             if ('serviceWorker' in navigator) {
