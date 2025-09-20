@@ -334,6 +334,9 @@
     // Version UI and update checks
     setupVersionUiAndUpdater();
 
+    // Hidden diagnostics UI (enable via ?diag=1)
+    setupDiagnosticsUi();
+
     // On focus, ensure we have an active push subscription (Android reliability)
     window.addEventListener('visibilitychange', async () => {
       if (document.hidden) return;
@@ -1601,3 +1604,80 @@
   }
 
 })();
+
+
+  // Hidden diagnostics UI for push troubleshooting
+  function setupDiagnosticsUi(){
+    try {
+      const url = new URL(location.href);
+      if (url.searchParams.get('diag') !== '1') return;
+      if (!isMobile()) return;
+      const container = document.querySelector('.container');
+      if (!container) return;
+      const panel = document.createElement('div');
+      panel.className = 'panel';
+      panel.id = 'ttt-diag-panel';
+      const vapid = localStorage.getItem('tt_vapid_pub') || '';
+      const vapidSuffix = vapid ? vapid.slice(-12) : '(none)';
+      const perm = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
+      panel.innerHTML = `
+        <h2>Diagnostics</h2>
+        <p style="color:#aab">Mobile only • ?diag=1 enabled</p>
+        <div class="grid">
+          <div><span>Notif permission</span><div id="diag-perm">${perm}</div></div>
+          <div><span>Stored VAPID (suffix)</span><div id="diag-vapid">${vapidSuffix}</div></div>
+          <div><span>Service Worker</span><div id="diag-sw">checking…</div></div>
+        </div>
+        <div class="form-actions" style="margin-top:10px">
+          <button class="btn" id="btn-diag-test">Send Test Push</button>
+          <button class="btn" id="btn-diag-resub">Re-subscribe Push</button>
+          <button class="btn" id="btn-diag-subs">Show Subscriptions</button>
+          <button class="btn" id="btn-diag-diagnose">Diagnose Today</button>
+        </div>
+      `;
+      container.prepend(panel);
+
+      (async () => {
+        try {
+          if ('serviceWorker' in navigator) {
+            const reg = await navigator.serviceWorker.getRegistration();
+            const st = reg ? (reg.active ? 'active' : (reg.installing ? 'installing' : 'registered')) : 'none';
+            document.getElementById('diag-sw').textContent = st;
+          } else {
+            document.getElementById('diag-sw').textContent = 'unsupported';
+          }
+        } catch { document.getElementById('diag-sw').textContent = 'error'; }
+      })();
+
+      const btnTest = document.getElementById('btn-diag-test');
+      const btnResub = document.getElementById('btn-diag-resub');
+      const btnSubs = document.getElementById('btn-diag-subs');
+      const btnDiag = document.getElementById('btn-diag-diagnose');
+
+      if (btnTest) btnTest.addEventListener('click', async () => { try { await maybeTestPush('manual'); } catch (e) { alert('Test failed'); } });
+      if (btnResub) btnResub.addEventListener('click', async () => {
+        try {
+          await unsubscribePush();
+          await ensurePushSubscribed();
+          alert('Re-subscribed (if supported). You should receive a test next.');
+          try { await maybeTestPush('manual'); } catch {}
+        } catch { alert('Re-subscribe failed'); }
+      });
+      if (btnSubs) btnSubs.addEventListener('click', async () => {
+        try {
+          if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+          const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '' } });
+          const j = await res.json().catch(()=>null);
+          alert('Subscriptions: ' + JSON.stringify(j, null, 2));
+        } catch { alert('Failed to load subscriptions'); }
+      });
+      if (btnDiag) btnDiag.addEventListener('click', async () => {
+        try {
+          if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+          const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/diagnose', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '' } });
+          const j = await res.json().catch(()=>null);
+          alert('Diagnose: ' + JSON.stringify(j, null, 2));
+        } catch { alert('Failed to diagnose'); }
+      });
+    } catch {}
+  }

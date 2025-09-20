@@ -499,6 +499,27 @@ app.get('/api/push/vapid-public-key', (req, res) => {
   res.json({ key: ACTIVE_PUBLIC_KEY });
 });
 
+// Additional diagnostics endpoints (auth required where appropriate)
+app.get('/api/push/vapid-info', authMiddleware, async (req, res) => {
+  try {
+    const info = { publicKeySuffix: (ACTIVE_PUBLIC_KEY || '').slice(-12), hasPrivate: !!ACTIVE_PRIVATE_KEY };
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.json({ ok: true, info });
+  } catch (e) {
+    res.status(500).json({ error: 'failed' });
+  }
+});
+
+app.get('/api/push/subscriptions', authMiddleware, async (req, res) => {
+  try {
+    const subs = await listSubs(String(req.user.id));
+    const redacted = subs.map(s => ({ endpointSuffix: String(s.endpoint||'').slice(-16), tzOffsetMinutes: s.tzOffsetMinutes ?? null }));
+    res.json({ ok: true, subs: redacted });
+  } catch (e) {
+    res.status(500).json({ error: 'failed to list subscriptions' });
+  }
+});
+
 app.post('/api/push/subscribe', authMiddleware, async (req, res) => {
   if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) return res.status(503).json({ error: 'Push not configured' });
   const { error, value } = subscriptionSchema.validate(req.body);
@@ -506,8 +527,11 @@ app.post('/api/push/subscribe', authMiddleware, async (req, res) => {
   try {
     const tz = Number.isFinite(value.tzOffsetMinutes) ? value.tzOffsetMinutes : undefined;
     await putSub(String(req.user.id), value.endpoint, value.keys.p256dh, value.keys.auth, tz);
+    const endpointSuffix = String(value.endpoint || '').slice(-16);
+    pushLog('push_subscribe', { userId: String(req.user.id), endpointSuffix, tzOffsetMinutes: tz ?? null });
     res.json({ ok: true });
   } catch (e) {
+    pushLog('push_subscribe_error', { userId: String(req.user.id), error: e?.message || String(e) });
     res.status(500).json({ error: 'Failed to save subscription' });
   }
 });
