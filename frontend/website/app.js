@@ -924,19 +924,34 @@
   function applyCompletionRollover(){
     const today = todayStr();
     let changed = false;
+    const toSync = [];
     for (const t of tasks){
       if (!t.lastCompleted) continue;
       const lcYmd = dateToYMD(new Date(t.lastCompleted));
       if (lcYmd < today) {
-        // Only roll once per completion day
-        if (t.rolledFromCompletion !== lcYmd) {
-          t.nextDue = addDays(t.nextDue, t.everyDays);
-          t.rolledFromCompletion = lcYmd;
-          changed = true;
+        // Only roll once per completion day and only if nextDue has not advanced beyond the completed day
+        if (t.rolledFromCompletion !== lcYmd && (!t.nextDue || String(t.nextDue) <= lcYmd)) {
+          const newDue = nextScheduledAfterLocal(lcYmd, t.everyDays, t.scheduleDays);
+          if (newDue && newDue !== t.nextDue) {
+            t.nextDue = newDue;
+            t.priority = false;
+            t.rolledFromCompletion = lcYmd;
+            changed = true;
+            if (BACKEND_URL && isAuthed) toSync.push({ ...t });
+          } else {
+            t.rolledFromCompletion = lcYmd;
+          }
         }
       }
     }
-    if (changed) { saveTasks(); }
+    if (changed) {
+      saveTasks();
+      render();
+    }
+    if (toSync.length) {
+      // Persist updates server-side (best-effort)
+      Promise.allSettled(toSync.map(tt => API.updateTask(tt))).then(() => { try { syncFromBackend(); } catch {} });
+    }
   }
 
   // Notifications
@@ -1147,6 +1162,21 @@
     const dt = new Date(Number.isFinite(y)?y:1970, (Number.isFinite(m)?m:1)-1, Number.isFinite(d)?d:1, 0, 0, 0, 0);
     dt.setDate(dt.getDate() + n);
     return dateToYMD(dt);
+  }
+  // Compute the next scheduled date AFTER a given base local YMD, honoring custom weekdays if provided
+  function nextScheduledAfterLocal(baseYmd, everyDays, scheduleDays){
+    try {
+      if (Array.isArray(scheduleDays) && scheduleDays.length > 0){
+        for (let i = 1; i <= 7; i++){
+          const cand = addDays(baseYmd, i);
+          const wd = parseLocalYMD(cand).getDay(); // 0=Sun..6=Sat in local time
+          if (scheduleDays.includes(wd)) return cand;
+        }
+      }
+    } catch {}
+    // Fallback: simple every N days
+    const n = Number.isFinite(everyDays) ? everyDays : parseInt(String(everyDays||'1'),10) || 1;
+    return addDays(baseYmd, n);
   }
   function isOverdue(t){
     const now = new Date();
@@ -1630,7 +1660,9 @@
         </div>
         <div class="form-actions" style="margin-top:10px">
           <button class="btn" id="btn-diag-test">Send Test Push</button>
+          <button class="btn" id="btn-diag-test-detailed">Detailed Test</button>
           <button class="btn" id="btn-diag-resub">Re-subscribe Push</button>
+          <button class="btn" id="btn-diag-purge">Purge Subs + Re-subscribe</button>
           <button class="btn" id="btn-diag-subs">Show Subscriptions</button>
           <button class="btn" id="btn-diag-diagnose">Diagnose Today</button>
         </div>
@@ -1650,11 +1682,21 @@
       })();
 
       const btnTest = document.getElementById('btn-diag-test');
+      const btnDet = document.getElementById('btn-diag-test-detailed');
       const btnResub = document.getElementById('btn-diag-resub');
+      const btnPurge = document.getElementById('btn-diag-purge');
       const btnSubs = document.getElementById('btn-diag-subs');
       const btnDiag = document.getElementById('btn-diag-diagnose');
 
       if (btnTest) btnTest.addEventListener('click', async () => { try { await maybeTestPush('manual'); } catch (e) { alert('Test failed'); } });
+      if (btnDet) btnDet.addEventListener('click', async () => {
+        try {
+          if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+          const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/test-detailed', { method: 'POST', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', 'Content-Type':'application/json' } });
+          const j = await res.json().catch(()=>null);
+          alert('Detailed test results: ' + JSON.stringify(j, null, 2));
+        } catch { alert('Detailed test failed'); }
+      });
       if (btnResub) btnResub.addEventListener('click', async () => {
         try {
           await unsubscribePush();
@@ -1662,6 +1704,16 @@
           alert('Re-subscribed (if supported). You should receive a test next.');
           try { await maybeTestPush('manual'); } catch {}
         } catch { alert('Re-subscribe failed'); }
+      });
+      if (btnPurge) btnPurge.addEventListener('click', async () => {
+        try {
+          if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+          await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions/all', { method: 'DELETE', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '' } });
+          await unsubscribePush();
+          await ensurePushSubscribed();
+          alert('Purged old subscriptions and re-subscribed. Sending a test…');
+          try { await maybeTestPush('manual'); } catch {}
+        } catch { alert('Purge/resubscribe failed'); }
       });
       if (btnSubs) btnSubs.addEventListener('click', async () => {
         try {

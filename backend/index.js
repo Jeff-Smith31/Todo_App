@@ -528,7 +528,9 @@ app.post('/api/push/subscribe', authMiddleware, async (req, res) => {
     const tz = Number.isFinite(value.tzOffsetMinutes) ? value.tzOffsetMinutes : undefined;
     await putSub(String(req.user.id), value.endpoint, value.keys.p256dh, value.keys.auth, tz);
     const endpointSuffix = String(value.endpoint || '').slice(-16);
-    pushLog('push_subscribe', { userId: String(req.user.id), endpointSuffix, tzOffsetMinutes: tz ?? null });
+    const ua = String(req.headers['user-agent'] || '');
+    const ip = req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '';
+    pushLog('push_subscribe', { userId: String(req.user.id), endpointSuffix, tzOffsetMinutes: tz ?? null, ua, ip });
     res.json({ ok: true });
   } catch (e) {
     pushLog('push_subscribe_error', { userId: String(req.user.id), error: e?.message || String(e) });
@@ -577,6 +579,47 @@ app.get('/api/push/diagnose', authMiddleware, async (req, res) => {
     res.json({ ok: true, tzOffsetMinutes: tz, subs: redactedSubs, tasks });
   } catch (e) {
     res.status(500).json({ error: 'diagnose failed' });
+  }
+});
+
+// Detailed test: send a test to each subscription and return per-sub status
+app.post('/api/push/test-detailed', authMiddleware, async (req, res) => {
+  try {
+    if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
+      return res.status(503).json({ error: 'Push not configured' });
+    }
+    const userId = String(req.user.id);
+    const payload = {
+      type: 'test',
+      title: 'TickTock Tasks: Test Notification',
+      body: 'Detailed test per subscription',
+      icon: '/icons/logo.svg',
+      badge: '/icons/logo.svg',
+      ts: new Date().toISOString(),
+    };
+    const results = await sendPushToUserDetailed(userId, payload);
+    const ok = results.filter(r => r.ok).length;
+    const failed = results.length - ok;
+    pushLog('push_test_detailed_result', { userId, ok, failed, total: results.length, removed: results.filter(r => r.removed).length });
+    res.json({ ok: true, results });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed detailed test' });
+  }
+});
+
+// Purge all subscriptions for current user (to recover from stale/mismatched subs)
+app.delete('/api/push/subscriptions/all', authMiddleware, async (req, res) => {
+  try {
+    const userId = String(req.user.id);
+    const subs = await listSubs(userId);
+    let removed = 0;
+    for (const s of subs) {
+      try { await delSub(userId, String(s.endpoint)); removed++; } catch {}
+    }
+    pushLog('push_purge_subs', { userId, removed });
+    res.json({ ok: true, removed });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to purge subscriptions' });
   }
 });
 
@@ -700,6 +743,32 @@ function ymdForTz(date, tzOffsetMinutes) {
   return `${y}-${m}-${d}`;
 }
 
+function weekdayForYmdTz(ymd, tzOffsetMinutes) {
+  // Return 0=Sun..6=Sat for the given local YMD in the user's timezone
+  try {
+    const [y, m, d] = String(ymd).split('-').map(Number);
+    const utcMs = Date.UTC(y, (m || 1) - 1, d || 1, 0, 0, 0);
+    const localMs = utcMs - (Number.isFinite(tzOffsetMinutes) ? tzOffsetMinutes : 0) * 60 * 1000;
+    const dt = new Date(localMs);
+    return dt.getUTCDay();
+  } catch { return new Date().getUTCDay(); }
+}
+
+function nextScheduledAfter(baseYmd, every_days, schedule_days, tzOffsetMinutes){
+  try {
+    const days = Array.isArray(schedule_days) ? schedule_days : [];
+    if (days.length > 0) {
+      for (let i = 1; i <= 7; i++) {
+        const cand = addDaysYmd(baseYmd, i);
+        const wd = weekdayForYmdTz(cand, tzOffsetMinutes);
+        if (days.includes(wd)) return cand;
+      }
+    }
+  } catch {}
+  const n = Number.isFinite(every_days) ? every_days : parseInt(String(every_days||'1'),10) || 1;
+  return addDaysYmd(baseYmd, n);
+}
+
 async function sendPushToUser(userId, payloadObj) {
   const subs = await listSubs(String(userId));
   const payload = JSON.stringify(payloadObj);
@@ -732,6 +801,34 @@ async function sendPushToUser(userId, payloadObj) {
   if (ok === 0 && failed > 0) {
     pushLog('push_all_failed_for_user', { userId: String(userId), hint: 'All push attempts failed; if removed>0, clients must reopen app to re-subscribe.', removed });
   }
+}
+
+// Same as sendPushToUser but returns per-subscription outcome for diagnostics
+async function sendPushToUserDetailed(userId, payloadObj) {
+  const subs = await listSubs(String(userId));
+  const payload = JSON.stringify(payloadObj);
+  const results = [];
+  for (const s of subs) {
+    const endpoint = String(s.endpoint || '');
+    const endpointSuffix = endpoint.slice(-16);
+    const sub = { endpoint, keys: { p256dh: s.p256dh, auth: s.auth } };
+    let ok = false, status = null, error = null, removed = false;
+    try {
+      await webpush.sendNotification(sub, payload);
+      ok = true;
+    } catch (e) {
+      status = e?.statusCode || e?.status || null;
+      error = String(e?.body || e?.message || e || 'error');
+      if (status === 403 && String(error).toLowerCase().includes('vapid')) {
+        try { await delSub(String(userId), endpoint); removed = true; } catch {}
+      }
+      if (status === 404 || status === 410 || String(error).toLowerCase().includes('gone')) {
+        try { await delSub(String(userId), endpoint); removed = true; } catch {}
+      }
+    }
+    results.push({ endpointSuffix, ok, status, error, removed });
+  }
+  return results;
 }
 
 async function scanAndNotify() {
@@ -771,6 +868,34 @@ async function scanAndNotify() {
       const userId = String(r.user_id);
       const tz = await getUserTz(userId);
       const userToday = ymdForTz(now, tz);
+
+      // 0) Day-after-completion rollover: if completed on a previous local day and next_due has not advanced beyond that day,
+      //    set next_due to the next scheduled date (respecting custom weekdays) and clear priority.
+      if (r.last_completed) {
+        const lcLocal = ymdForTz(new Date(r.last_completed), tz);
+        if (lcLocal < userToday) {
+          const nextDueStr = String(r.next_due || '');
+          if (!nextDueStr || nextDueStr <= lcLocal) {
+            const schedDays = Array.isArray(r.schedule_days) ? r.schedule_days : (Array.isArray(r.scheduleDays) ? r.scheduleDays : []);
+            const every = Number.isFinite(r.every_days) ? r.every_days : Number(r.everyDays || 1);
+            const newDue = nextScheduledAfter(lcLocal, every, schedDays, tz);
+            if (newDue && newDue !== nextDueStr) {
+              try {
+                await ddb.send(new UpdateCommand({
+                  TableName: TABLES.tasks,
+                  Key: { user_id: String(userId), id: String(r.id) },
+                  UpdateExpression: 'SET next_due = :nd, priority = :p',
+                  ExpressionAttributeValues: { ':nd': newDue, ':p': false },
+                }));
+                r.next_due = newDue;
+                r.priority = false;
+              } catch (e) {
+                console.error('scanAndNotify: completion rollover update failed', r.id, e?.message || e);
+              }
+            }
+          }
+        }
+      }
 
       // Compute the exact due instant (in UTC ms) and the user-local YMD for that instant
       const dueMs = dueUtcMsForTz(String(r.next_due), String(r.remind_at), tz);
