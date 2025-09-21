@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 // SQLite removed. Using DynamoDB for persistence.
-import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES, listIreneTasks, putIreneTask, deleteIreneTask, logIreneCompletion, queryIreneLogs, setUserTimezone } from './dynamo.js';
+import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES, listIreneTasks, putIreneTask, deleteIreneTask, logIreneCompletion, queryIreneLogs, setUserTimezone, setUserIreneGroup, getIreneGroup, createIreneGroup } from './dynamo.js';
 import Joi from 'joi';
 import webpush from 'web-push';
 import fs from 'fs';
@@ -440,46 +440,95 @@ app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Irene group helpers
+function shortGroupCode(){
+  const s = Math.random().toString(36).slice(2,8).toUpperCase();
+  return s;
+}
+async function getIreneGroupIdForUser(email){
+  const user = await getUserByEmail(String(email));
+  let gid = user?.irene_group_id;
+  if (!gid) {
+    // Create a new group using a short code as the group_id
+    for (let i=0;i<5;i++){
+      const code = shortGroupCode();
+      const exists = await getIreneGroup(code);
+      if (!exists) {
+        await createIreneGroup(code, String(email));
+        await setUserIreneGroup(String(email), code);
+        gid = code;
+        break;
+      }
+    }
+  }
+  return gid || String(email);
+}
+
 // Irene routes (authenticated)
+app.get('/api/irene/group', authMiddleware, async (req, res) => {
+  try {
+    const gid = await getIreneGroupIdForUser(req.user.email);
+    res.json({ ok: true, group_id: gid, code: gid });
+  } catch (e) { res.status(500).json({ error: 'Failed to get group' }); }
+});
+app.post('/api/irene/group/join', authMiddleware, async (req, res) => {
+  try {
+    const code = String(req.body?.code || '').toUpperCase();
+    if (!code) return res.status(400).json({ error: 'code required' });
+    const g = await getIreneGroup(code);
+    if (!g) return res.status(404).json({ error: 'Group not found' });
+    await setUserIreneGroup(String(req.user.email), code);
+    res.json({ ok: true, group_id: code, code });
+  } catch (e) { res.status(500).json({ error: 'Failed to join group' }); }
+});
+
 app.get('/api/irene/tasks', authMiddleware, async (req, res) => {
   try {
-    const rows = await listIreneTasks(String(req.user.id));
+    const gid = await getIreneGroupIdForUser(req.user.email);
+    const rows = await listIreneTasks(String(gid));
     const tasks = rows.map(r => ({ id: r.id, title: r.title, notes: r.notes || '', category: r.category || 'Default' }));
     res.json({ tasks });
   } catch (e) { res.status(500).json({ error: 'Failed to list tasks' }); }
 });
 app.post('/api/irene/tasks', authMiddleware, async (req, res) => {
   try {
+    const gid = await getIreneGroupIdForUser(req.user.email);
     const { error, value } = ireneTaskSchema.validate(req.body || {});
     if (error) return res.status(400).json({ error: error.message });
     const id = (value.id && String(value.id)) || cryptoRandomId();
-    const item = { user_id: String(req.user.id), id, title: String(value.title), notes: (value.notes != null ? String(value.notes) : ''), category: (value.category == null || value.category === '' ? 'Default' : String(value.category)) };
+    const item = { user_id: String(gid), id, title: String(value.title), notes: (value.notes != null ? String(value.notes) : ''), category: (value.category == null || value.category === '' ? 'Default' : String(value.category)) };
     await putIreneTask(item);
     res.status(201).json({ id });
   } catch (e) { res.status(500).json({ error: 'Failed to save task' }); }
 });
 app.delete('/api/irene/tasks/:id', authMiddleware, async (req, res) => {
-  try { await deleteIreneTask(String(req.user.id), String(req.params.id)); res.json({ ok: true }); }
+  try {
+    const gid = await getIreneGroupIdForUser(req.user.email);
+    await deleteIreneTask(String(gid), String(req.params.id));
+    res.json({ ok: true });
+  }
   catch (e) { res.status(500).json({ error: 'Failed to delete task' }); }
 });
 app.post('/api/irene/log', authMiddleware, async (req, res) => {
   try {
+    const gid = await getIreneGroupIdForUser(req.user.email);
     const { error, value } = ireneLogSchema.validate(req.body || {});
     if (error) return res.status(400).json({ error: error.message });
     const ts = value.ts && typeof value.ts === 'string' ? value.ts : new Date().toISOString();
-    const out = await logIreneCompletion(String(req.user.id), String(value.taskId), ts);
+    const out = await logIreneCompletion(String(gid), String(value.taskId), ts);
     res.json({ ok: true, log: out });
   } catch (e) { res.status(500).json({ error: 'Failed to log completion' }); }
 });
 app.get('/api/irene/analytics', authMiddleware, async (req, res) => {
   try {
+    const gid = await getIreneGroupIdForUser(req.user.email);
     const range = String(req.query.range || 'day');
     const days = Math.max(1, Math.min(365, parseInt(String(req.query.days || (range === 'month' ? '30' : range === 'week' ? '14' : '7')), 10)));
     const now = new Date();
     const toTs = now.toISOString();
     const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
     const fromTs = from.toISOString();
-    const logs = await queryIreneLogs(String(req.user.id), fromTs, toTs);
+    const logs = await queryIreneLogs(String(gid), fromTs, toTs);
     // Aggregate by day (local ISO date) and taskId
     const by = {};
     for (const l of logs) {

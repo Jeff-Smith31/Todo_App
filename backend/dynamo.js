@@ -12,6 +12,7 @@ export const TABLES = {
   config: `${TABLE_PREFIX}-config`,
   irene_tasks: `${TABLE_PREFIX}-irene-tasks`,
   irene_logs: `${TABLE_PREFIX}-irene-logs`,
+  irene_groups: `${TABLE_PREFIX}-irene-groups`,
 };
 
 const client = new DynamoDBClient({ region: REGION });
@@ -100,6 +101,17 @@ async function ensureTableIreneLogs(){
   }));
 }
 
+async function ensureTableIreneGroups(){
+  const TableName = TABLES.irene_groups;
+  try { await client.send(new DescribeTableCommand({ TableName })); return; } catch {}
+  await client.send(new CreateTableCommand({
+    TableName,
+    BillingMode: 'PAY_PER_REQUEST',
+    KeySchema: [ { AttributeName: 'group_id', KeyType: 'HASH' } ],
+    AttributeDefinitions: [ { AttributeName: 'group_id', AttributeType: 'S' } ],
+  }));
+}
+
 export async function ensureTables(){
   await Promise.all([
     ensureTableUsers(),
@@ -109,6 +121,7 @@ export async function ensureTables(){
     ensureTableConfig(),
     ensureTableIreneTasks(),
     ensureTableIreneLogs(),
+    ensureTableIreneGroups(),
   ]);
 }
 
@@ -129,6 +142,26 @@ export async function setUserTimezone(email, tzOffsetMinutes){
     UpdateExpression: 'SET tzOffsetMinutes = :tz',
     ExpressionAttributeValues: { ':tz': tzOffsetMinutes }
   }));
+}
+
+export async function setUserIreneGroup(email, group_id){
+  await ddb.send(new UpdateCommand({
+    TableName: TABLES.users,
+    Key: { email },
+    UpdateExpression: 'SET irene_group_id = :g',
+    ExpressionAttributeValues: { ':g': group_id }
+  }));
+}
+
+export async function getIreneGroup(group_id){
+  const r = await ddb.send(new GetCommand({ TableName: TABLES.irene_groups, Key: { group_id } }));
+  return r.Item || null;
+}
+
+export async function createIreneGroup(group_id, owner_email){
+  const item = { group_id, owner_email, created_at: new Date().toISOString() };
+  await ddb.send(new PutCommand({ TableName: TABLES.irene_groups, Item: item, ConditionExpression: 'attribute_not_exists(group_id)' }));
+  return item;
 }
 
 // Tasks

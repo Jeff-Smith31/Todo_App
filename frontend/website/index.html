@@ -37,7 +37,6 @@
       <button id="tab-individual" class="tab active">Individual</button>
       <button id="tab-irene" class="tab">Irene's</button>
       <button id="tab-analytics" class="tab">Analytics</button>
-      <button id="tab-diagnostics" class="tab">Diagnostics</button>
     </nav>
 
     <!-- Login Page -->
@@ -155,9 +154,11 @@
       <div class="list-header">
         <div class="title-and-search">
           <h2>Irene's Tasks</h2>
+          <small id="irene-group-code" title="Share this code so others can join your Irene's list" style="margin-left:8px;color:#9ca3af"></small>
           <input id="irene-search" type="search" placeholder="Search tasks…">
         </div>
         <div class="filters">
+          <button id="btn-irene-join" class="btn">Join Group</button>
           <button id="btn-irene-create" class="btn primary">Add Task</button>
         </div>
       </div>
@@ -206,35 +207,10 @@
       <p class="empty" id="analytics-empty" style="display:none">No data yet. Start logging tasks on Irene's tab.</p>
     </section>
 
-    <!-- Diagnostics Page (4th tab) -->
-    <section id="page-diagnostics" class="panel hidden">
-      <h2>Diagnostics</h2>
-      <p class="muted">Mobile only recommended. Use this panel to test notifications and subscriptions.</p>
-      <div class="grid">
-        <div><span>Notif permission</span><div id="diag-perm">checking…</div></div>
-        <div><span>Stored VAPID (suffix)</span><div id="diag-vapid">(none)</div></div>
-        <div><span>Service Worker</span><div id="diag-sw">checking…</div></div>
-        <div><span>Backend URL</span><div id="diag-backend">(unset)</div></div>
-        <div><span>Brave</span><div id="diag-brave">checking…</div></div>
-      </div>
-      <div class="form-actions" style="margin-top:10px">
-        <button class="btn" id="btn-diag-test">Send Test Push</button>
-        <button class="btn" id="btn-diag-test-detailed">Detailed Test</button>
-        <button class="btn" id="btn-diag-local-notif">Show Local App Notification</button>
-        <button class="btn" id="btn-diag-resub">Re-subscribe Push</button>
-        <button class="btn" id="btn-diag-purge">Purge Subs + Re-subscribe</button>
-        <button class="btn" id="btn-diag-subs">Show Subscriptions</button>
-        <button class="btn" id="btn-diag-diagnose">Diagnose Today</button>
-        <button class="btn" id="btn-diag-ping">Check Backend</button>
-        <button class="btn" id="btn-diag-swupdate">Update Service Worker</button>
-      </div>
-      <div id="diag-output" style="margin-top:12px;background:rgba(0,0,0,0.4);color:#e5e7eb;padding:10px;border-radius:8px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size:12px; max-height:200px; overflow:auto; white-space:pre-wrap"></div>
-    </section>
   </main>
 
   <footer class="footer">
     <p>© 2025 CodeSmith Consulting. All rights reserved.</p>
-    <a href="#/diagnostics" class="btn small" id="btn-diagnostics" title="Open diagnostics">Diagnostics</a>
   </footer>
 
   <div id="app-version-pill" style="position:fixed;right:8px;bottom:8px;background:rgba(0,0,0,0.6);color:#fff;padding:6px 10px;border-radius:999px;font-size:12px;z-index:9999;">v<span id="app-version-text">—</span></div>

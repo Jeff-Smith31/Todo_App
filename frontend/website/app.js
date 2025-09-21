@@ -58,7 +58,6 @@
     tabIndividual: $('#tab-individual'),
     tabIrene: $('#tab-irene'),
     tabAnalytics: $('#tab-analytics'),
-    tabDiagnostics: $('#tab-diagnostics'),
     // Irene elements
     ireneList: $('#irene-list'),
     ireneEmpty: $('#irene-empty'),
@@ -69,6 +68,8 @@
     ireneCategory: $('#irene-category'),
     ireneSearch: $('#irene-search'),
     ireneCreateBtn: $('#btn-irene-create'),
+    ireneJoinBtn: $('#btn-irene-join'),
+    ireneGroupCode: $('#irene-group-code'),
     // Analytics
     analyticsRange: $('#analytics-range'),
     analyticsCanvas: $('#analytics-canvas'),
@@ -133,7 +134,6 @@
     if (elements.tabIndividual) elements.tabIndividual.addEventListener('click', () => { location.hash = '#/tasks'; route(); });
     if (elements.tabIrene) elements.tabIrene.addEventListener('click', () => { location.hash = '#/irene'; route(); });
     if (elements.tabAnalytics) elements.tabAnalytics.addEventListener('click', () => { location.hash = '#/analytics'; route(); });
-    if (elements.tabDiagnostics) elements.tabDiagnostics.addEventListener('click', () => { location.hash = '#/diagnostics'; route(); });
 
     // Auth
     const btnLogin = document.getElementById('btn-login');
@@ -205,6 +205,21 @@
 
     // Analytics range change
     if (elements.analyticsRange) elements.analyticsRange.addEventListener('change', renderAnalytics);
+
+    // Irene: Join group button
+    if (elements.ireneJoinBtn) elements.ireneJoinBtn.addEventListener('click', async () => {
+      if (!(BACKEND_URL && isAuthed)) { alert('Please log in to use groups.'); return; }
+      const code = prompt('Enter Irene group code to join (e.g., ABC123):');
+      if (!code) return;
+      try {
+        await API.joinIreneGroup(String(code).trim());
+        await loadIrene();
+        try { await renderAnalytics(); } catch {}
+        alert('Joined group successfully.');
+      } catch (e) {
+        alert('Failed to join group: ' + (e?.message || e));
+      }
+    });
 
     // PWA install
     function isStandalone(){
@@ -357,8 +372,7 @@
     // Version UI and update checks
     setupVersionUiAndUpdater();
 
-    // Hidden diagnostics UI (enable via ?diag=1)
-    setupDiagnosticsUi();
+    // Diagnostics UI removed for normal users; overlay via ?diag retained internally.
 
     // On focus, ensure we have an active push subscription (Android reliability)
     window.addEventListener('visibilitychange', async () => {
@@ -403,14 +417,12 @@
     const pageForm = document.getElementById('page-task-form');
     const pageIrene = document.getElementById('page-irene');
     const pageAnalytics = document.getElementById('page-analytics');
-    const pageDiagnostics = document.getElementById('page-diagnostics');
     const show = (pg) => {
       if (pageLogin) pageLogin.classList.add('hidden');
       if (pageTasks) pageTasks.classList.add('hidden');
       if (pageForm) pageForm.classList.add('hidden');
       if (pageIrene) pageIrene.classList.add('hidden');
       if (pageAnalytics) pageAnalytics.classList.add('hidden');
-      if (pageDiagnostics) pageDiagnostics.classList.add('hidden');
       if (pg) pg.classList.remove('hidden');
       // focus management could be added here if needed
     };
@@ -502,6 +514,7 @@
     if (root === 'irene') {
       show(pageIrene);
       setActiveTab('irene');
+      try { await ensureIreneGroup(); } catch {}
       renderIrene();
       return;
     }
@@ -509,14 +522,8 @@
     if (root === 'analytics') {
       show(pageAnalytics);
       setActiveTab('analytics');
+      try { await ensureIreneGroup(); } catch {}
       renderAnalytics();
-      return;
-    }
-
-    if (root === 'diagnostics') {
-      show(pageDiagnostics);
-      setActiveTab('diagnostics');
-      setupDiagnosticsUi();
       return;
     }
 
@@ -1490,6 +1497,9 @@
       async deleteIreneTask(id){ return handle(await fetch(baseUrl + '/api/irene/tasks/' + encodeURIComponent(id), { method: 'DELETE', ...common, headers: buildHeaders() })); },
       async logIrene(taskId){ return handle(await fetch(baseUrl + '/api/irene/log', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ taskId }) })); },
       async getIreneAnalytics(days){ const j = await handle(await fetch(baseUrl + '/api/irene/analytics?range=day&days=' + encodeURIComponent(days), { ...common, headers: buildHeaders() })); return j; },
+      // Irene groups
+      async getIreneGroup(){ return handle(await fetch(baseUrl + '/api/irene/group', { ...common, headers: buildHeaders() })); },
+      async joinIreneGroup(code){ return handle(await fetch(baseUrl + '/api/irene/group/join', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ code }) })); },
     };
   }
 
@@ -1502,10 +1512,27 @@
     }
   }
 
+  // Irene group helpers
+  async function ensureIreneGroup(){
+    if (!(BACKEND_URL && isAuthed)) return null;
+    try {
+      const g = await API.getIreneGroup();
+      const code = (g && (g.code || g.group_id)) ? String(g.code || g.group_id).toUpperCase() : '';
+      if (elements.ireneGroupCode) {
+        elements.ireneGroupCode.textContent = code ? `Group: ${code}` : '';
+      }
+      return g;
+    } catch (e) {
+      if (elements.ireneGroupCode) elements.ireneGroupCode.textContent = '';
+      return null;
+    }
+  }
+
   // Irene: load tasks from backend
   async function loadIrene(){
-    if (!(BACKEND_URL && isAuthed)) { ireneTasks = []; renderIrene(); return; }
+    if (!(BACKEND_URL && isAuthed)) { ireneTasks = []; if (elements.ireneGroupCode) elements.ireneGroupCode.textContent=''; renderIrene(); return; }
     try {
+      await ensureIreneGroup();
       const list = await API.getIreneTasks();
       ireneTasks = Array.isArray(list) ? list : [];
       renderIrene();
