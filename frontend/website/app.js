@@ -301,6 +301,11 @@
           setTimeout(() => { try { requestNotificationPermission(); } catch {} }, 800);
         }
       } catch {}
+      // If the app is not installed (not in standalone), proactively remove any existing push
+      // subscription so notifications don't appear under Chrome. Users will be prompted to install.
+      try {
+        if (!isStandalone()) { await unsubscribePush(); }
+      } catch {}
     }
 
 
@@ -1285,6 +1290,8 @@
   async function ensurePushSubscribed(){
     // Ensure environment supports required APIs
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    // Only allow subscriptions from the installed PWA so notifications originate from the app, not Chrome
+    try { if (!isStandalone()) return; } catch { return; }
     // Wait for the service worker to be active; fixes Android race conditions
     const reg = await (navigator.serviceWorker.ready.catch(() => navigator.serviceWorker.getRegistration()));
     if (!reg) return;
