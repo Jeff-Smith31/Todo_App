@@ -8,7 +8,7 @@ import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import morgan from 'morgan';
 // SQLite removed. Using DynamoDB for persistence.
-import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES, listIreneTasks, putIreneTask, deleteIreneTask, logIreneCompletion, queryIreneLogs } from './dynamo.js';
+import { ensureTables, getUserByEmail, createUser, listTasks as ddbListTasks, putTask as ddbPutTask, deleteTask as ddbDeleteTask, listSubs, putSub, delSub, notifWasSent, markNotifSent, ddb, TABLES, listIreneTasks, putIreneTask, deleteIreneTask, logIreneCompletion, queryIreneLogs, setUserTimezone } from './dynamo.js';
 import Joi from 'joi';
 import webpush from 'web-push';
 import fs from 'fs';
@@ -362,6 +362,18 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/auth/me', authMiddleware, (req, res) => {
   res.json({ user: { id: req.user.id, email: req.user.email } });
+});
+
+// User profile routes
+app.post('/api/user/timezone', authMiddleware, async (req, res) => {
+  try {
+    const tz = Number.isFinite(req.body?.tzOffsetMinutes) ? req.body.tzOffsetMinutes : undefined;
+    if (!Number.isFinite(tz)) return res.status(400).json({ error: 'tzOffsetMinutes required' });
+    await setUserTimezone(String(req.user.id), tz);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to save timezone' });
+  }
 });
 
 // Task routes (authenticated)
@@ -852,11 +864,19 @@ async function scanAndNotify() {
   async function getUserTz(userId) {
     if (userTzCache.has(userId)) return userTzCache.get(userId);
     try {
+      // 1) Prefer tz from any active push subscription
       const subs = await listSubs(String(userId));
-      const tz = (subs.find(s => Number.isFinite(s.tzOffsetMinutes))?.tzOffsetMinutes) ?? 0;
+      const subTz = (subs.find(s => Number.isFinite(s.tzOffsetMinutes))?.tzOffsetMinutes);
+      if (Number.isFinite(subTz)) { userTzCache.set(userId, subTz); return subTz; }
+      // 2) Fallback: user profile tzOffsetMinutes (persisted at login/init)
+      const { GetCommand } = await import('@aws-sdk/lib-dynamodb');
+      const rUser = await ddb.send(new GetCommand({ TableName: TABLES.users, Key: { email: String(userId) } }));
+      const tz = Number.isFinite(rUser?.Item?.tzOffsetMinutes) ? rUser.Item.tzOffsetMinutes : 0;
       userTzCache.set(userId, tz);
       return tz;
-    } catch { userTzCache.set(userId, 0); return 0; }
+    } catch {
+      userTzCache.set(userId, 0); return 0;
+    }
   }
 
   // Aggregate for daily summaries

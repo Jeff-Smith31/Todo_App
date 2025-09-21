@@ -122,6 +122,14 @@ export async function createUser(email, password_hash){
   await ddb.send(new PutCommand({ TableName: TABLES.users, Item: user, ConditionExpression: 'attribute_not_exists(email)' }));
   return user;
 }
+export async function setUserTimezone(email, tzOffsetMinutes){
+  await ddb.send(new UpdateCommand({
+    TableName: TABLES.users,
+    Key: { email },
+    UpdateExpression: 'SET tzOffsetMinutes = :tz',
+    ExpressionAttributeValues: { ':tz': tzOffsetMinutes }
+  }));
+}
 
 // Tasks
 export async function listTasks(user_id){

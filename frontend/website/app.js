@@ -152,6 +152,8 @@
           const emailVal = (emailEl.value || '').trim();
           await API.login(emailVal, passEl.value);
           currentUserEmail = emailVal;
+          // Persist timezone for backend scheduler (benefits users without push subscription)
+          try { await API.setTimezone(-new Date().getTimezoneOffset()); } catch {}
           await syncFromBackend();
           updateAuthUi(true);
           await loadIrene();
@@ -167,6 +169,8 @@
           const emailVal = (emailEl.value || '').trim();
           await API.register(emailVal, passEl.value);
           currentUserEmail = emailVal;
+          // Persist timezone for backend scheduler (benefits users without push subscription)
+          try { await API.setTimezone(-new Date().getTimezoneOffset()); } catch {}
           await syncFromBackend();
           updateAuthUi(true);
           if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); await maybeTestPush('register'); } catch {} }
@@ -311,6 +315,8 @@
           currentUserEmail = me && me.email ? String(me.email) : currentUserEmail;
           updateAuthUi(isAuthed);
           if (isAuthed) {
+            // Persist timezone for backend scheduler
+            try { await API.setTimezone(-new Date().getTimezoneOffset()); } catch {}
             await syncFromBackend();
             await loadIrene();
             if (Notification.permission === 'granted') {
@@ -1344,6 +1350,14 @@
       return data;
     }
     return {
+      async setTimezone(tzOffsetMinutes){
+        if (!baseUrl) return { ok: false };
+        const payload = { tzOffsetMinutes };
+        const res = await fetch(baseUrl + '/api/user/timezone', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(payload) });
+        // ignore errors silently
+        try { await handle(res); } catch {}
+        return { ok: res.ok };
+      },
       async register(email, password){
         const data = await handle(await fetch(baseUrl + '/api/auth/register', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ email, password }) }));
         if (data && data.token) { authToken = data.token; localStorage.setItem('tt_auth_token', authToken); }
@@ -1666,6 +1680,8 @@
   function setupDiagnosticsUi(){
     try {
       const diagPage = document.getElementById('page-diagnostics');
+      const out = document.getElementById('diag-output');
+      function logDiag(msg){ if (out) { const ts = new Date().toLocaleTimeString(); out.textContent = `[${ts}] ${msg}\n` + out.textContent; } }
       if (diagPage) {
         // Populate basic fields
         const vapid = localStorage.getItem('tt_vapid_pub') || '';
@@ -1674,6 +1690,12 @@
         const permEl = document.getElementById('diag-perm'); if (permEl) permEl.textContent = perm;
         const vapEl = document.getElementById('diag-vapid'); if (vapEl) vapEl.textContent = vapidSuffix;
         const beEl = document.getElementById('diag-backend'); if (beEl) beEl.textContent = (BACKEND_URL ? BACKEND_URL : '(unset)');
+        (async () => {
+          try {
+            const brave = (navigator.brave && typeof navigator.brave.isBrave === 'function') ? await navigator.brave.isBrave() : false;
+            const brEl = document.getElementById('diag-brave'); if (brEl) brEl.textContent = brave ? 'on' : 'off';
+          } catch { const brEl = document.getElementById('diag-brave'); if (brEl) brEl.textContent = 'unknown'; }
+        })();
         (async () => {
           try {
             if ('serviceWorker' in navigator) {
@@ -1686,7 +1708,7 @@
           } catch { const swEl = document.getElementById('diag-sw'); if (swEl) swEl.textContent = 'error'; }
         })();
         // Wire buttons (idempotent: remove existing listeners by cloning)
-        const ids = ['btn-diag-test','btn-diag-test-detailed','btn-diag-resub','btn-diag-purge','btn-diag-subs','btn-diag-diagnose'];
+        const ids = ['btn-diag-test','btn-diag-test-detailed','btn-diag-resub','btn-diag-purge','btn-diag-subs','btn-diag-diagnose','btn-diag-ping','btn-diag-swupdate'];
         for (const id of ids){ const old = document.getElementById(id); if (old){ const newBtn = old.cloneNode(true); old.parentNode.replaceChild(newBtn, old); } }
         const btnTest = document.getElementById('btn-diag-test');
         const btnDet = document.getElementById('btn-diag-test-detailed');
@@ -1694,49 +1716,83 @@
         const btnPurge = document.getElementById('btn-diag-purge');
         const btnSubs = document.getElementById('btn-diag-subs');
         const btnDiag = document.getElementById('btn-diag-diagnose');
-        if (btnTest) btnTest.addEventListener('click', async () => { try { await maybeTestPush('manual'); } catch (e) { alert('Test failed'); } });
+        const btnPing = document.getElementById('btn-diag-ping');
+        const btnSwUpd = document.getElementById('btn-diag-swupdate');
+        if (btnTest) btnTest.addEventListener('click', async () => {
+          try { await maybeTestPush('manual'); logDiag('Test push requested. If you do not receive it within 60s, verify permission and subscription.'); }
+          catch (e) { logDiag('Test push failed to start: ' + (e?.message||e)); alert('Test failed'); }
+        });
         if (btnDet) btnDet.addEventListener('click', async () => {
           try {
-            if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+            if (!BACKEND_URL || !isAuthed) { alert('Login first'); logDiag('Cannot run Detailed Test: not logged in or backend unset.'); return; }
             const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/test-detailed', { method: 'POST', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', 'Content-Type':'application/json', ...(currentUserEmail? { 'X-User-Email': currentUserEmail } : {}) }, body: JSON.stringify(currentUserEmail? { email: currentUserEmail } : {}) });
-            const j = await res.json().catch(()=>null);
-            alert('Detailed test results: ' + JSON.stringify(j, null, 2));
-          } catch { alert('Detailed test failed'); }
+            const txt = await res.text();
+            logDiag('Detailed Test HTTP ' + res.status + ': ' + txt);
+            try { const j = JSON.parse(txt); alert('Detailed test results: ' + JSON.stringify(j, null, 2)); } catch { /* non-json response */ }
+          } catch (e) { logDiag('Detailed test failed: ' + (e?.message||e)); alert('Detailed test failed'); }
         });
         if (btnResub) btnResub.addEventListener('click', async () => {
           try {
             await unsubscribePush();
             await ensurePushSubscribed();
-            alert('Re-subscribed (if supported). You should receive a test next.');
+            logDiag('Re-subscribed (if supported). Triggering a test…');
             try { await maybeTestPush('manual'); } catch {}
-          } catch { alert('Re-subscribe failed'); }
+          } catch (e) { logDiag('Re-subscribe failed: ' + (e?.message||e)); alert('Re-subscribe failed'); }
         });
         if (btnPurge) btnPurge.addEventListener('click', async () => {
           try {
-            if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
-            await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions/all', { method: 'DELETE', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', ...(currentUserEmail? { 'X-User-Email': currentUserEmail } : {}) } });
+            if (!BACKEND_URL || !isAuthed) { alert('Login first'); logDiag('Cannot purge: not logged in or backend unset.'); return; }
+            const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions/all', { method: 'DELETE', credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', ...(currentUserEmail? { 'X-User-Email': currentUserEmail } : {}) } });
+            logDiag('Purged server subs: HTTP ' + res.status);
             await unsubscribePush();
             await ensurePushSubscribed();
-            alert('Purged old subscriptions and re-subscribed. Sending a test…');
+            logDiag('Re-subscribed after purge. Sending test…');
             try { await maybeTestPush('manual'); } catch {}
-          } catch { alert('Purge/resubscribe failed'); }
+          } catch (e) { logDiag('Purge/resubscribe failed: ' + (e?.message||e)); alert('Purge/resubscribe failed'); }
         });
         if (btnSubs) btnSubs.addEventListener('click', async () => {
           try {
-            if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+            if (!BACKEND_URL || !isAuthed) { alert('Login first'); logDiag('Cannot list subs: not logged in or backend unset.'); return; }
             const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/subscriptions', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', ...(currentUserEmail? { 'X-User-Email': currentUserEmail } : {}) } });
-            const j = await res.json().catch(()=>null);
-            alert('Subscriptions: ' + JSON.stringify(j, null, 2));
-          } catch { alert('Failed to load subscriptions'); }
+            const txt = await res.text();
+            logDiag('Subscriptions HTTP ' + res.status + ': ' + txt);
+            try { const j = JSON.parse(txt); alert('Subscriptions: ' + JSON.stringify(j, null, 2)); } catch {}
+          } catch (e) { logDiag('Failed to load subscriptions: ' + (e?.message||e)); alert('Failed to load subscriptions'); }
         });
         if (btnDiag) btnDiag.addEventListener('click', async () => {
           try {
-            if (!BACKEND_URL || !isAuthed) { alert('Login first'); return; }
+            if (!BACKEND_URL || !isAuthed) { alert('Login first'); logDiag('Cannot diagnose: not logged in or backend unset.'); return; }
             const res = await fetch((BACKEND_URL||'').replace(/\/$/,'') + '/api/push/diagnose', { credentials: 'include', headers: { 'Authorization': authToken ? ('Bearer ' + authToken) : '', ...(currentUserEmail? { 'X-User-Email': currentUserEmail } : {}) } });
-            const j = await res.json().catch(()=>null);
-            alert('Diagnose: ' + JSON.stringify(j, null, 2));
-          } catch { alert('Failed to diagnose'); }
+            const txt = await res.text();
+            logDiag('Diagnose HTTP ' + res.status + ': ' + txt);
+            try { const j = JSON.parse(txt); alert('Diagnose: ' + JSON.stringify(j, null, 2)); } catch {}
+          } catch (e) { logDiag('Failed to diagnose: ' + (e?.message||e)); alert('Failed to diagnose'); }
         });
+        if (btnPing) btnPing.addEventListener('click', async () => {
+          try {
+            if (!BACKEND_URL) { logDiag('Backend URL is unset. Set it via config.js or localStorage key tt_backend_url then reload.'); alert('Backend URL is unset'); return; }
+            const url = (BACKEND_URL||'').replace(/\/$/,'') + '/api/ping';
+            const res = await fetch(url, { credentials: 'include' });
+            const txt = await res.text();
+            logDiag('Ping ' + url + ' → HTTP ' + res.status + ': ' + txt);
+          } catch (e) { logDiag('Ping failed: ' + (e?.message||e)); }
+        });
+        if (btnSwUpd) btnSwUpd.addEventListener('click', async () => {
+          try {
+            if ('serviceWorker' in navigator) {
+              const reg = await navigator.serviceWorker.getRegistration();
+              if (reg) { try { await reg.update(); } catch {}
+                if (reg.waiting) { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); }
+              }
+              logDiag('Requested service worker update. Reloading…');
+              location.reload(true);
+            }
+          } catch (e) { logDiag('SW update failed: ' + (e?.message||e)); }
+        });
+        // Guidance if backend unset
+        if (!BACKEND_URL) {
+          logDiag('Backend URL is currently unset. In production this is written by config.js. For local dev, set it with: localStorage.setItem(\'tt_backend_url\',\'https://localhost:8443\'); then reload.');
+        }
         return;
       }
 

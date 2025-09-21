@@ -215,6 +215,7 @@
         <div><span>Stored VAPID (suffix)</span><div id="diag-vapid">(none)</div></div>
         <div><span>Service Worker</span><div id="diag-sw">checking…</div></div>
         <div><span>Backend URL</span><div id="diag-backend">(unset)</div></div>
+        <div><span>Brave</span><div id="diag-brave">checking…</div></div>
       </div>
       <div class="form-actions" style="margin-top:10px">
         <button class="btn" id="btn-diag-test">Send Test Push</button>
@@ -223,7 +224,10 @@
         <button class="btn" id="btn-diag-purge">Purge Subs + Re-subscribe</button>
         <button class="btn" id="btn-diag-subs">Show Subscriptions</button>
         <button class="btn" id="btn-diag-diagnose">Diagnose Today</button>
+        <button class="btn" id="btn-diag-ping">Check Backend</button>
+        <button class="btn" id="btn-diag-swupdate">Update Service Worker</button>
       </div>
+      <div id="diag-output" style="margin-top:12px;background:rgba(0,0,0,0.4);color:#e5e7eb;padding:10px;border-radius:8px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size:12px; max-height:200px; overflow:auto; white-space:pre-wrap"></div>
     </section>
   </main>
 
