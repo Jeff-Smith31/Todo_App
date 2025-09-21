@@ -1271,7 +1271,8 @@
       // Throttle tests to avoid spamming: max once per 6 hours unless explicitly from permission grant
       const now = Date.now();
       const last = parseInt(localStorage.getItem(LAST_PUSH_TEST_KEY) || '0', 10) || 0;
-      if (reason !== 'permission-granted' && now - last < 6 * 60 * 60 * 1000) return;
+      // For manual tests from Diagnostics, do not throttle; throttle only automatic/background tests.
+      if (reason !== 'permission-granted' && reason !== 'manual' && now - last < 6 * 60 * 60 * 1000) return;
       const resp = await API.testPush(currentUserEmail || undefined);
       localStorage.setItem(LAST_PUSH_TEST_KEY, String(now));
       // Give user clear feedback
@@ -1471,7 +1472,9 @@
       },
       async subscribePush(sub){
         const tzOffsetMinutes = -new Date().getTimezoneOffset();
-        const payload = Object.assign({}, sub, { tzOffsetMinutes });
+        // Ensure we send a plain serializable object. Some browsers require toJSON() to expose keys.
+        const plain = (sub && typeof sub.toJSON === 'function') ? sub.toJSON() : sub;
+        const payload = Object.assign({}, plain, { tzOffsetMinutes });
         return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(payload) }));
       },
       async unsubscribePush(sub){ return handle(await fetch(baseUrl + '/api/push/subscribe', { method: 'DELETE', ...common, headers: buildHeaders(), body: JSON.stringify({ endpoint: sub.endpoint }) })); },
@@ -1762,7 +1765,11 @@
         const btnSwUpd = document.getElementById('btn-diag-swupdate');
         const btnLocal = document.getElementById('btn-diag-local-notif');
         if (btnTest) btnTest.addEventListener('click', async () => {
-          try { await maybeTestPush('manual'); logDiag('Test push requested. If you do not receive it within 60s, verify permission and subscription.'); }
+          try {
+            await ensurePushSubscribed();
+            await maybeTestPush('manual');
+            logDiag('Test push requested. If you do not receive it within 60s, verify permission and subscription.');
+          }
           catch (e) { logDiag('Test push failed to start: ' + (e?.message||e)); alert('Test failed'); }
         });
         if (btnDet) btnDet.addEventListener('click', async () => {
