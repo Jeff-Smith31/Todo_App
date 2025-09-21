@@ -1018,7 +1018,7 @@
   }
 
   async function requestNotificationPermission(){
-    // Only mobile devices should enable notifications for this app.
+    // Only mobile devices and only the installed app may enable notifications.
     if (!isMobile()) {
       alert('Notifications are only available on the mobile app. Please use your phone to receive reminders.');
       return;
@@ -1027,12 +1027,9 @@
       alert('Notifications are not supported in this browser');
       return;
     }
-    // iOS requires the app to be installed (standalone) to allow Web Push
-    const ua = navigator.userAgent || navigator.vendor || '';
-    const isiOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const inStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator && window.navigator.standalone === true);
-    if (isiOS && !inStandalone) {
-      alert('To enable push notifications on iPhone/iPad, please install the app first: tap the Share button and choose "Add to Home Screen", then open the installed app to enable notifications.');
+    if (!inStandalone) {
+      alert('Install the app first to enable notifications. Tap “Install App” at the top, then open the app from your Home Screen and enable notifications.');
       return;
     }
     try {
@@ -1729,7 +1726,7 @@
         // Hint if app is not installed
         try { if (!isStandalone()) { logDiag('App is not installed (standalone=false). Install the app to receive OS-level notifications from the app instead of Chrome.'); } } catch {}
         // Wire buttons (idempotent: remove existing listeners by cloning)
-        const ids = ['btn-diag-test','btn-diag-test-detailed','btn-diag-resub','btn-diag-purge','btn-diag-subs','btn-diag-diagnose','btn-diag-ping','btn-diag-swupdate'];
+        const ids = ['btn-diag-test','btn-diag-test-detailed','btn-diag-local-notif','btn-diag-resub','btn-diag-purge','btn-diag-subs','btn-diag-diagnose','btn-diag-ping','btn-diag-swupdate'];
         for (const id of ids){ const old = document.getElementById(id); if (old){ const newBtn = old.cloneNode(true); old.parentNode.replaceChild(newBtn, old); } }
         const btnTest = document.getElementById('btn-diag-test');
         const btnDet = document.getElementById('btn-diag-test-detailed');
@@ -1739,6 +1736,7 @@
         const btnDiag = document.getElementById('btn-diag-diagnose');
         const btnPing = document.getElementById('btn-diag-ping');
         const btnSwUpd = document.getElementById('btn-diag-swupdate');
+        const btnLocal = document.getElementById('btn-diag-local-notif');
         if (btnTest) btnTest.addEventListener('click', async () => {
           try { await maybeTestPush('manual'); logDiag('Test push requested. If you do not receive it within 60s, verify permission and subscription.'); }
           catch (e) { logDiag('Test push failed to start: ' + (e?.message||e)); alert('Test failed'); }
@@ -1751,6 +1749,26 @@
             logDiag('Detailed Test HTTP ' + res.status + ': ' + txt);
             try { const j = JSON.parse(txt); alert('Detailed test results: ' + JSON.stringify(j, null, 2)); } catch { /* non-json response */ }
           } catch (e) { logDiag('Detailed test failed: ' + (e?.message||e)); alert('Detailed test failed'); }
+        });
+        if (btnLocal) btnLocal.addEventListener('click', async () => {
+          try {
+            if (!('serviceWorker' in navigator)) { logDiag('Local notification: service worker unsupported.'); alert('Service worker not supported'); return; }
+            const inStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator && window.navigator.standalone === true);
+            if (!inStandalone) { logDiag('Local notification: app is not installed (standalone=false). Install the app first.'); alert('Install the app first, then open it from your Home Screen.'); return; }
+            if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+              try {
+                const p = await Notification.requestPermission();
+                if (p !== 'granted') { logDiag('Local notification: permission not granted.'); alert('Please allow notifications in the app settings.'); return; }
+              } catch {}
+            }
+            const reg = await navigator.serviceWorker.ready;
+            const opts = { body: 'This is a local app notification (no backend).', icon: '/icons/logo.svg', badge: '/icons/logo.svg', requireInteraction: true, data: { type: 'local-test' } };
+            await reg.showNotification('TickTock Tasks: Local Test', opts);
+            logDiag('Local notification displayed via ServiceWorkerRegistration.showNotification.');
+          } catch (e) {
+            logDiag('Local notification failed: ' + (e?.message||e));
+            alert('Local notification failed');
+          }
         });
         if (btnResub) btnResub.addEventListener('click', async () => {
           try {
