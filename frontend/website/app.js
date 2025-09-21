@@ -1689,12 +1689,36 @@
     }
   }
 
+  // Expose minimal internals for diagnostics (read-only access)
+  try {
+    window.__TTT = Object.assign({}, window.__TTT || {}, {
+      BACKEND_URL,
+      getAuth: () => ({ isAuthed, authToken, currentUserEmail }),
+      maybeTestPush,
+      ensurePushSubscribed,
+      unsubscribePush,
+      isStandalone,
+      isMobile,
+    });
+  } catch {}
+
 })();
 
 
   // Hidden diagnostics UI for push troubleshooting
   function setupDiagnosticsUi(){
     try {
+      const T = (window.__TTT || {});
+      const BACKEND_URL = (T.BACKEND_URL || (window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.BACKEND_URL) || window.BACKEND_URL || '');
+      const auth = T.getAuth ? T.getAuth() : {};
+      const isAuthed = !!auth.isAuthed;
+      const authToken = auth.authToken || '';
+      const currentUserEmail = auth.currentUserEmail || '';
+      const isStandalone = T.isStandalone ? T.isStandalone : function(){ try { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator && window.navigator.standalone===true); } catch { return false; } };
+      const isMobile = T.isMobile ? T.isMobile : function(){ return (typeof window.orientation !== 'undefined') || (navigator.userAgent||'').includes('Mobi') || window.innerWidth < 640; };
+      const maybeTestPush = T.maybeTestPush || (async ()=>{ throw new Error('Push test not available'); });
+      const ensurePushSubscribed = T.ensurePushSubscribed || (async ()=>{});
+      const unsubscribePush = T.unsubscribePush || (async ()=>{});
       const diagPage = document.getElementById('page-diagnostics');
       const out = document.getElementById('diag-output');
       function logDiag(msg){ if (out) { const ts = new Date().toLocaleTimeString(); out.textContent = `[${ts}] ${msg}\n` + out.textContent; } }
