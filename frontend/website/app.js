@@ -1248,12 +1248,24 @@
     return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
   function toggleHidden(el, hidden){ el.classList.toggle('hidden', hidden); }
+  function isStandalone(){
+    try {
+      return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator && window.navigator.standalone === true);
+    } catch { return false; }
+  }
 
   // Push helpers
   async function maybeTestPush(reason){
     try {
       if (!BACKEND_URL || !isAuthed) return;
       if (!isMobile()) return; // Do not send test push for desktop
+      // Require installed PWA to ensure OS-level app notifications (not generic Chrome)
+      if (!isStandalone()) {
+        const msg = 'Install the app first to receive notifications from the app, not Chrome.\nTap “Install App” at the top, then open the app from your Home Screen and retry.';
+        try { const out = document.getElementById('diag-output'); if (out) { const ts = new Date().toLocaleTimeString(); out.textContent = `[${ts}] ${msg}\n` + out.textContent; } } catch {}
+        alert(msg);
+        return;
+      }
       // Throttle tests to avoid spamming: max once per 6 hours unless explicitly from permission grant
       const now = Date.now();
       const last = parseInt(localStorage.getItem(LAST_PUSH_TEST_KEY) || '0', 10) || 0;
@@ -1261,12 +1273,12 @@
       const resp = await API.testPush(currentUserEmail || undefined);
       localStorage.setItem(LAST_PUSH_TEST_KEY, String(now));
       // Give user clear feedback
-      alert('A test notification has been sent to your device. If you do not see it within a minute, ensure notifications are allowed for your app and, on iPhone/iPad, that the app is installed from the Home Screen.');
+      alert('A test notification has been sent to your device. If you do not see it within a minute, ensure notifications are allowed for your installed app.');
       return resp;
     } catch (e) {
       // If push not configured (503) or other error, inform user gently
       const msg = (e && e.message) ? String(e.message) : 'Push test failed';
-      alert('Could not send a test notification: ' + msg + '\nIf this persists, try re-enabling notifications, reinstalling the app (on iOS), or logging out and back in.');
+      alert('Could not send a test notification: ' + msg);
     }
   }
 
@@ -1707,6 +1719,8 @@
             }
           } catch { const swEl = document.getElementById('diag-sw'); if (swEl) swEl.textContent = 'error'; }
         })();
+        // Hint if app is not installed
+        try { if (!isStandalone()) { logDiag('App is not installed (standalone=false). Install the app to receive OS-level notifications from the app instead of Chrome.'); } } catch {}
         // Wire buttons (idempotent: remove existing listeners by cloning)
         const ids = ['btn-diag-test','btn-diag-test-detailed','btn-diag-resub','btn-diag-purge','btn-diag-subs','btn-diag-diagnose','btn-diag-ping','btn-diag-swupdate'];
         for (const id of ids){ const old = document.getElementById(id); if (old){ const newBtn = old.cloneNode(true); old.parentNode.replaceChild(newBtn, old); } }
