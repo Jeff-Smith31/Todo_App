@@ -160,6 +160,7 @@
           </div>
           <div class="irene-row-2" style="display:flex; align-items:center; gap:10px; margin-top:6px;">
             <input id="irene-search" type="search" placeholder="Search tasks…" style="flex:1; min-width:0;">
+            <button id="btn-irene-add-category" class="btn">Add Category</button>
             <button id="btn-irene-create" class="btn primary">Add Task</button>
           </div>
         </div>
@@ -206,7 +207,23 @@
           </select>
         </div>
       </div>
+      <div class="grid" style="margin-bottom:10px">
+        <label>
+          <span>Filter by email</span>
+          <select id="analytics-email"></select>
+        </label>
+      </div>
       <canvas id="analytics-canvas" width="800" height="320" style="width:100%;height:auto;background:rgba(0,0,0,0.1);border-radius:12px"></canvas>
+      <div class="grid" style="margin-top:12px">
+        <div>
+          <span class="subtitle">Task breakdown for selected email</span>
+          <canvas id="analytics-pie-email" width="400" height="260" style="width:100%;height:auto;background:rgba(0,0,0,0.1);border-radius:12px"></canvas>
+        </div>
+        <div>
+          <span class="subtitle">Total completions by email</span>
+          <canvas id="analytics-pie-users" width="400" height="260" style="width:100%;height:auto;background:rgba(0,0,0,0.1);border-radius:12px"></canvas>
+        </div>
+      </div>
       <p class="empty" id="analytics-empty" style="display:none">No data yet. Start logging tasks on Irene's tab.</p>
     </section>
 

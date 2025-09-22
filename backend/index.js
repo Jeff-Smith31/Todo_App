@@ -504,6 +504,17 @@ app.post('/api/irene/tasks', authMiddleware, async (req, res) => {
     res.status(201).json({ id });
   } catch (e) { res.status(500).json({ error: 'Failed to save task' }); }
 });
+app.put('/api/irene/tasks/:id', authMiddleware, async (req, res) => {
+  try {
+    const gid = await getIreneGroupIdForUser(req.user.email);
+    const { error, value } = ireneTaskSchema.validate({ ...req.body, id: req.params.id } || {});
+    if (error) return res.status(400).json({ error: error.message });
+    const id = String(req.params.id);
+    const item = { user_id: String(gid), id, title: String(value.title), notes: (value.notes != null ? String(value.notes) : ''), category: (value.category == null || value.category === '' ? 'Default' : String(value.category)) };
+    await putIreneTask(item);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'Failed to update task' }); }
+});
 app.delete('/api/irene/tasks/:id', authMiddleware, async (req, res) => {
   try {
     const gid = await getIreneGroupIdForUser(req.user.email);
@@ -518,7 +529,7 @@ app.post('/api/irene/log', authMiddleware, async (req, res) => {
     const { error, value } = ireneLogSchema.validate(req.body || {});
     if (error) return res.status(400).json({ error: error.message });
     const ts = value.ts && typeof value.ts === 'string' ? value.ts : new Date().toISOString();
-    const out = await logIreneCompletion(String(gid), String(value.taskId), ts);
+    const out = await logIreneCompletion(String(gid), String(value.taskId), ts, String(req.user.email));
     res.json({ ok: true, log: out });
   } catch (e) { res.status(500).json({ error: 'Failed to log completion' }); }
 });
@@ -532,24 +543,57 @@ app.get('/api/irene/analytics', authMiddleware, async (req, res) => {
     const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
     const fromTs = from.toISOString();
     const logs = await queryIreneLogs(String(gid), fromTs, toTs);
-    // Aggregate by day (local ISO date) and taskId
-    const by = {};
-    for (const l of logs) {
-      const d = (l.ts || '').slice(0,10);
-      const key = d + '|' + (l.task_id || l.taskId || 'unknown');
-      by[key] = (by[key] || 0) + 1;
-    }
-    // Build buckets per day
+    const tasksList = await listIreneTasks(String(gid)).catch(()=>[]);
+    const taskTitles = {};
+    for (const t of tasksList) { taskTitles[String(t.id)] = t.title; }
+
+    // Aggregate buckets and counts
     const buckets = [];
     for (let i = days - 1; i >= 0; i--) {
       const dt = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      const d = dt.toISOString().slice(0,10);
-      buckets.push(d);
+      buckets.push(dt.toISOString().slice(0,10));
     }
-    // Series per task
-    const taskIds = Array.from(new Set(logs.map(l => l.task_id))).filter(Boolean);
-    const series = taskIds.map(tid => ({ taskId: tid, data: buckets.map(d => by[d+'|'+tid] || 0) }));
-    res.json({ range, days, buckets, series });
+
+    const byDayTask = {}; // key: day|taskId -> count
+    const byUser = {}; // email -> total
+    const byTask = {}; // taskId -> total
+    const perUserPerTask = {}; // email -> { taskId -> total }
+    const usersSet = new Set();
+
+    for (const l of logs) {
+      const day = (l.ts || '').slice(0,10);
+      const tid = String(l.task_id || l.taskId || 'unknown');
+      const email = String(l.user_email || '(unknown)');
+      const k = day + '|' + tid;
+      byDayTask[k] = (byDayTask[k] || 0) + 1;
+      byUser[email] = (byUser[email] || 0) + 1;
+      byTask[tid] = (byTask[tid] || 0) + 1;
+      if (!perUserPerTask[email]) perUserPerTask[email] = {};
+      perUserPerTask[email][tid] = (perUserPerTask[email][tid] || 0) + 1;
+      usersSet.add(email);
+    }
+
+    // Series per task across buckets
+    const taskIds = Array.from(new Set(logs.map(l => String(l.task_id)).filter(Boolean)));
+    const series = taskIds.map(tid => ({ taskId: tid, data: buckets.map(d => byDayTask[d+'|'+tid] || 0) }));
+
+    // Today counts per task
+    const today = new Date().toISOString().slice(0,10);
+    const todayCountsByTask = {};
+    for (const tid of taskIds) { todayCountsByTask[tid] = byDayTask[today+'|'+tid] || 0; }
+
+    res.json({
+      range,
+      days,
+      buckets,
+      series,
+      taskTitles,
+      users: Array.from(usersSet),
+      byUser,
+      byTask,
+      perUserPerTask,
+      todayCountsByTask
+    });
   } catch (e) { res.status(500).json({ error: 'Failed to compute analytics' }); }
 });
 

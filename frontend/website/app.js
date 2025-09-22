@@ -77,6 +77,7 @@
 
   let tasks = loadTasks();
   let ireneTasks = [];
+  let ireneTodayCounts = {};
   let settings = loadSettings();
   let isAuthed = false;
   let deferredPrompt = null; // for PWA install
@@ -1494,6 +1495,7 @@
       // Irene endpoints
       async getIreneTasks(){ const j = await handle(await fetch(baseUrl + '/api/irene/tasks', { ...common, headers: buildHeaders() })); return j.tasks || []; },
       async createIreneTask(t){ return handle(await fetch(baseUrl + '/api/irene/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
+      async updateIreneTask(t){ return handle(await fetch(baseUrl + '/api/irene/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
       async deleteIreneTask(id){ return handle(await fetch(baseUrl + '/api/irene/tasks/' + encodeURIComponent(id), { method: 'DELETE', ...common, headers: buildHeaders() })); },
       async logIrene(taskId){ return handle(await fetch(baseUrl + '/api/irene/log', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ taskId }) })); },
       async getIreneAnalytics(days){ const j = await handle(await fetch(baseUrl + '/api/irene/analytics?range=day&days=' + encodeURIComponent(days), { ...common, headers: buildHeaders() })); return j; },
@@ -1530,11 +1532,16 @@
 
   // Irene: load tasks from backend
   async function loadIrene(){
-    if (!(BACKEND_URL && isAuthed)) { ireneTasks = []; if (elements.ireneGroupCode) elements.ireneGroupCode.textContent=''; renderIrene(); return; }
+    if (!(BACKEND_URL && isAuthed)) { ireneTasks = []; ireneTodayCounts = {}; if (elements.ireneGroupCode) elements.ireneGroupCode.textContent=''; renderIrene(); return; }
     try {
       await ensureIreneGroup();
       const list = await API.getIreneTasks();
       ireneTasks = Array.isArray(list) ? list : [];
+      // fetch today's counts for display next to tasks
+      try {
+        const a = await API.getIreneAnalytics(1);
+        ireneTodayCounts = (a && a.todayCountsByTask) ? a.todayCountsByTask : {};
+      } catch { ireneTodayCounts = {}; }
       renderIrene();
     } catch (e) { console.warn('Irene load failed', e); }
   }
@@ -1556,7 +1563,8 @@
   function populateIreneCategorySelect(){
     if (!elements.ireneCategory) return;
     elements.ireneCategory.innerHTML='';
-    for (const name of settings.categories){ const opt = document.createElement('option'); opt.value = name; opt.textContent = name; elements.ireneCategory.appendChild(opt); }
+    const cats = Array.from(new Set([...(settings.categories||['Default']), ...ireneTasks.map(t => t.category||'Default')]));
+    for (const name of cats){ const opt = document.createElement('option'); opt.value = name; opt.textContent = name; elements.ireneCategory.appendChild(opt); }
   }
 
   function renderIrene(){
@@ -1565,63 +1573,187 @@
     const list = ireneTasks.filter(t => !q || t.title.toLowerCase().includes(q) || (t.notes||'').toLowerCase().includes(q));
     elements.ireneList.innerHTML='';
     elements.ireneEmpty.style.display = list.length ? 'none' : 'block';
-    for (const t of list){
-      const li = document.createElement('li'); li.className='task-item';
-      const plus = document.createElement('button'); plus.className='btn icon plus'; plus.title='Log completion'; plus.setAttribute('aria-label','Log completion'); plus.textContent = '+';
-      plus.addEventListener('click', async () => {
-        try { await API.logIrene(t.id); plus.classList.add('pulse'); setTimeout(()=>plus.classList.remove('pulse'), 400); } catch (e) { alert('Failed to log'); }
+
+    // Build category list similar to Individual tab
+    const uniqueCats = Array.from(new Set(list.map(t => t.category || 'Default')));
+    const catOrder = Array.from(new Set([...(settings.categories||['Default']), ...uniqueCats]));
+
+    for (const cat of catOrder){
+      const tasksInCat = list.filter(t => (t.category || 'Default') === cat);
+      if (tasksInCat.length === 0) continue;
+      const det = document.createElement('details'); det.className='category-section';
+      det.open = !!(settings.categoryOpen && settings.categoryOpen[cat]);
+      const sum = document.createElement('summary');
+      const left = document.createElement('div'); left.style.display='inline-flex'; left.style.alignItems='center'; left.style.gap='8px';
+      const title = document.createElement('span'); title.className='chip'; title.textContent = cat;
+      left.appendChild(title);
+      const right = document.createElement('div'); right.className='cat-actions';
+      // Rename icon
+      const btnEdit = document.createElement('button'); btnEdit.className='btn icon edit'; btnEdit.title='Rename Category'; btnEdit.textContent='✏️';
+      btnEdit.addEventListener('click', async (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        const to = prompt(`Rename category "${cat}" to:`, cat);
+        if (!to || to === cat) return;
+        // Update local categories list (shared with Individual)
+        if (Array.isArray(settings.categories)){
+          const idx = settings.categories.indexOf(cat);
+          if (idx >= 0) settings.categories[idx] = to; else settings.categories.push(to);
+        }
+        // Update all Irene tasks in this category on backend
+        try {
+          await Promise.all(tasksInCat.map(t => API.updateIreneTask({ id: t.id, title: t.title, notes: t.notes || '', category: to })));
+          saveSettings();
+          await loadIrene();
+        } catch (e) { alert('Failed to rename category'); }
       });
-      const main = document.createElement('div'); main.className='task-main';
-      const row1 = document.createElement('div'); row1.className='row1';
-      const title = document.createElement('span'); title.className='title'; title.textContent=t.title;
-      row1.appendChild(title);
-      const row2 = document.createElement('div'); row2.className='row2';
-      const notes = document.createElement('span'); notes.className='notes'; notes.textContent=t.notes||'';
-      row2.appendChild(notes);
-      const row3 = document.createElement('div'); row3.className='row3 meta'; row3.textContent = t.category ? `Category: ${t.category}` : '';
-      main.appendChild(row1); main.appendChild(row2); main.appendChild(row3);
-      const actions = document.createElement('div'); actions.className='item-actions';
-      const btnDel = document.createElement('button'); btnDel.className='btn icon delete'; btnDel.title='Delete'; btnDel.textContent='🗑️';
-      btnDel.addEventListener('click', async ()=>{ if (!confirm('Delete this task?')) return; try { await API.deleteIreneTask(t.id); await loadIrene(); } catch (e) { alert('Delete failed'); } });
-      actions.appendChild(btnDel);
-      li.appendChild(plus); li.appendChild(main); li.appendChild(actions);
-      elements.ireneList.appendChild(li);
+      // Delete icon
+      const btnDelCat = document.createElement('button'); btnDelCat.className='btn icon delete'; btnDelCat.title='Delete Category'; btnDelCat.textContent='🗑️';
+      btnDelCat.addEventListener('click', (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        if (cat === 'Default') { alert('Default category cannot be deleted'); return; }
+        if (tasksInCat.length > 0) { alert('Category has tasks. Move or edit tasks before deleting.'); return; }
+        // Remove from local categories
+        settings.categories = (settings.categories||[]).filter(n => n !== cat);
+        saveSettings();
+        renderIrene();
+      });
+      right.appendChild(btnEdit); right.appendChild(btnDelCat);
+      sum.appendChild(left); sum.appendChild(right);
+      sum.addEventListener('click', () => { setCategoryOpen(cat, !det.open); });
+      det.appendChild(sum);
+
+      // List tasks within this category
+      const ul = document.createElement('ul'); ul.className='task-list';
+      for (const t of tasksInCat){
+        const li = document.createElement('li'); li.className='task-item';
+        const plus = document.createElement('button'); plus.className='btn icon plus'; plus.title='Log completion'; plus.setAttribute('aria-label','Log completion'); plus.textContent = '+';
+        plus.addEventListener('click', async () => {
+          try { await API.logIrene(t.id); plus.classList.add('pulse'); setTimeout(()=>plus.classList.remove('pulse'), 400); try { await loadIrene(); } catch {} } catch (e) { alert('Failed to log'); }
+        });
+        const main = document.createElement('div'); main.className='task-main';
+        const row1 = document.createElement('div'); row1.className='row1';
+        const title = document.createElement('span'); title.className='title'; title.textContent=t.title;
+        // Count chip for today
+        const cnt = Number(ireneTodayCounts[t.id] || 0);
+        if (cnt > 0) {
+          const chip = document.createElement('span'); chip.className='chip'; chip.textContent = `x${cnt} today`;
+          chip.style.marginLeft = '8px';
+          row1.appendChild(chip);
+        }
+        row1.appendChild(title);
+        const row2 = document.createElement('div'); row2.className='row2';
+        const notes = document.createElement('span'); notes.className='notes'; notes.textContent=t.notes||'';
+        row2.appendChild(notes);
+        const row3 = document.createElement('div'); row3.className='row3 meta'; row3.textContent = t.category ? `Category: ${t.category}` : '';
+        main.appendChild(row1); main.appendChild(row2); main.appendChild(row3);
+        const actions = document.createElement('div'); actions.className='item-actions';
+        const btnDel = document.createElement('button'); btnDel.className='btn icon delete'; btnDel.title='Delete'; btnDel.textContent='🗑️';
+        btnDel.addEventListener('click', async ()=>{ if (!confirm('Delete this task?')) return; try { await API.deleteIreneTask(t.id); await loadIrene(); } catch (e) { alert('Delete failed'); } });
+        actions.appendChild(btnDel);
+        li.appendChild(plus); li.appendChild(main); li.appendChild(actions);
+        ul.appendChild(li);
+      }
+      det.appendChild(ul);
+      elements.ireneList.appendChild(det);
     }
   }
 
   async function renderAnalytics(){
     try {
       const days = parseInt(elements.analyticsRange?.value || '7', 10);
-      const data = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(days) : { buckets: [], series: [] };
-      const canvas = elements.analyticsCanvas; if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0,0,canvas.width,canvas.height);
+      const data = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(days) : { buckets: [], series: [], users: [], byUser: {}, perUserPerTask: {}, taskTitles: {} };
       const buckets = data.buckets || [];
       const series = data.series || [];
-      if (!buckets.length || !series.length){ document.getElementById('analytics-empty').style.display='block'; return; } else { document.getElementById('analytics-empty').style.display='none'; }
-      const W = canvas.width, H = canvas.height; const padding = 40; const chartW = W - padding*2; const chartH = H - padding*2;
-      // total per bucket to scale
-      const totals = buckets.map((_,i)=> series.reduce((s,ser)=> s + (ser.data[i]||0), 0));
-      const maxV = Math.max(1, ...totals);
-      const barW = chartW / buckets.length * 0.7; const gap = chartW / buckets.length * 0.3;
-      const colors = series.map((_,i)=> `hsl(${(i*67)%360} 70% 60%)`);
-      ctx.font='12px sans-serif'; ctx.fillStyle='#ccc'; ctx.textAlign='center';
-      for (let i=0;i<buckets.length;i++){
-        let x = padding + i*(barW+gap) + gap*0.5;
-        let y = padding + chartH;
-        let acc = 0;
-        for (let s=0;s<series.length;s++){
-          const val = series[s].data[i]||0;
-          const h = Math.round((val/maxV)*chartH);
-          ctx.fillStyle = colors[s];
-          ctx.fillRect(x, y - acc - h, barW, h);
-          acc += h;
-        }
-        // x labels
-        ctx.fillStyle='#aab'; ctx.fillText(String(buckets[i]).slice(5), x+barW/2, H-10);
+      const users = Array.isArray(data.users) ? data.users : [];
+      const byUser = data.byUser || {};
+      const perUserPerTask = data.perUserPerTask || {};
+      const taskTitles = data.taskTitles || {};
+      const emptyEl = document.getElementById('analytics-empty');
+      if (!buckets.length || !series.length){ if (emptyEl) emptyEl.style.display='block'; } else { if (emptyEl) emptyEl.style.display='none'; }
+
+      // Populate email selector
+      const emailSel = document.getElementById('analytics-email');
+      if (emailSel){
+        const prev = emailSel.value;
+        emailSel.innerHTML='';
+        const optAll = document.createElement('option'); optAll.value = ''; optAll.textContent = 'All'; emailSel.appendChild(optAll);
+        for (const u of users){ const o = document.createElement('option'); o.value = u; o.textContent = u; emailSel.appendChild(o); }
+        if (prev) emailSel.value = prev;
+        emailSel.onchange = () => renderAnalytics();
       }
-      // y-axis line
-      ctx.strokeStyle='#556'; ctx.beginPath(); ctx.moveTo(padding, padding); ctx.lineTo(padding, H-padding); ctx.stroke();
+
+      // Stacked bar chart (existing)
+      const canvas = elements.analyticsCanvas; if (canvas){
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        if (buckets.length && series.length){
+          const W = canvas.width, H = canvas.height; const padding = 40; const chartW = W - padding*2; const chartH = H - padding*2;
+          const totals = buckets.map((_,i)=> series.reduce((s,ser)=> s + (ser.data[i]||0), 0));
+          const maxV = Math.max(1, ...totals);
+          const barW = chartW / buckets.length * 0.7; const gap = chartW / buckets.length * 0.3;
+          const colors = series.map((_,i)=> `hsl(${(i*67)%360} 70% 60%)`);
+          ctx.font='12px sans-serif'; ctx.textAlign='center';
+          for (let i=0;i<buckets.length;i++){
+            let x = padding + i*(barW+gap) + gap*0.5;
+            let y = padding + chartH;
+            let acc = 0;
+            for (let s=0;s<series.length;s++){
+              const val = series[s].data[i]||0;
+              const h = Math.round((val/maxV)*chartH);
+              ctx.fillStyle = colors[s];
+              ctx.fillRect(x, y - acc - h, barW, h);
+              acc += h;
+            }
+            ctx.fillStyle='#aab'; ctx.fillText(String(buckets[i]).slice(5), x+barW/2, H-10);
+          }
+          ctx.strokeStyle='#556'; ctx.beginPath(); ctx.moveTo(padding, padding); ctx.lineTo(padding, H-padding); ctx.stroke();
+        }
+      }
+
+      // Pie: selected email task breakdown
+      const selEmail = (document.getElementById('analytics-email')||{}).value || '';
+      const pieEmail = document.getElementById('analytics-pie-email');
+      if (pieEmail){
+        const ctx = pieEmail.getContext('2d'); ctx.clearRect(0,0,pieEmail.width,pieEmail.height);
+        const map = selEmail ? (perUserPerTask[selEmail] || {}) : Object.entries(perUserPerTask).reduce((acc,[email,obj])=>{ for (const [tid,c] of Object.entries(obj)){ acc[tid]=(acc[tid]||0)+c; } return acc; }, {});
+        const entries = Object.entries(map);
+        const total = entries.reduce((s, [,c])=>s+(c||0), 0);
+        let start = -Math.PI/2; let i=0;
+        for (const [tid, c] of entries){
+          const frac = total>0 ? (c/total) : 0;
+          const end = start + frac * Math.PI*2;
+          ctx.beginPath(); ctx.moveTo(pieEmail.width/2, pieEmail.height/2);
+          ctx.arc(pieEmail.width/2, pieEmail.height/2, Math.min(pieEmail.width,pieEmail.height)/2 - 10, start, end);
+          ctx.closePath(); ctx.fillStyle = `hsl(${(i*67)%360} 70% 60%)`; ctx.fill();
+          // label
+          ctx.fillStyle = '#ddd'; ctx.font='12px sans-serif';
+          const mid = (start+end)/2; const rx = pieEmail.width/2 + Math.cos(mid)* (Math.min(pieEmail.width,pieEmail.height)/3);
+          const ry = pieEmail.height/2 + Math.sin(mid)* (Math.min(pieEmail.width,pieEmail.height)/3);
+          ctx.fillText((taskTitles[tid]||tid)+` (${c})`, rx, ry);
+          start = end; i++;
+        }
+      }
+
+      // Pie: totals by user
+      const pieUsers = document.getElementById('analytics-pie-users');
+      if (pieUsers){
+        const ctx = pieUsers.getContext('2d'); ctx.clearRect(0,0,pieUsers.width,pieUsers.height);
+        const entries = Object.entries(byUser);
+        const total = entries.reduce((s, [,c])=>s+(c||0), 0);
+        let start = -Math.PI/2; let i=0;
+        for (const [email, c] of entries){
+          const frac = total>0 ? (c/total) : 0;
+          const end = start + frac * Math.PI*2;
+          ctx.beginPath(); ctx.moveTo(pieUsers.width/2, pieUsers.height/2);
+          ctx.arc(pieUsers.width/2, pieUsers.height/2, Math.min(pieUsers.width,pieUsers.height)/2 - 10, start, end);
+          ctx.closePath(); ctx.fillStyle = `hsl(${(i*67)%360} 70% 60%)`; ctx.fill();
+          ctx.fillStyle = '#ddd'; ctx.font='12px sans-serif';
+          const mid = (start+end)/2; const rx = pieUsers.width/2 + Math.cos(mid)* (Math.min(pieUsers.width,pieUsers.height)/3);
+          const ry = pieUsers.height/2 + Math.sin(mid)* (Math.min(pieUsers.width,pieUsers.height)/3);
+          ctx.fillText(`${email} (${c})`, rx, ry);
+          start = end; i++;
+        }
+      }
     } catch (e) {
       console.warn('analytics render failed', e);
     }
@@ -1642,6 +1774,16 @@
   if (elements.ireneSearch) elements.ireneSearch.addEventListener('input', renderIrene);
   const btnIreneCancel = document.getElementById('btn-irene-cancel');
   if (btnIreneCancel) btnIreneCancel.addEventListener('click', hideIreneForm);
+  const btnIreneAddCat = document.getElementById('btn-irene-add-category');
+  if (btnIreneAddCat) btnIreneAddCat.addEventListener('click', () => {
+    const name = prompt('New category name:');
+    if (!name) return;
+    if (!Array.isArray(settings.categories)) settings.categories = ['Default'];
+    if (!settings.categories.includes(name)) settings.categories.push(name);
+    saveSettings();
+    populateIreneCategorySelect();
+    renderIrene();
+  });
 
   // Delegation for clicks on list (ensure keyboard friendliness out of the box)
   elements.list.addEventListener('keydown', (e) => {
