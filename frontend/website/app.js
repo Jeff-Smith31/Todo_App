@@ -411,7 +411,7 @@
   }
 
   // Simple router to separate Login, Tasks list, and Task form pages
-  function route(){
+  async function route(){
     const pageLogin = document.getElementById('page-login');
     const pageTasks = document.getElementById('page-tasks');
     const pageForm = document.getElementById('page-task-form');
