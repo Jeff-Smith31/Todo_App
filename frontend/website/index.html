@@ -158,11 +158,12 @@
             <small id="irene-group-code" title="Share this code so others can join your Irene's list" style="color:#9ca3af"></small>
             <button id="btn-irene-join" class="btn">Join Group</button>
           </div>
-          <input id="irene-search" type="search" placeholder="Search tasks…">
+          <div class="irene-row-2" style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+            <input id="irene-search" type="search" placeholder="Search tasks…" style="flex:1; min-width:0;">
+            <button id="btn-irene-create" class="btn primary">Add Task</button>
+          </div>
         </div>
-        <div class="filters">
-          <button id="btn-irene-create" class="btn primary">Add Task</button>
-        </div>
+        <div class="filters"></div>
       </div>
       <div id="irene-list" class="task-list"></div>
       <p id="irene-empty" class="empty">No tasks yet. Use "Add Task" to create one.</p>
