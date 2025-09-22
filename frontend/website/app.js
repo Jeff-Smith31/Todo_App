@@ -204,8 +204,13 @@
     // Router events
     window.addEventListener('hashchange', route);
 
-    // Analytics range change
-    if (elements.analyticsRange) elements.analyticsRange.addEventListener('change', renderAnalytics);
+    // Analytics controls
+    const tfSel = document.getElementById('analytics-timeframe');
+    const onInp = document.getElementById('analytics-on');
+    const taskSel = document.getElementById('analytics-tasks');
+    if (tfSel) tfSel.addEventListener('change', renderAnalytics);
+    if (onInp) onInp.addEventListener('change', renderAnalytics);
+    if (taskSel) taskSel.addEventListener('change', renderAnalytics);
 
     // Irene: Join group button
     if (elements.ireneJoinBtn) elements.ireneJoinBtn.addEventListener('click', async () => {
@@ -1497,8 +1502,22 @@
       async createIreneTask(t){ return handle(await fetch(baseUrl + '/api/irene/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
       async updateIreneTask(t){ return handle(await fetch(baseUrl + '/api/irene/tasks/' + encodeURIComponent(t.id), { method: 'PUT', ...common, headers: buildHeaders(), body: JSON.stringify(t) })); },
       async deleteIreneTask(id){ return handle(await fetch(baseUrl + '/api/irene/tasks/' + encodeURIComponent(id), { method: 'DELETE', ...common, headers: buildHeaders() })); },
-      async logIrene(taskId){ return handle(await fetch(baseUrl + '/api/irene/log', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ taskId }) })); },
-      async getIreneAnalytics(days){ const j = await handle(await fetch(baseUrl + '/api/irene/analytics?range=day&days=' + encodeURIComponent(days), { ...common, headers: buildHeaders() })); return j; },
+      async logIrene(taskId){ const tzOffsetMinutes = -new Date().getTimezoneOffset(); return handle(await fetch(baseUrl + '/api/irene/log', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ taskId, tzOffsetMinutes }) })); },
+      async getIreneAnalytics(params){
+              let q = '';
+              if (params && typeof params === 'object'){
+                const qp = new URLSearchParams();
+                if (Number.isFinite(params.days)) qp.set('days', String(params.days));
+                if (params.timeframe) qp.set('timeframe', String(params.timeframe));
+                if (params.on) qp.set('on', String(params.on));
+                if (params.email) qp.set('email', String(params.email));
+                if (Number.isFinite(params.tzOffsetMinutes)) qp.set('tzOffsetMinutes', String(params.tzOffsetMinutes));
+                q = '?' + qp.toString();
+              } else if (Number.isFinite(params)) {
+                q = '?days=' + encodeURIComponent(params);
+              }
+              const j = await handle(await fetch(baseUrl + '/api/irene/analytics' + q, { ...common, headers: buildHeaders() })); return j;
+            },
       // Irene groups
       async getIreneGroup(){ return handle(await fetch(baseUrl + '/api/irene/group', { ...common, headers: buildHeaders() })); },
       async joinIreneGroup(code){ return handle(await fetch(baseUrl + '/api/irene/group/join', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ code }) })); },
@@ -1660,8 +1679,22 @@
 
   async function renderAnalytics(){
     try {
-      const days = parseInt(elements.analyticsRange?.value || '7', 10);
-      const data = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(days) : { buckets: [], series: [], users: [], byUser: {}, perUserPerTask: {}, taskTitles: {} };
+      const tz = -new Date().getTimezoneOffset();
+      const tfSel = document.getElementById('analytics-timeframe');
+      const onInp = document.getElementById('analytics-on');
+      if (tfSel) {
+        onInp.style.display = (tfSel.value === 'day') ? '' : 'none';
+      }
+      const params = { tzOffsetMinutes: tz };
+      if (tfSel) {
+        const v = tfSel.value || '7';
+        if (v === 'mtd' || v === 'ytd' || v === 'day') { params.timeframe = v; }
+        else { params.days = parseInt(v,10)||7; }
+      } else { params.days = 7; }
+      if ((params.timeframe === 'day') && onInp && onInp.value){ params.on = onInp.value; }
+      // Bar chart should be for logged-in user only
+      if (currentUserEmail) params.email = currentUserEmail;
+      const data = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(params) : { buckets: [], series: [], users: [], byUser: {}, perUserPerTask: {}, taskTitles: {} };
       const buckets = data.buckets || [];
       const series = data.series || [];
       const users = Array.isArray(data.users) ? data.users : [];
@@ -1671,15 +1704,16 @@
       const emptyEl = document.getElementById('analytics-empty');
       if (!buckets.length || !series.length){ if (emptyEl) emptyEl.style.display='block'; } else { if (emptyEl) emptyEl.style.display='none'; }
 
-      // Populate email selector
-      const emailSel = document.getElementById('analytics-email');
-      if (emailSel){
-        const prev = emailSel.value;
-        emailSel.innerHTML='';
-        const optAll = document.createElement('option'); optAll.value = ''; optAll.textContent = 'All'; emailSel.appendChild(optAll);
-        for (const u of users){ const o = document.createElement('option'); o.value = u; o.textContent = u; emailSel.appendChild(o); }
-        if (prev) emailSel.value = prev;
-        emailSel.onchange = () => renderAnalytics();
+      // Populate task multi-select
+      const taskSel = document.getElementById('analytics-tasks');
+      if (taskSel){
+        const prev = Array.from(taskSel.selectedOptions||[]).map(o=>o.value);
+        taskSel.innerHTML='';
+        const tasks = Object.entries(taskTitles);
+        tasks.sort((a,b)=> a[1].localeCompare(b[1]));
+        for (const [tid, title] of tasks){ const o = document.createElement('option'); o.value = tid; o.textContent = title; taskSel.appendChild(o); }
+        for (const v of prev){ const opt = Array.from(taskSel.options).find(o=>o.value===v); if (opt) opt.selected = true; }
+        taskSel.onchange = () => renderAnalytics();
       }
 
       // Stacked bar chart (existing)
@@ -1710,49 +1744,53 @@
         }
       }
 
-      // Pie: selected email task breakdown
-      const selEmail = (document.getElementById('analytics-email')||{}).value || '';
-      const pieEmail = document.getElementById('analytics-pie-email');
-      if (pieEmail){
-        const ctx = pieEmail.getContext('2d'); ctx.clearRect(0,0,pieEmail.width,pieEmail.height);
-        const map = selEmail ? (perUserPerTask[selEmail] || {}) : Object.entries(perUserPerTask).reduce((acc,[email,obj])=>{ for (const [tid,c] of Object.entries(obj)){ acc[tid]=(acc[tid]||0)+c; } return acc; }, {});
-        const entries = Object.entries(map);
+      // Pie: selected tasks by email
+      const selectedCanvas = document.getElementById('analytics-pie-selected');
+      const legendSelected = document.getElementById('legend-pie-selected');
+      if (selectedCanvas && legendSelected){
+        const selectedTasks = new Set(Array.from((document.getElementById('analytics-tasks')||{}).selectedOptions||[]).map(o=>o.value));
+        const ctx = selectedCanvas.getContext('2d'); ctx.clearRect(0,0,selectedCanvas.width,selectedCanvas.height);
+        // Sum counts per email for the selected tasks
+        const emailCounts = {};
+        for (const [email, obj] of Object.entries(perUserPerTask)){
+          let sum = 0; for (const [tid, c] of Object.entries(obj)){ if (!selectedTasks.size || selectedTasks.has(tid)) sum += (c||0); }
+          emailCounts[email] = sum;
+        }
+        const entries = Object.entries(emailCounts).filter(([,v])=>v>0);
         const total = entries.reduce((s, [,c])=>s+(c||0), 0);
         let start = -Math.PI/2; let i=0;
-        for (const [tid, c] of entries){
+        const colors = entries.map((_,i)=> `hsl(${(i*67)%360} 70% 60%)`);
+        for (const [, c] of entries){
           const frac = total>0 ? (c/total) : 0;
           const end = start + frac * Math.PI*2;
-          ctx.beginPath(); ctx.moveTo(pieEmail.width/2, pieEmail.height/2);
-          ctx.arc(pieEmail.width/2, pieEmail.height/2, Math.min(pieEmail.width,pieEmail.height)/2 - 10, start, end);
-          ctx.closePath(); ctx.fillStyle = `hsl(${(i*67)%360} 70% 60%)`; ctx.fill();
-          // label
-          ctx.fillStyle = '#ddd'; ctx.font='12px sans-serif';
-          const mid = (start+end)/2; const rx = pieEmail.width/2 + Math.cos(mid)* (Math.min(pieEmail.width,pieEmail.height)/3);
-          const ry = pieEmail.height/2 + Math.sin(mid)* (Math.min(pieEmail.width,pieEmail.height)/3);
-          ctx.fillText((taskTitles[tid]||tid)+` (${c})`, rx, ry);
-          start = end; i++;
+          ctx.beginPath(); ctx.moveTo(selectedCanvas.width/2, selectedCanvas.height/2);
+          ctx.arc(selectedCanvas.width/2, selectedCanvas.height/2, Math.min(selectedCanvas.width,selectedCanvas.height)/2 - 10, start, end);
+          ctx.closePath(); ctx.fillStyle = colors[i]; ctx.fill(); start = end; i++;
         }
+        // Legend
+        legendSelected.innerHTML=''; i=0;
+        for (const [email, c] of entries){ const chip = document.createElement('div'); chip.className='legend-item'; chip.innerHTML = `<span class="dot" style="background:${colors[i]}"></span><span class="name">${email}</span><span class="val">${c}</span>`; legendSelected.appendChild(chip); i++; }
       }
 
       // Pie: totals by user
       const pieUsers = document.getElementById('analytics-pie-users');
-      if (pieUsers){
+      const legendUsers = document.getElementById('legend-pie-users');
+      if (pieUsers && legendUsers){
         const ctx = pieUsers.getContext('2d'); ctx.clearRect(0,0,pieUsers.width,pieUsers.height);
-        const entries = Object.entries(byUser);
+        const entries = Object.entries(byUser).filter(([,v])=>v>0);
         const total = entries.reduce((s, [,c])=>s+(c||0), 0);
         let start = -Math.PI/2; let i=0;
-        for (const [email, c] of entries){
+        const colors = entries.map((_,i)=> `hsl(${(i*67)%360} 70% 60%)`);
+        for (const [, c] of entries){
           const frac = total>0 ? (c/total) : 0;
           const end = start + frac * Math.PI*2;
           ctx.beginPath(); ctx.moveTo(pieUsers.width/2, pieUsers.height/2);
           ctx.arc(pieUsers.width/2, pieUsers.height/2, Math.min(pieUsers.width,pieUsers.height)/2 - 10, start, end);
-          ctx.closePath(); ctx.fillStyle = `hsl(${(i*67)%360} 70% 60%)`; ctx.fill();
-          ctx.fillStyle = '#ddd'; ctx.font='12px sans-serif';
-          const mid = (start+end)/2; const rx = pieUsers.width/2 + Math.cos(mid)* (Math.min(pieUsers.width,pieUsers.height)/3);
-          const ry = pieUsers.height/2 + Math.sin(mid)* (Math.min(pieUsers.width,pieUsers.height)/3);
-          ctx.fillText(`${email} (${c})`, rx, ry);
-          start = end; i++;
+          ctx.closePath(); ctx.fillStyle = colors[i]; ctx.fill(); start = end; i++;
         }
+        // Legend
+        legendUsers.innerHTML=''; i=0;
+        for (const [email, c] of entries){ const chip = document.createElement('div'); chip.className='legend-item'; chip.innerHTML = `<span class="dot" style="background:${colors[i]}"></span><span class="name">${email}</span><span class="val">${c}</span>`; legendUsers.appendChild(chip); i++; }
       }
     } catch (e) {
       console.warn('analytics render failed', e);

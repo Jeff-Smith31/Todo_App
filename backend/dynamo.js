@@ -201,8 +201,8 @@ export async function deleteIreneTask(user_id, id){
 }
 
 // Irene logs
-export async function logIreneCompletion(user_id, task_id, ts, user_email){
-  const item = { user_id, ts, task_id, user_email };
+export async function logIreneCompletion(user_id, task_id, ts, user_email, extra){
+  const item = Object.assign({ user_id, ts, task_id, user_email }, (extra && typeof extra === 'object') ? extra : {});
   await ddb.send(new PutCommand({ TableName: TABLES.irene_logs, Item: item }));
   return item;
 }

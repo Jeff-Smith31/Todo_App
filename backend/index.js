@@ -309,6 +309,7 @@ const ireneTaskSchema = Joi.object({
 const ireneLogSchema = Joi.object({
   taskId: Joi.string().required(),
   ts: Joi.string().isoDate().optional(),
+  tzOffsetMinutes: Joi.number().integer().min(-720).max(840).optional(),
 }).unknown(true);
 
 const subscriptionSchema = Joi.object({
@@ -529,43 +530,90 @@ app.post('/api/irene/log', authMiddleware, async (req, res) => {
     const { error, value } = ireneLogSchema.validate(req.body || {});
     if (error) return res.status(400).json({ error: error.message });
     const ts = value.ts && typeof value.ts === 'string' ? value.ts : new Date().toISOString();
-    const out = await logIreneCompletion(String(gid), String(value.taskId), ts, String(req.user.email));
+    // Determine timezone offset minutes: prefer provided, fallback to stored user setting, otherwise 0
+    let tz = Number.isFinite(value.tzOffsetMinutes) ? Number(value.tzOffsetMinutes) : undefined;
+    if (!Number.isFinite(tz)) {
+      try { const u = await getUserByEmail(String(req.user.email)); tz = Number(u?.tzOffsetMinutes); } catch {}
+    }
+    if (!Number.isFinite(tz)) tz = 0;
+    // Compute local day (yyyy-mm-dd) based on tz offset
+    const utcMs = Date.parse(ts);
+    const localMs = utcMs + (tz * 60 * 1000);
+    const localDay = new Date(localMs).toISOString().slice(0,10);
+    const out = await logIreneCompletion(String(gid), String(value.taskId), ts, String(req.user.email), { local_day: localDay, tz_offset: tz });
     res.json({ ok: true, log: out });
   } catch (e) { res.status(500).json({ error: 'Failed to log completion' }); }
 });
 app.get('/api/irene/analytics', authMiddleware, async (req, res) => {
   try {
     const gid = await getIreneGroupIdForUser(req.user.email);
-    const range = String(req.query.range || 'day');
-    const days = Math.max(1, Math.min(365, parseInt(String(req.query.days || (range === 'month' ? '30' : range === 'week' ? '14' : '7')), 10)));
-    const now = new Date();
-    const toTs = now.toISOString();
-    const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-    const fromTs = from.toISOString();
-    const logs = await queryIreneLogs(String(gid), fromTs, toTs);
-    const tasksList = await listIreneTasks(String(gid)).catch(()=>[]);
-    const taskTitles = {};
-    for (const t of tasksList) { taskTitles[String(t.id)] = t.title; }
+    // timezone offset minutes: query overrides stored, default 0
+    let tz = Number.isFinite(parseInt(String(req.query.tzOffsetMinutes))) ? parseInt(String(req.query.tzOffsetMinutes)) : undefined;
+    if (!Number.isFinite(tz)) {
+      try { const u = await getUserByEmail(String(req.user.email)); tz = Number(u?.tzOffsetMinutes); } catch {}
+    }
+    if (!Number.isFinite(tz)) tz = 0;
 
-    // Aggregate buckets and counts
-    const buckets = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const dt = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      buckets.push(dt.toISOString().slice(0,10));
+    const timeframe = String(req.query.timeframe || '');
+    const emailFilter = (req.query.email ? String(req.query.email) : '').trim();
+
+    // Determine local range in ms since epoch, then convert to UTC ISO for querying
+    const nowUtc = new Date();
+    const nowLocalMs = nowUtc.getTime() + tz * 60 * 1000;
+    let startLocalMs, endLocalMs;
+
+    function startOfLocalDay(ms){ const d = new Date(ms); d.setUTCHours(0,0,0,0); return d.getTime(); }
+    function endOfLocalDay(ms){ const d = new Date(ms); d.setUTCHours(23,59,59,999); return d.getTime(); }
+
+    if (timeframe === 'day') {
+      const on = String(req.query.on || ''); // yyyy-mm-dd local
+      const onMs = Date.parse(on + 'T00:00:00.000Z');
+      startLocalMs = onMs;
+      endLocalMs = endOfLocalDay(onMs);
+    } else if (timeframe === 'mtd') {
+      const d = new Date(nowLocalMs); const first = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+      startLocalMs = first.getTime(); endLocalMs = nowLocalMs;
+    } else if (timeframe === 'ytd') {
+      const d = new Date(nowLocalMs); const first = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+      startLocalMs = first.getTime(); endLocalMs = nowLocalMs;
+    } else {
+      // default: last N days (including today). Use days param (fallback to 7)
+      const range = String(req.query.range || 'day');
+      const days = Math.max(1, Math.min(365, parseInt(String(req.query.days || (range === 'month' ? '30' : range === 'week' ? '14' : '7')), 10)));
+      startLocalMs = startOfLocalDay(nowLocalMs - (days - 1) * 24 * 60 * 60 * 1000);
+      endLocalMs = endOfLocalDay(nowLocalMs);
     }
 
-    const byDayTask = {}; // key: day|taskId -> count
-    const byUser = {}; // email -> total
-    const byTask = {}; // taskId -> total
+    // Convert local range to UTC ISO for querying: subtract tz offset
+    const fromTs = new Date(startLocalMs - tz * 60 * 1000).toISOString();
+    const toTs = new Date(endLocalMs - tz * 60 * 1000).toISOString();
+
+    const logs = await queryIreneLogs(String(gid), fromTs, toTs);
+    const tasksList = await listIreneTasks(String(gid)).catch(()=>[]);
+    const taskTitles = {}; for (const t of tasksList) { taskTitles[String(t.id)] = t.title; }
+
+    // Build buckets of local dates between start..end
+    const buckets = [];
+    for (let ms = startOfLocalDay(startLocalMs); ms <= endLocalMs; ms += 24*60*60*1000){
+      buckets.push(new Date(ms).toISOString().slice(0,10));
+    }
+
+    // Aggregations
+    const byDayTaskAll = {}; // key: day|taskId -> count (all users)
+    const byUser = {}; // email -> total (all tasks)
+    const byTask = {}; // taskId -> total (all users)
     const perUserPerTask = {}; // email -> { taskId -> total }
     const usersSet = new Set();
 
+    // Helper to resolve local day string for a log
+    function logLocalDay(l){ return (l.local_day || null) || (function(){ const ms = Date.parse(String(l.ts||'')) + tz*60*1000; return new Date(ms).toISOString().slice(0,10); })(); }
+
     for (const l of logs) {
-      const day = (l.ts || '').slice(0,10);
+      const day = logLocalDay(l);
       const tid = String(l.task_id || l.taskId || 'unknown');
       const email = String(l.user_email || '(unknown)');
       const k = day + '|' + tid;
-      byDayTask[k] = (byDayTask[k] || 0) + 1;
+      byDayTaskAll[k] = (byDayTaskAll[k] || 0) + 1;
       byUser[email] = (byUser[email] || 0) + 1;
       byTask[tid] = (byTask[tid] || 0) + 1;
       if (!perUserPerTask[email]) perUserPerTask[email] = {};
@@ -573,18 +621,20 @@ app.get('/api/irene/analytics', authMiddleware, async (req, res) => {
       usersSet.add(email);
     }
 
-    // Series per task across buckets
-    const taskIds = Array.from(new Set(logs.map(l => String(l.task_id)).filter(Boolean)));
-    const series = taskIds.map(tid => ({ taskId: tid, data: buckets.map(d => byDayTask[d+'|'+tid] || 0) }));
+    // Series per task across buckets for the selected email (or all if empty)
+    const logsForSeries = emailFilter ? logs.filter(l => String(l.user_email||'') === emailFilter) : logs;
+    const taskIds = Array.from(new Set(logsForSeries.map(l => String(l.task_id)).filter(Boolean)));
+    const byDayTaskSeries = {};
+    for (const l of logsForSeries){ const day = logLocalDay(l); const tid = String(l.task_id||''); const k = day+'|'+tid; byDayTaskSeries[k] = (byDayTaskSeries[k]||0)+1; }
+    const series = taskIds.map(tid => ({ taskId: tid, data: buckets.map(d => byDayTaskSeries[d+'|'+tid] || 0) }));
 
-    // Today counts per task
-    const today = new Date().toISOString().slice(0,10);
+    // Today (local) counts per task for quick badges
+    const todayLocal = new Date(startOfLocalDay(nowLocalMs)).toISOString().slice(0,10);
     const todayCountsByTask = {};
-    for (const tid of taskIds) { todayCountsByTask[tid] = byDayTask[today+'|'+tid] || 0; }
+    for (const tid of taskIds) { todayCountsByTask[tid] = byDayTaskAll[todayLocal+'|'+tid] || 0; }
 
     res.json({
-      range,
-      days,
+      timeframe: timeframe || null,
       buckets,
       series,
       taskTitles,
