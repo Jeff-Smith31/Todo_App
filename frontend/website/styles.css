@@ -203,3 +203,10 @@ details.category-section > summary {
   padding: 6px 8px; /* reduced padding from 8x10 */
   line-height: 1;
 }
+
+/* Chart legends */
+.chart-legend { display:flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
+.legend-item { display:flex; align-items:center; gap: 8px; color: #cbd5e1; }
+.legend-item .dot { width: 10px; height: 10px; border-radius: 50%; display:inline-block; }
+.legend-item .name { opacity: 0.9; }
+.legend-item .val { margin-left: 6px; opacity: 0.85; }

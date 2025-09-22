@@ -611,7 +611,10 @@ app.get('/api/irene/analytics', authMiddleware, async (req, res) => {
     for (const l of logs) {
       const day = logLocalDay(l);
       const tid = String(l.task_id || l.taskId || 'unknown');
-      const email = String(l.user_email || '(unknown)');
+      const emailRaw = String(l.user_email || '(unknown)');
+      const email = emailRaw.trim();
+      // Skip unknown users entirely from analytics as requested
+      if (!email || email.toLowerCase() === 'unknown' || email.toLowerCase() === '(unknown)') continue;
       const k = day + '|' + tid;
       byDayTaskAll[k] = (byDayTaskAll[k] || 0) + 1;
       byUser[email] = (byUser[email] || 0) + 1;

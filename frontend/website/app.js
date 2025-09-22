@@ -204,13 +204,18 @@
     // Router events
     window.addEventListener('hashchange', route);
 
-    // Analytics controls
-    const tfSel = document.getElementById('analytics-timeframe');
-    const onInp = document.getElementById('analytics-on');
-    const taskSel = document.getElementById('analytics-tasks');
-    if (tfSel) tfSel.addEventListener('change', renderAnalytics);
-    if (onInp) onInp.addEventListener('change', renderAnalytics);
-    if (taskSel) taskSel.addEventListener('change', renderAnalytics);
+    // Analytics controls (per-pie selectors)
+    const bind = (id, evt='change') => { const el = document.getElementById(id); if (el) el.addEventListener(evt, renderAnalytics); return el; };
+    const tfUsers = bind('pie-users-timeframe');
+    const onUsers = bind('pie-users-on');
+    const tfSel = bind('pie-selected-timeframe');
+    const onSel = bind('pie-selected-on');
+    const tasksSel = bind('pie-selected-tasks');
+    const tfBreak = bind('pie-breakdown-timeframe');
+    const onBreak = bind('pie-breakdown-on');
+    const emailBreak = bind('pie-breakdown-email');
+    function toggleOn(selEl, onEl){ if (selEl && onEl){ onEl.style.display = (selEl.value === 'day') ? '' : 'none'; } }
+    [ [tfUsers,onUsers], [tfSel,onSel], [tfBreak,onBreak] ].forEach(([a,b])=>{ if (a) a.addEventListener('change', ()=> toggleOn(a,b)); toggleOn(a,b); });
 
     // Irene: Join group button
     if (elements.ireneJoinBtn) elements.ireneJoinBtn.addEventListener('click', async () => {
@@ -1680,46 +1685,31 @@
   async function renderAnalytics(){
     try {
       const tz = -new Date().getTimezoneOffset();
-      const tfSel = document.getElementById('analytics-timeframe');
-      const onInp = document.getElementById('analytics-on');
-      if (tfSel) {
-        onInp.style.display = (tfSel.value === 'day') ? '' : 'none';
-      }
-      const params = { tzOffsetMinutes: tz };
-      if (tfSel) {
-        const v = tfSel.value || '7';
-        if (v === 'mtd' || v === 'ytd' || v === 'day') { params.timeframe = v; }
-        else { params.days = parseInt(v,10)||7; }
-      } else { params.days = 7; }
-      if ((params.timeframe === 'day') && onInp && onInp.value){ params.on = onInp.value; }
-      // Bar chart should be for logged-in user only
-      if (currentUserEmail) params.email = currentUserEmail;
-      const data = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(params) : { buckets: [], series: [], users: [], byUser: {}, perUserPerTask: {}, taskTitles: {} };
-      const buckets = data.buckets || [];
-      const series = data.series || [];
-      const users = Array.isArray(data.users) ? data.users : [];
-      const byUser = data.byUser || {};
-      const perUserPerTask = data.perUserPerTask || {};
-      const taskTitles = data.taskTitles || {};
       const emptyEl = document.getElementById('analytics-empty');
-      if (!buckets.length || !series.length){ if (emptyEl) emptyEl.style.display='block'; } else { if (emptyEl) emptyEl.style.display='none'; }
 
-      // Populate task multi-select
-      const taskSel = document.getElementById('analytics-tasks');
-      if (taskSel){
-        const prev = Array.from(taskSel.selectedOptions||[]).map(o=>o.value);
-        taskSel.innerHTML='';
-        const tasks = Object.entries(taskTitles);
-        tasks.sort((a,b)=> a[1].localeCompare(b[1]));
-        for (const [tid, title] of tasks){ const o = document.createElement('option'); o.value = tid; o.textContent = title; taskSel.appendChild(o); }
-        for (const v of prev){ const opt = Array.from(taskSel.options).find(o=>o.value===v); if (opt) opt.selected = true; }
-        taskSel.onchange = () => renderAnalytics();
+      function buildParams(prefix){
+        const p = { tzOffsetMinutes: tz };
+        const tf = document.getElementById(prefix + '-timeframe');
+        const on = document.getElementById(prefix + '-on');
+        const v = (tf && tf.value) ? tf.value : '7';
+        if (v === 'mtd' || v === 'ytd' || v === 'day') { p.timeframe = v; } else { p.days = parseInt(v,10)||7; }
+        if (p.timeframe === 'day' && on && on.value) p.on = on.value;
+        return p;
       }
 
-      // Stacked bar chart (existing)
+      // 1) Totals by email pie (and use same timeframe for bar chart)
+      const paramsUsers = buildParams('pie-users');
+      const dataUsers = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(paramsUsers) : { buckets: [], series: [], users: [], byUser: {}, perUserPerTask: {}, taskTitles: {} };
+      const cleanEntries = (obj) => Object.entries(obj||{}).filter(([k,v])=> v>0 && (!k || (k.toLowerCase()!=='unknown' && k.toLowerCase()!=='(unknown)')));
+
+      // Bar chart for current user only (same timeframe as totals)
+      const paramsBar = Object.assign({}, paramsUsers, currentUserEmail ? { email: currentUserEmail } : {});
+      const dataBar = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(paramsBar) : { buckets: [], series: [] };
+      const buckets = dataBar.buckets || [];
+      const series = dataBar.series || [];
+      if (!buckets.length || !series.length){ if (emptyEl) emptyEl.style.display='block'; } else { if (emptyEl) emptyEl.style.display='none'; }
       const canvas = elements.analyticsCanvas; if (canvas){
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0,0,canvas.width,canvas.height);
+        const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height);
         if (buckets.length && series.length){
           const W = canvas.width, H = canvas.height; const padding = 40; const chartW = W - padding*2; const chartH = H - padding*2;
           const totals = buckets.map((_,i)=> series.reduce((s,ser)=> s + (ser.data[i]||0), 0));
@@ -1744,53 +1734,78 @@
         }
       }
 
-      // Pie: selected tasks by email
-      const selectedCanvas = document.getElementById('analytics-pie-selected');
-      const legendSelected = document.getElementById('legend-pie-selected');
-      if (selectedCanvas && legendSelected){
-        const selectedTasks = new Set(Array.from((document.getElementById('analytics-tasks')||{}).selectedOptions||[]).map(o=>o.value));
-        const ctx = selectedCanvas.getContext('2d'); ctx.clearRect(0,0,selectedCanvas.width,selectedCanvas.height);
-        // Sum counts per email for the selected tasks
-        const emailCounts = {};
-        for (const [email, obj] of Object.entries(perUserPerTask)){
-          let sum = 0; for (const [tid, c] of Object.entries(obj)){ if (!selectedTasks.size || selectedTasks.has(tid)) sum += (c||0); }
-          emailCounts[email] = sum;
-        }
-        const entries = Object.entries(emailCounts).filter(([,v])=>v>0);
-        const total = entries.reduce((s, [,c])=>s+(c||0), 0);
-        let start = -Math.PI/2; let i=0;
-        const colors = entries.map((_,i)=> `hsl(${(i*67)%360} 70% 60%)`);
-        for (const [, c] of entries){
-          const frac = total>0 ? (c/total) : 0;
-          const end = start + frac * Math.PI*2;
-          ctx.beginPath(); ctx.moveTo(selectedCanvas.width/2, selectedCanvas.height/2);
-          ctx.arc(selectedCanvas.width/2, selectedCanvas.height/2, Math.min(selectedCanvas.width,selectedCanvas.height)/2 - 10, start, end);
-          ctx.closePath(); ctx.fillStyle = colors[i]; ctx.fill(); start = end; i++;
-        }
-        // Legend
-        legendSelected.innerHTML=''; i=0;
-        for (const [email, c] of entries){ const chip = document.createElement('div'); chip.className='legend-item'; chip.innerHTML = `<span class="dot" style="background:${colors[i]}"></span><span class="name">${email}</span><span class="val">${c}</span>`; legendSelected.appendChild(chip); i++; }
-      }
-
-      // Pie: totals by user
+      // Draw totals by user pie
       const pieUsers = document.getElementById('analytics-pie-users');
       const legendUsers = document.getElementById('legend-pie-users');
       if (pieUsers && legendUsers){
         const ctx = pieUsers.getContext('2d'); ctx.clearRect(0,0,pieUsers.width,pieUsers.height);
-        const entries = Object.entries(byUser).filter(([,v])=>v>0);
+        const entries = cleanEntries(dataUsers.byUser || {});
         const total = entries.reduce((s, [,c])=>s+(c||0), 0);
         let start = -Math.PI/2; let i=0;
         const colors = entries.map((_,i)=> `hsl(${(i*67)%360} 70% 60%)`);
         for (const [, c] of entries){
-          const frac = total>0 ? (c/total) : 0;
-          const end = start + frac * Math.PI*2;
+          const frac = total>0 ? (c/total) : 0; const end = start + frac * Math.PI*2;
           ctx.beginPath(); ctx.moveTo(pieUsers.width/2, pieUsers.height/2);
           ctx.arc(pieUsers.width/2, pieUsers.height/2, Math.min(pieUsers.width,pieUsers.height)/2 - 10, start, end);
           ctx.closePath(); ctx.fillStyle = colors[i]; ctx.fill(); start = end; i++;
         }
-        // Legend
         legendUsers.innerHTML=''; i=0;
-        for (const [email, c] of entries){ const chip = document.createElement('div'); chip.className='legend-item'; chip.innerHTML = `<span class="dot" style="background:${colors[i]}"></span><span class="name">${email}</span><span class="val">${c}</span>`; legendUsers.appendChild(chip); i++; }
+        for (const [email, c] of entries){ const chip = document.createElement('div'); chip.className='legend-item'; chip.innerHTML = `<span class="dot" style="background:${colors[i]}"></span><span class="name">${email}</span><span class="val"> ${c}</span>`; legendUsers.appendChild(chip); i++; }
+      }
+
+      // 2) Selected tasks by email pie
+      const paramsSel = buildParams('pie-selected');
+      const dataSel = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(paramsSel) : { perUserPerTask: {}, taskTitles: {} };
+      const tasksSelect = document.getElementById('pie-selected-tasks');
+      if (tasksSelect){
+        const prev = Array.from(tasksSelect.selectedOptions||[]).map(o=>o.value);
+        tasksSelect.innerHTML='';
+        const tasks = Object.entries(dataSel.taskTitles||{}); tasks.sort((a,b)=> a[1].localeCompare(b[1]));
+        for (const [tid, title] of tasks){ const o = document.createElement('option'); o.value = tid; o.textContent = title; tasksSelect.appendChild(o); }
+        for (const v of prev){ const opt = Array.from(tasksSelect.options).find(o=>o.value===v); if (opt) opt.selected = true; }
+      }
+      const selectedTasks = new Set(Array.from((tasksSelect||{}).selectedOptions||[]).map(o=>o.value));
+      const selCanvas = document.getElementById('analytics-pie-selected');
+      const legendSelected = document.getElementById('legend-pie-selected');
+      if (selCanvas && legendSelected){
+        const ctx = selCanvas.getContext('2d'); ctx.clearRect(0,0,selCanvas.width,selCanvas.height);
+        const emailCounts = {};
+        for (const [email, obj] of Object.entries(dataSel.perUserPerTask||{})){
+          const e = String(email||''); if (!e || e.toLowerCase()==='unknown' || e.toLowerCase()==='(unknown)') continue;
+          let sum = 0; for (const [tid, c] of Object.entries(obj||{})){ if (!selectedTasks.size || selectedTasks.has(tid)) sum += (c||0); }
+          if (sum>0) emailCounts[e] = sum;
+        }
+        const entries = Object.entries(emailCounts);
+        const total = entries.reduce((s, [,c])=>s+(c||0), 0);
+        let start = -Math.PI/2; let i=0;
+        const colors = entries.map((_,i)=> `hsl(${(i*67)%360} 70% 60%)`);
+        for (const [, c] of entries){ const frac = total>0 ? (c/total) : 0; const end = start + frac * Math.PI*2; ctx.beginPath(); ctx.moveTo(selCanvas.width/2, selCanvas.height/2); ctx.arc(selCanvas.width/2, selCanvas.height/2, Math.min(selCanvas.width,selCanvas.height)/2 - 10, start, end); ctx.closePath(); ctx.fillStyle = colors[i]; ctx.fill(); start = end; i++; }
+        legendSelected.innerHTML=''; i=0; for (const [email, c] of entries){ const chip = document.createElement('div'); chip.className='legend-item'; chip.innerHTML = `<span class="dot" style="background:${colors[i]}"></span><span class="name">${email}</span><span class="val"> ${c}</span>`; legendSelected.appendChild(chip); i++; }
+      }
+
+      // 3) Breakdown of tasks for chosen email
+      const paramsBr = buildParams('pie-breakdown');
+      const dataBr = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(paramsBr) : { users: [], perUserPerTask: {}, taskTitles: {} };
+      const emailSel = document.getElementById('pie-breakdown-email');
+      const usersList = Array.isArray(dataBr.users) ? dataBr.users.filter(e => e && e.toLowerCase()!=='unknown' && e.toLowerCase()!=='(unknown)') : [];
+      if (emailSel){
+        const prev = emailSel.value||'';
+        emailSel.innerHTML='';
+        for (const e of usersList){ const o = document.createElement('option'); o.value = e; o.textContent = e; emailSel.appendChild(o); }
+        if (prev && usersList.includes(prev)) emailSel.value = prev;
+      }
+      const chosen = (emailSel && emailSel.value) ? emailSel.value : (usersList[0] || '');
+      const byTask = chosen ? (dataBr.perUserPerTask[chosen] || {}) : {};
+      const entriesBT = Object.entries(byTask).filter(([,c])=> (c||0) > 0).map(([tid,c])=> [String(tid), c]);
+      const canvasBT = document.getElementById('analytics-pie-by-task');
+      const legendBT = document.getElementById('legend-pie-by-task');
+      if (canvasBT && legendBT){
+        const ctx = canvasBT.getContext('2d'); ctx.clearRect(0,0,canvasBT.width,canvasBT.height);
+        const total = entriesBT.reduce((s, [,c])=>s+(c||0), 0);
+        let start = -Math.PI/2; let i=0;
+        const colors = entriesBT.map((_,i)=> `hsl(${(i*67)%360} 70% 60%)`);
+        for (const [, c] of entriesBT){ const frac = total>0 ? (c/total) : 0; const end = start + frac * Math.PI*2; ctx.beginPath(); ctx.moveTo(canvasBT.width/2, canvasBT.height/2); ctx.arc(canvasBT.width/2, canvasBT.height/2, Math.min(canvasBT.width,canvasBT.height)/2 - 10, start, end); ctx.closePath(); ctx.fillStyle = colors[i]; ctx.fill(); start = end; i++; }
+        legendBT.innerHTML=''; i=0; for (const [tid, c] of entriesBT){ const name = (dataBr.taskTitles && dataBr.taskTitles[tid]) ? dataBr.taskTitles[tid] : tid; const chip = document.createElement('div'); chip.className='legend-item'; chip.innerHTML = `<span class="dot" style="background:${colors[i]}"></span><span class="name">${name}</span><span class="val"> ${c}</span>`; legendBT.appendChild(chip); i++; }
       }
     } catch (e) {
       console.warn('analytics render failed', e);
