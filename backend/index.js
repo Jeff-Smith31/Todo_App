@@ -282,7 +282,10 @@ const registerSchema = Joi.object({
   email: Joi.string().email().max(255).required(),
   password: Joi.string().min(8).max(255).required(),
 });
-const loginSchema = registerSchema;
+const loginSchema = Joi.object({
+  email: Joi.string().email().max(255).required(),
+  password: Joi.string().min(1).max(255).required(),
+});
 const taskSchema = Joi.object({
   id: Joi.string().optional(),
   title: Joi.string().min(1).max(255).required(),
