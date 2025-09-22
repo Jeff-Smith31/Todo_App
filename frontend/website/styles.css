@@ -157,6 +157,22 @@ details.category-section > summary {
   .task-item .title { font-size: 14px; color: #ffffff; }
   .task-item .notes { font-size: 12px; }
   .task-item .meta { font-size: 11px; }
+
+  /* Irene mobile header: force two rows */
+  #page-irene .list-header { align-items: flex-start; }
+  #page-irene .title-and-search {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    gap: 6px;
+  }
+  #page-irene .title-and-search .irene-group-row,
+  #page-irene .title-and-search .irene-row-2 {
+    width: 100%;
+    display: flex;
+  }
+  #page-irene .title-and-search .irene-row-2 > #irene-search { flex: 1; }
 }
 
 
