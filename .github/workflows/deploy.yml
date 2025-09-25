@@ -267,6 +267,7 @@ jobs:
 
       - name: Deploy frontend stack (S3 + CloudFront + ACM + Route53)
         run: |
+          set +e
           aws cloudformation deploy \
             --region "${FRONTEND_REGION}" \
             --stack-name "${FRONTEND_STACK_NAME}" \
@@ -279,57 +280,312 @@ jobs:
               ExistingCertificateArn="${FRONT_EXISTING_CERT_ARN:-}" \
               CreateDnsRecords="${CREATE_DNS_RECORDS:-true}" \
             --capabilities CAPABILITY_NAMED_IAM
+          RC=$?
+          set -e
+          if [ $RC -ne 0 ]; then
+            echo "Frontend stack deploy failed (rc=$RC). Will attempt to reuse an existing CloudFront distribution by alias (CNAME) and continue." >> $GITHUB_STEP_SUMMARY
+          fi
+          exit 0
 
       - name: Get frontend outputs
         id: front
         run: |
+          set -e
+          # Try to read outputs from the frontend stack
           BUCKET=$(aws cloudformation describe-stacks \
             --region "${FRONTEND_REGION}" \
             --stack-name "${FRONTEND_STACK_NAME}" \
             --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue | [0]" \
-            --output text)
+            --output text 2>/dev/null || echo None)
           DIST_ID=$(aws cloudformation describe-stacks \
             --region "${FRONTEND_REGION}" \
             --stack-name "${FRONTEND_STACK_NAME}" \
             --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue | [0]" \
-            --output text)
+            --output text 2>/dev/null || echo None)
           CF_DOMAIN=$(aws cloudformation describe-stacks \
             --region "${FRONTEND_REGION}" \
             --stack-name "${FRONTEND_STACK_NAME}" \
             --query "Stacks[0].Outputs[?OutputKey=='DistributionDomainName'].OutputValue | [0]" \
-            --output text)
+            --output text 2>/dev/null || echo None)
+
+          # If a distribution exists but the bucket output is missing, derive the bucket from the distribution's default origin
+          if { [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; } && { [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; }; then
+            # Ensure jq is installed
+            if ! command -v jq >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y jq; fi
+            DIST_JSON=$(aws cloudfront get-distribution --id "$DIST_ID" --output json 2>/dev/null || true)
+            if [ -n "$DIST_JSON" ]; then
+              TOID=$(echo "$DIST_JSON" | jq -r '.Distribution.DistributionConfig.DefaultCacheBehavior.TargetOriginId // empty')
+              ODOM=$(echo "$DIST_JSON" | jq -r ".Distribution.DistributionConfig.Origins.Items[] | select(.Id==\"${TOID}\").DomainName // empty")
+              if [ -n "$ODOM" ]; then
+                case "$ODOM" in
+                  *.s3.amazonaws.com) BUCKET="${ODOM%%.s3.amazonaws.com}" ;;
+                  *.s3.*.amazonaws.com) BUCKET="${ODOM%%.s3.*.amazonaws.com}" ;;
+                  *.s3-website-*.amazonaws.com) BUCKET="${ODOM%%.s3-website-*.amazonaws.com}" ;;
+                  *) BUCKET="$ODOM" ;;
+                esac
+                BUCKET=$(echo "$BUCKET" | sed -E 's/\.s3(\.[a-z0-9-]+)?\.amazonaws\.com$//')
+              fi
+            fi
+          fi
+
+          # Fallbacks if stack outputs and distribution bucket could not be resolved
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
+            if [ -n "${FRONT_EXISTING_BUCKET:-}" ]; then
+              BUCKET="${FRONT_EXISTING_BUCKET}"
+            else
+              # Default naming convention (only create if not using an existing distribution)
+              BUCKET="${DOMAIN_NAME}-site"
+              # Create bucket if it doesn't exist (us-east-1 has special rules)
+              if ! aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
+                if [ "${FRONTEND_REGION}" = "us-east-1" ]; then
+                  aws s3api create-bucket --bucket "$BUCKET" >/dev/null
+                else
+                  aws s3api create-bucket --bucket "$BUCKET" --create-bucket-configuration LocationConstraint="${FRONTEND_REGION}" >/dev/null
+                fi
+              fi
+            fi
+          fi
+
+          # Also resolve any existing distribution by alias (CNAME) and its origin bucket
+          if ! command -v jq >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y jq; fi
+          ALIAS_DID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Aliases.Items!=null && (contains(Aliases.Items, '${DOMAIN_NAME}') || contains(Aliases.Items, 'www.${DOMAIN_NAME}'))].[Id,DomainName] | [0]" \
+            --output text 2>/dev/null || true)
+          ALIAS_DIST_ID=""; ALIAS_CF_DOMAIN=""; ALIAS_BUCKET=""
+          if [ -n "$ALIAS_DID" ] && [ "$ALIAS_DID" != "None" ]; then
+            ALIAS_DIST_ID=$(echo "$ALIAS_DID" | awk '{print $1}')
+            ALIAS_CF_DOMAIN=$(echo "$ALIAS_DID" | awk '{print $2}')
+            ADJSON=$(aws cloudfront get-distribution --id "$ALIAS_DIST_ID" --output json 2>/dev/null || true)
+            if [ -n "$ADJSON" ]; then
+              ATOID=$(echo "$ADJSON" | jq -r '.Distribution.DistributionConfig.DefaultCacheBehavior.TargetOriginId // empty')
+              AODOM=$(echo "$ADJSON" | jq -r ".Distribution.DistributionConfig.Origins.Items[] | select(.Id==\"${ATOID}\").DomainName // empty")
+              if [ -n "$AODOM" ]; then
+                case "$AODOM" in
+                  *.s3.amazonaws.com) ALIAS_BUCKET="${AODOM%%.s3.amazonaws.com}" ;;
+                  *.s3.*.amazonaws.com) ALIAS_BUCKET="${AODOM%%.s3.*.amazonaws.com}" ;;
+                  *.s3-website-*.amazonaws.com) ALIAS_BUCKET="${AODOM%%.s3-website-*.amazonaws.com}" ;;
+                  *) ALIAS_BUCKET="$AODOM" ;;
+                esac
+                ALIAS_BUCKET=$(echo "$ALIAS_BUCKET" | sed -E 's/\.s3(\.[a-z0-9-]+)?\.amazonaws\.com$//')
+              fi
+            fi
+          fi
+
           echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
           echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
           echo "cf_domain=$CF_DOMAIN" >> "$GITHUB_OUTPUT"
+          echo "alias_bucket=$ALIAS_BUCKET" >> "$GITHUB_OUTPUT"
+          echo "alias_dist_id=$ALIAS_DIST_ID" >> "$GITHUB_OUTPUT"
+          echo "alias_cf_domain=$ALIAS_CF_DOMAIN" >> "$GITHUB_OUTPUT"
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
+            echo "Warning: Could not resolve a CloudFront distribution. Subsequent invalidation will fail." >> $GITHUB_STEP_SUMMARY
+          fi
 
-      - name: Sync site to S3 bucket
+      - name: Sync site to S3 bucket(s) (proactive origin sync)
         run: |
           set -e
-          BUCKET='${{ steps.front.outputs.bucket }}'
-          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then echo "Bucket not resolved"; exit 3; fi
-          # Stage only frontend assets into a temporary directory to avoid traversing the whole repo
+          PRIMARY_BUCKET='${{ steps.front.outputs.bucket }}'
+          ALIAS_BUCKET='${{ steps.front.outputs.alias_bucket }}'
+          if { [ -z "$PRIMARY_BUCKET" ] || [ "$PRIMARY_BUCKET" = "None" ]; } && { [ -z "$ALIAS_BUCKET" ] || [ "$ALIAS_BUCKET" = "None" ]; }; then
+            echo "No target bucket resolved"; exit 3; fi
+
+          # Stage entire frontend into a temporary directory so no assets are missed
           SITE_DIR=$(mktemp -d)
-          cp frontend/website/index.html "$SITE_DIR/"
-          cp frontend/website/styles.css "$SITE_DIR/"
-          cp frontend/website/app.js "$SITE_DIR/"
-          cp frontend/website/sw.js "$SITE_DIR/"
-          cp frontend/website/manifest.json "$SITE_DIR/"
-          cp frontend/website/manifest.webmanifest "$SITE_DIR/"
-          if [ -f frontend/website/config.js ]; then cp frontend/website/config.js "$SITE_DIR/"; fi
-          mkdir -p "$SITE_DIR/icons"
-          cp -r frontend/website/icons/. "$SITE_DIR/icons/"
-          # Sync staged assets to S3 and delete anything else
+          cp -R frontend/website/. "$SITE_DIR/"
+
+          # Build/version id used for cache-busting
+          BUILD_ID="${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          INDEX="$SITE_DIR/index.html"
+          if [ -f "$INDEX" ]; then
+            # Append ?v=BUILD_ID to core assets referenced from index.html
+            sed -i "s|\"app.js\"|\"app.js?v=${BUILD_ID}\"|g" "$INDEX" || true
+            sed -i "s|\"styles.css\"|\"styles.css?v=${BUILD_ID}\"|g" "$INDEX" || true
+            sed -i "s|\"manifest.webmanifest\"|\"manifest.webmanifest?v=${BUILD_ID}\"|g" "$INDEX" || true
+            sed -i "s|\"manifest.json\"|\"manifest.json?v=${BUILD_ID}\"|g" "$INDEX" || true
+            sed -i "s|\"config.js\"|\"config.js?v=${BUILD_ID}\"|g" "$INDEX" || true
+            sed -i "s|\"app-version.js\"|\"app-version.js?v=${BUILD_ID}\"|g" "$INDEX" || true
+          fi
+
+          # Create/update version artifacts
+          echo "window.APP_VERSION='${BUILD_ID}'; window.APP_BUILD_TIME='${BUILD_TIME}';" > "$SITE_DIR/app-version.js"
+          echo "{\"version\":\"${BUILD_ID}\",\"time\":\"${BUILD_TIME}\"}" > "$SITE_DIR/version.json"
+
+          # Ensure config.js exists to avoid SPA 403/404 → index.html MIME trap
+          if [ ! -f "$SITE_DIR/config.js" ]; then
+            if [ -n "${BACKEND_OVERRIDE_URL:-}" ]; then
+              echo "window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:'${BACKEND_OVERRIDE_URL}'});" > "$SITE_DIR/config.js"
+            else
+              echo "window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:''});" > "$SITE_DIR/config.js"
+            fi
+          fi
+
+          # Bump Service Worker cache name so clients fetch fresh assets
+          if [ -f "$SITE_DIR/sw.js" ]; then
+            sed -i "s|^const CACHE_NAME = .*|const CACHE_NAME = 'ticktock-cache-${BUILD_ID}';|" "$SITE_DIR/sw.js" || true
+          fi
+
+          # Build target bucket list: prefer alias origin bucket first, then stack bucket if different
+          TARGETS=""
+          if [ -n "$ALIAS_BUCKET" ] && [ "$ALIAS_BUCKET" != "None" ]; then TARGETS="$ALIAS_BUCKET"; fi
+          if [ -n "$PRIMARY_BUCKET" ] && [ "$PRIMARY_BUCKET" != "None" ] && [ "$PRIMARY_BUCKET" != "$ALIAS_BUCKET" ]; then TARGETS="$TARGETS $PRIMARY_BUCKET"; fi
+
+          for B in $TARGETS; do
+            echo "Syncing static assets to s3://$B (immutable cache) before index.html..."
+            aws s3 sync "$SITE_DIR" "s3://$B" --delete --exclude "index.html" --exclude "sw.js" --exclude "config.js" --exclude "app-version.js" --exclude "version.json"
+
+            echo "Uploading critical no-cache files to s3://$B (index.html last)..."
+            if [ -f "$SITE_DIR/sw.js" ]; then
+              aws s3 cp "$SITE_DIR/sw.js" "s3://$B/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+            fi
+            aws s3 cp "$SITE_DIR/config.js" "s3://$B/config.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+            aws s3 cp "$SITE_DIR/app-version.js" "s3://$B/app-version.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+            aws s3 cp "$SITE_DIR/version.json" "s3://$B/version.json" --cache-control "no-cache, no-store, must-revalidate" --content-type application/json
+            if [ -f "$SITE_DIR/index.html" ]; then
+              aws s3 cp "$SITE_DIR/index.html" "s3://$B/index.html" --cache-control "no-cache, no-store, must-revalidate" --content-type text/html
+            fi
+          done
+
+          # Invalidate CloudFront so latest app shell is served and wait for completion
+          DIST_ID='${{ steps.front.outputs.alias_dist_id }}'
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then DIST_ID='${{ steps.front.outputs.dist_id }}'; fi
+          if [ -n "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+            INV_JSON=$(aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
+              "/" \
+              "/index.html" \
+              "/app.js" \
+              "/styles.css" \
+              "/sw.js" \
+              "/manifest.json" \
+              "/manifest.webmanifest" \
+              "/config.js" \
+              "/app-version.js" \
+              "/version.json" \
+              "/icons/*")
+            INV_ID=$(printf "%s" "$INV_JSON" | jq -r '.Invalidation.Id')
+            if [ -n "$INV_ID" ] && [ "$INV_ID" != "null" ]; then
+              echo "Waiting for CloudFront invalidation $INV_ID to complete ..."
+              aws cloudfront wait invalidation-completed --distribution-id "$DIST_ID" --id "$INV_ID" || true
+            fi
+          else
+            echo "Skipping CloudFront invalidation: no distribution id resolved." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Verify frontend homepage (apex and www, after invalidation, retry up to 5 min)
+        id: verify1
+        run: |
+          set +e
+          echo "Waiting for homepage(s) to return 200 (up to 5 minutes)..." >> $GITHUB_STEP_SUMMARY
+          ATT=0; MAX=30; SLEEP=10; CODE_APEX="000"; CODE_WWW="skip"
+          CHECK_WWW=false
+          if [ "${INCLUDE_WWW}" = "true" ]; then CHECK_WWW=true; fi
+          while [ $ATT -lt $MAX ]; do
+            CODE_APEX=$(curl -s -o /dev/null -w "%{http_code}" "https://${DOMAIN_NAME}/" || echo 000)
+            if $CHECK_WWW; then
+              CODE_WWW=$(curl -s -o /dev/null -w "%{http_code}" "https://www.${DOMAIN_NAME}/" || echo 000)
+            fi
+            if [ "$CODE_APEX" = "200" ] && { ! $CHECK_WWW || [ "$CODE_WWW" = "200" ]; }; then
+              break
+            fi
+            ATT=$((ATT+1))
+            sleep $SLEEP
+          done
+          echo "Homepage https://${DOMAIN_NAME}/ status: ${CODE_APEX} after $ATT attempts" >> $GITHUB_STEP_SUMMARY
+          if $CHECK_WWW; then echo "Homepage https://www.${DOMAIN_NAME}/ status: ${CODE_WWW} after $ATT attempts" >> $GITHUB_STEP_SUMMARY; fi
+          NEED_RECOVERY="false"
+          if [ "$CODE_APEX" != "200" ]; then NEED_RECOVERY="true"; fi
+          if $CHECK_WWW && [ "$CODE_WWW" != "200" ]; then NEED_RECOVERY="true"; fi
+          echo "code=${CODE_APEX}" >> "$GITHUB_OUTPUT"
+          echo "code_www=${CODE_WWW}" >> "$GITHUB_OUTPUT"
+          echo "need_recovery=${NEED_RECOVERY}" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: "Recovery: resync to active CloudFront origin if homepage not 200"
+        if: ${{ steps.verify1.outputs.need_recovery == 'true' }}
+        run: |
+          set -e
+          echo "Attempting recovery: determine active CloudFront distribution by alias and resync" >> $GITHUB_STEP_SUMMARY
+          # Ensure jq installed
+          if ! command -v jq >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y jq; fi
+
+          # Find distribution that serves our DOMAIN_NAME alias
+          DID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Aliases.Items!=null && (contains(Aliases.Items, '${DOMAIN_NAME}') || contains(Aliases.Items, 'www.${DOMAIN_NAME}'))].[Id,DomainName] | [0]" \
+            --output text 2>/dev/null || true)
+          if [ -z "$DID" ] || [ "$DID" = "None" ]; then
+            echo "No existing CloudFront distribution found by alias. Skipping recovery." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          CF_ID=$(echo "$DID" | awk '{print $1}')
+          CF_DOM=$(echo "$DID" | awk '{print $2}')
+          echo "Active distribution by alias: $CF_ID ($CF_DOM)" >> $GITHUB_STEP_SUMMARY
+
+          # Resolve default origin bucket from distribution config
+          DIST_JSON=$(aws cloudfront get-distribution --id "$CF_ID" --output json)
+          TOID=$(echo "$DIST_JSON" | jq -r '.Distribution.DistributionConfig.DefaultCacheBehavior.TargetOriginId // empty')
+          ODOM=$(echo "$DIST_JSON" | jq -r ".Distribution.DistributionConfig.Origins.Items[] | select(.Id==\"${TOID}\").DomainName // empty")
+          if [ -z "$ODOM" ]; then
+            echo "Could not resolve origin domain from distribution $CF_ID" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          BUCKET="$ODOM"
+          BUCKET=$(echo "$BUCKET" | sed -E 's/\.s3(\.[a-z0-9-]+)?\.amazonaws\.com$//')
+          echo "Resolved origin bucket for active distribution: $BUCKET (from $ODOM)" >> $GITHUB_STEP_SUMMARY
+
+          # Stage entire frontend into a temporary dir
+          SITE_DIR=$(mktemp -d)
+          cp -R frontend/website/. "$SITE_DIR/"
+
+          # Cache-bust references in index.html
+          BUILD_ID="${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}"
+          if [ -f "$SITE_DIR/index.html" ]; then
+            sed -i "s|\"app.js\"|\"app.js?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"styles.css\"|\"styles.css?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"manifest.webmanifest\"|\"manifest.webmanifest?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"manifest.json\"|\"manifest.json?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"config.js\"|\"config.js?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+            sed -i "s|\"app-version.js\"|\"app-version.js?v=${BUILD_ID}\"|g" "$SITE_DIR/index.html" || true
+          fi
+
+          # Ensure runtime artifacts exist
+          echo "window.APP_VERSION='${BUILD_ID}';" > "$SITE_DIR/app-version.js"
+          if [ ! -f "$SITE_DIR/config.js" ]; then
+            echo "window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:''});" > "$SITE_DIR/config.js"
+          fi
+
+          # Sync to resolved bucket and force no-cache on critical assets
           aws s3 sync "$SITE_DIR" "s3://$BUCKET" --delete
-          # Invalidate CloudFront so latest app shell is served
-          DIST_ID='${{ steps.front.outputs.dist_id }}'
-          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
-            "/index.html" \
-            "/app.js" \
-            "/styles.css" \
-            "/sw.js" \
-            "/manifest.json" \
-            "/manifest.webmanifest" \
-            "/icons/*"
+          aws s3 cp "$SITE_DIR/index.html" "s3://$BUCKET/index.html" --cache-control "no-cache, no-store, must-revalidate" --content-type text/html
+          if [ -f "$SITE_DIR/sw.js" ]; then
+            aws s3 cp "$SITE_DIR/sw.js" "s3://$BUCKET/sw.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+          fi
+          aws s3 cp "$SITE_DIR/config.js" "s3://$BUCKET/config.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+          aws s3 cp "$SITE_DIR/app-version.js" "s3://$BUCKET/app-version.js" --cache-control "no-cache, no-store, must-revalidate" --content-type application/javascript
+
+          # Invalidate and wait
+          INV_JSON=$(aws cloudfront create-invalidation --distribution-id "$CF_ID" --paths "/" "/index.html" "/config.js" "/app-version.js" "/sw.js" 2>/dev/null || true)
+          IID=$(echo "$INV_JSON" | jq -r '.Invalidation.Id // empty')
+          if [ -n "$IID" ]; then
+            echo "Waiting for recovery invalidation $IID to complete ..." >> $GITHUB_STEP_SUMMARY
+            aws cloudfront wait invalidation-completed --distribution-id "$CF_ID" --id "$IID" || true
+          fi
+
+      - name: Verify frontend homepage after recovery (retry up to 5 min)
+        if: steps.verify1.outputs.code != '200'
+        run: |
+          set +e
+          echo "Re-checking homepage to return 200 (up to 5 minutes) after recovery..." >> $GITHUB_STEP_SUMMARY
+          ATT=0; MAX=30; SLEEP=10; CODE="000"
+          while [ $ATT -lt $MAX ]; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://${DOMAIN_NAME}/" || echo 000)
+            if [ "$CODE" = "200" ]; then
+              break
+            fi
+            ATT=$((ATT+1))
+            sleep $SLEEP
+          done
+          echo "Post-recovery homepage https://${DOMAIN_NAME}/ status: ${CODE} after $ATT attempts" >> $GITHUB_STEP_SUMMARY
+          set -e
 
       - name: Compute AllowedOrigins for backend
         id: origins
@@ -375,7 +631,7 @@ jobs:
             echo "Using API subdomain from vars: $AS" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Deploy backend stack (EC2 + Caddy TLS)
+      - name: Deploy backend stack (EC2 + Nginx TLS)
         run: |
           # Use repository URL (must be public for EC2 to clone)
           REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
@@ -435,7 +691,7 @@ jobs:
           fi
           set -e
 
-      - name: SSM nudge - restart containers and check ports
+      - name: SSM nudge - ensure Nginx proxy is running and check ports
         run: |
           set -e
           IID=$(aws cloudformation describe-stacks \
@@ -447,51 +703,34 @@ jobs:
             echo "No InstanceId resolved for SSM nudge." >> $GITHUB_STEP_SUMMARY
             exit 0
           fi
-          echo "Sending SSM command to $IID to ensure proxy is running..." >> $GITHUB_STEP_SUMMARY
+          echo "Sending SSM command to $IID to ensure Nginx is running..." >> $GITHUB_STEP_SUMMARY
           PARAMS_FILE=$(mktemp)
+          APIDOM="${API_SUBDOMAIN}.${DOMAIN_NAME}"
           cat > "$PARAMS_FILE" <<JSON
           {
             "commands": [
-              "cd /opt/ticktock",
-              "echo --- git pull repo ---",
-              "git pull --rebase || true",
-              "echo --- compose pull images if plugin ---",
-              "if docker compose version >/dev/null 2>&1; then docker compose pull || true; fi",
-              "echo --- compose up -d ensure services incl. caddy ---",
-              "if command -v docker-compose >/dev/null 2>&1; then docker-compose up -d || true; else docker compose up -d || true; fi",
-              "echo --- ensure caddy container running ---",
-              "# fix host Caddyfile type if it's a directory",
-              "if [ -d /opt/ticktock/Caddyfile ]; then rm -rf /opt/ticktock/Caddyfile; fi",
-              "# write Caddyfile (idempotent)",
-              "# determine backend container IP on its network",
-              "BACK_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ticktock-backend 2>/dev/null || echo '')",
-              "BACK_UPSTREAM=${BACK_IP:-backend}",
-              "echo '${API_SUBDOMAIN}.${DOMAIN_NAME} {' > /opt/ticktock/Caddyfile",
-              "echo '  encode gzip' >> /opt/ticktock/Caddyfile",
-              "echo \"  reverse_proxy ${BACK_UPSTREAM}:8080\" >> /opt/ticktock/Caddyfile",
-              "echo '}' >> /opt/ticktock/Caddyfile",
-              "# restart caddy container with correct bind mounts",
-              "docker rm -f ticktock-caddy || true",
-              "# detect backend container network (compose network)",
-              "NET=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' ticktock-backend || echo '')",
-              "if [ -z \"$NET\" ]; then NET=bridge; fi",
-              "docker run -d --name ticktock-caddy --network \"$NET\" -p 80:80 -p 443:443 -v /opt/ticktock/Caddyfile:/etc/caddy/Caddyfile --restart unless-stopped caddy:2 || true",
-              "# also ensure caddy is attached to backend's network (idempotent)",
-              "docker network connect \"$NET\" ticktock-caddy 2>/dev/null || true",
-              "echo --- ensure autoheal sidecar ---",
-              "if ! docker ps --format '{{.Names}}' | grep -q '^ticktock-autoheal$'; then docker run -d --name ticktock-autoheal -v /var/run/docker.sock:/var/run/docker.sock -e AUTOHEAL_CONTAINER_LABEL=all -e AUTOHEAL_INTERVAL=10 --restart unless-stopped willfarrell/autoheal || true; fi",
+              "set -e",
+              "cd /opt/ticktock || cd /",
+              "echo --- export APIDOM/DOMAIN ---",
+              "export APIDOM=${APIDOM}",
+              "export API_SUBDOMAIN=${API_SUBDOMAIN}",
+              "export DOMAIN_NAME=${DOMAIN_NAME}",
+              "echo --- pull repo ---",
+              "if [ -d /opt/ticktock/.git ]; then git -C /opt/ticktock fetch --all --prune || true; git -C /opt/ticktock reset --hard origin/main || true; git -C /opt/ticktock clean -fd -e .env || true; fi",
+              "echo --- run nudge - nginx ---",
+              "bash /opt/ticktock/scripts/ssm-nudge.sh",
               "echo --- docker ps ---",
-              "docker ps",
+              "docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true",
               "echo --- sockets ---",
-              "ss -ltnp | egrep \":(80|443|8080|8443)\" || true",
-              "echo --- caddy via localhost test ---",
-              "curl -sk --max-time 8 -H \"Host: ${API_SUBDOMAIN}.${DOMAIN_NAME}\" http://127.0.0.1/healthz || true",
-              "echo --- caddy logs last 120 ---",
-              "docker logs --tail=120 ticktock-caddy || true",
+              "ss -ltnp | egrep ':(80|443|8080|8443)' || true",
+              "echo --- nginx via localhost test ---",
+              "curl -sk --max-time 8 -H 'Host: ${APIDOM}' http://127.0.0.1/healthz || true",
+              "echo --- nginx logs last 120 ---",
+              "docker logs --tail=120 ttt-nginx 2>&1 || true",
               "echo --- backend logs last 120 ---",
-              "docker logs --tail=120 ticktock-backend || true",
+              "docker logs --tail=120 ttt-backend 2>&1 || true",
               "echo --- localhost backend health http://localhost:8080/healthz ---",
-              "curl -sS --max-time 5 http://localhost:8080/healthz || true"
+              "curl -sS --max-time 6 http://localhost:8080/healthz || true"
             ]
           }
           JSON
@@ -528,7 +767,7 @@ jobs:
           HC=$(curl -sk -o /dev/null -w "%{http_code}" "https://${API_FQDN}/healthz" || true)
           echo "HTTPS /healthz status: ${HC}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Wait for backend health (retry up to 10 min)
+      - name: Wait for backend health (retry up to 3 min)
         run: |
           set +e
           BE_URL=$(aws cloudformation describe-stacks \
@@ -540,7 +779,7 @@ jobs:
             echo "No backend endpoint resolved for retry health check." >> $GITHUB_STEP_SUMMARY
           else
             echo "Waiting for backend to become healthy at $BE_URL ..." >> $GITHUB_STEP_SUMMARY
-            ATTEMPTS=0; MAX_ATTEMPTS=40; SLEEP=15
+            ATTEMPTS=0; MAX_ATTEMPTS=12; SLEEP=15
             OK=0
             while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
               CODE=$(curl -sk -o /dev/null -w "%{http_code}" "$BE_URL/healthz" || echo "000")

@@ -61,7 +61,7 @@ else
 fi
 
 printf "Checking %s/api/ping ...\n" "$BE_URL"
-PING_CODE=$(curl -sk --max-time 10 "${BE_URL}/api/ping" -w "\n%{http_code}" 2>/dev/null)
+PING_CODE=$(curl -sk --max-time 10 "${BE_URL}/api/ping" -w "\n%{http_code}" 2>/dev/null || printf "\n000")
 PING_BODY=$(printf "%s" "$PING_CODE" | sed '$d')
 PING_HTTP=$(printf "%s" "$PING_CODE" | tail -n1)
 if [ "$PING_HTTP" = "200" ]; then

@@ -1,12 +1,7 @@
 name: Deploy Frontend (S3 + CloudFront)
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'frontend/website/**'
-      - 'infra/frontend/**'
-      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -17,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: us-east-1  # ACM for CloudFront must be in us-east-1
-      STACK_NAME: tictock-frontend
+      STACK_NAME: ttt-frontend
       DOMAIN_NAME: ticktocktasks.com
     steps:
       - name: Checkout
@@ -75,6 +70,8 @@ jobs:
             --parameter-overrides \
               DomainName=${DOMAIN_NAME} \
               IncludeWww=true \
+              IncludeAppSubdomain=true \
+              AppSubdomain=app \
               HostedZoneId=$HZ \
               ExistingBucketName=${FRONT_EXISTING_BUCKET} \
               ExistingCertificateArn=${FRONT_EXISTING_CERT_ARN} \
@@ -103,17 +100,50 @@ jobs:
             --include "styles.css" \
             --include "manifest.json" \
             --include "manifest.webmanifest" \
+            --include "app/*" \
             --cache-control "public,max-age=31536000,immutable"
 
-      - name: Upload index.html and sw.js with no-cache
+      - name: Upload index.html and critical JS with no-cache
         run: |
           BUCKET=${{ steps.out.outputs.bucket }}
+          # HTML should never be cached
           aws s3 cp frontend/website/index.html s3://$BUCKET/index.html --cache-control "no-cache, no-store, must-revalidate" --content-type "text/html; charset=utf-8"
+          if [ -f frontend/website/app/index.html ]; then
+            aws s3 cp frontend/website/app/index.html s3://$BUCKET/app/index.html --cache-control "no-cache, no-store, must-revalidate" --content-type "text/html; charset=utf-8"
+          fi
+
+          # Service worker should not be cached to allow immediate updates
           if [ -f frontend/website/sw.js ]; then
             aws s3 cp frontend/website/sw.js s3://$BUCKET/sw.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
           fi
 
+          # Critical assets (JS/CSS) should not be cached to always load latest
+          if [ -f frontend/website/app.js ]; then
+            aws s3 cp frontend/website/app.js s3://$BUCKET/app.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
+          fi
+          if [ -f frontend/website/styles.css ]; then
+            aws s3 cp frontend/website/styles.css s3://$BUCKET/styles.css --cache-control "no-cache, no-store, must-revalidate" --content-type "text/css; charset=utf-8"
+          fi
+
+          # Ensure app-version.js exists to avoid SPA 404→index.html MIME trap
+          if [ ! -f frontend/website/app-version.js ]; then
+            echo "window.APP_VERSION='${GITHUB_RUN_NUMBER:-$GITHUB_SHA}';" > frontend/website/app-version.js
+          fi
+          # Ensure config.js exists with safe default (relative API) to avoid MIME trap
+          if [ ! -f frontend/website/config.js ]; then
+            echo "window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:''});" > frontend/website/config.js
+          fi
+
+          # Upload runtime config and version files with no-cache
+          aws s3 cp frontend/website/app-version.js s3://$BUCKET/app-version.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
+          aws s3 cp frontend/website/config.js s3://$BUCKET/config.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
+
       - name: Invalidate CloudFront cache
         run: |
           DIST_ID=${{ steps.out.outputs.dist_id }}
-          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
+            "/index.html" \
+            "/app/index.html" \
+            "/sw.js" \
+            "/config.js" \
+            "/app-version.js"

@@ -88,3 +88,26 @@ Verify
 License
 This project is licensed under the MIT License. See LICENSE for details.
 
+Backend status quick check
+- scripts/check-backend.sh https://api.ticktocktasks.com
+- Or via npm: BACKEND_URL=https://api.ticktocktasks.com npm run check:backend
+
+
+## Diagnostics & Push Test Guide
+
+Use the built‑in diagnostics panel to verify service worker, notification permission, and push subscription status, and to send test notifications to your phone.
+
+Quick links
+- Production diagnostics: https://ticktocktasks.com/?diag=1
+- Local (when serving frontend locally on port 8000): http://localhost:8000/?diag=1
+
+Prerequisites
+- Use your phone (Android Chrome or iOS Safari in the installed PWA). Desktop push is intentionally disabled.
+- Be signed in to your TickTock Tasks account in the app.
+- Ensure your backend is reachable (the site should already be linked via config.js in production).
+
+How to open the diagnostics panel
+1) On your phone, open the main app URL with the query parameter diag=1:
+   - Production: https://ticktocktasks.com/?diag=1
+   - Local dev: http://localhost:8000/?diag=1
+2) Log in if you aren’t already. The diagnostics panel appears as an overlay at the bottom of the screen when diag=1 is present.

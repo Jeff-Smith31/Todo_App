@@ -33,6 +33,7 @@ body {
 .titles h1 { font-size: 20px; margin: 0; }
 .subtitle { margin: 0; font-size: 12px; color: var(--muted); }
 .actions { display:flex; gap: 8px; align-items: center; }
+.btn.small { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
 .auth { display: flex; gap: 6px; }
 .auth input { padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(7,10,24,0.6); color: var(--text); }
 
@@ -61,6 +62,9 @@ input::placeholder { color: #8b93b3; }
 .btn.icon { padding: 8px 10px; }
 
 .list-header { display:flex; align-items:center; justify-content: space-between; gap: 12px; }
+.title-and-search { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.title-and-search h2 { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.title-and-search #search { max-width: 260px; }
 .filters { display:flex; gap: 8px; }
 
 .task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -96,7 +100,113 @@ input::placeholder { color: #8b93b3; }
   color: #cbd5e1;
 }
 
+/* Grey out tasks completed today */
+.task-item.completed-today {
+  opacity: 0.6;
+}
+.task-item.completed-today .title {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+/* Grey out tasks that are not due today (future) without crossing out */
+.task-item.not-today {
+  opacity: 0.6;
+}
+
+/* Make uncompleted due-today tasks brighter for clear contrast */
+.task-item.due-today-item {
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.24);
+}
+.task-item.due-today-item .title {
+  color: #ffffff;
+}
+
+/* Category header layout: ensure actions don't overlap and list can span full width */
+details.category-section > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cat-actions { display: inline-flex; gap: 8px; }
+
+/* Tabs */
+.tabs { display:flex; gap:8px; margin-bottom: 12px; }
+.tab { padding: 8px 12px; border-radius: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: var(--text); cursor: pointer; }
+.tab.active { background: linear-gradient(135deg, var(--primary), var(--primary-600)); border: none; }
+
 @media (max-width: 640px) {
   .titles h1 { font-size: 18px; }
   .actions { gap: 6px; }
+  .title-and-search h2 { white-space: nowrap; }
+  /* Hide search input by default on mobile; show when active */
+  #search { display: none; }
+  #search.active { display: inline-block; width: 60vw; }
+  /* Make category Rename/Delete buttons smaller on mobile */
+  details.category-section summary .btn,
+  .category-section summary .btn {
+    padding: 6px 8px;
+    font-size: 12px;
+    border-radius: 8px;
+  }
+  /* Unified background under the navbar on mobile */
+  body { background: var(--bg) !important; }
+  .app-header { background: var(--bg) !important; backdrop-filter: none; }
+  /* Slightly smaller task fonts on mobile and brighter titles */
+  .task-item .title { font-size: 14px; color: #ffffff; }
+  .task-item .notes { font-size: 12px; }
+  .task-item .meta { font-size: 11px; }
+
+  /* Irene mobile header: force two rows */
+  #page-irene .list-header { align-items: flex-start; }
+  #page-irene .title-and-search {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    gap: 6px;
+  }
+  #page-irene .title-and-search .irene-group-row,
+  #page-irene .title-and-search .irene-row-2 {
+    width: 100%;
+    display: flex;
+  }
+  #page-irene .title-and-search .irene-row-2 > #irene-search { flex: 1; }
 }
+
+
+/* Flashing style for Update button when a new version is available */
+@keyframes ttt-update-flash {
+  0%, 100% { box-shadow: 0 0 0 rgba(79,70,229,0); transform: translateZ(0); }
+  50% { box-shadow: 0 0 0 6px rgba(79,70,229,0.35), 0 0 18px rgba(34,211,238,0.6); }
+}
+#btn-update.flash {
+  animation: ttt-update-flash 1.2s ease-in-out infinite;
+  border-color: rgba(79,70,229,0.8);
+}
+@media (prefers-reduced-motion: reduce) {
+  #btn-update.flash { animation: none; }
+}
+
+/* Irene plus button */
+.btn.icon.plus { font-size: 18px; font-weight: 700; background: rgba(34,197,94,0.2); border: 1px solid rgba(34,197,94,0.4); width: 32px; height: 32px; display:inline-flex; align-items:center; justify-content:center; border-radius: 8px; color: #a7f3d0; }
+.btn.icon.plus.pulse { animation: irene-pulse 0.4s ease-out 1; }
+@keyframes irene-pulse { 0%{ transform: scale(1); } 50%{ transform: scale(1.15); } 100%{ transform: scale(1); } }
+
+/* Smaller edit/delete icon buttons (reduced ~30%) */
+.item-actions .btn.icon.edit,
+.item-actions .btn.icon.delete,
+.cat-actions .btn.icon.edit,
+.cat-actions .btn.icon.delete {
+  font-size: 12px; /* ~30% smaller than default text size */
+  padding: 6px 8px; /* reduced padding from 8x10 */
+  line-height: 1;
+}
+
+/* Chart legends */
+.chart-legend { display:flex; flex-direction: column; gap: 4px; margin-top: 6px; font-size: 12px; }
+.legend-item { display:flex; align-items:center; gap: 8px; color: #cbd5e1; }
+.legend-item .dot { width: 10px; height: 10px; border-radius: 50%; display:inline-block; }
+.legend-item .name { opacity: 0.9; }
+.legend-item .val { margin-left: 6px; opacity: 0.85; }

@@ -63,7 +63,7 @@ fi
 CONFIG_CONTENT="window.RUNTIME_CONFIG = Object.assign({}, window.RUNTIME_CONFIG || {}, { BACKEND_URL: '${CHOSEN_URL}' });\n"
 
 echo "Uploading config.js to s3://$BUCKET/config.js with BACKEND_URL=$CHOSEN_URL"
-echo -e "$CONFIG_CONTENT" | aws s3 cp - "s3://$BUCKET/config.js" --content-type application/javascript --region "$FRONT_REGION"
+echo -e "$CONFIG_CONTENT" | aws s3 cp - "s3://$BUCKET/config.js" --content-type application/javascript --cache-control "no-cache, no-store, must-revalidate" --region "$FRONT_REGION"
 
 echo "Creating CloudFront invalidation for /config.js"
 aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/config.js" >/dev/null
