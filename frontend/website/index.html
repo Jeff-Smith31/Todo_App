@@ -185,6 +185,10 @@
             <span>Category</span>
             <select id="irene-category"></select>
           </label>
+          <label>
+            <span>Difficulty (1–10)</span>
+            <input id="irene-difficulty" type="number" min="1" max="10" value="1">
+          </label>
         </div>
         <div class="form-actions">
           <button type="submit" class="btn primary" id="btn-irene-save">Save</button>
@@ -203,59 +207,7 @@
       </div>
 
 
-      <!-- Pie 1: Total completions by email with timeframe selector -->
-      <div class="panel" style="margin-top:12px">
-        <div class="grid" style="margin-bottom:8px">
-          <label>
-            <span>Timeframe (Totals by email)</span>
-            <select id="pie-users-timeframe">
-              <option value="7">Last 7 days</option>
-              <option value="14">Last 14 days</option>
-              <option value="30">Last 30 days</option>
-              <option value="mtd">Month to date</option>
-              <option value="ytd">Year to date</option>
-              <option value="day">Specific day…</option>
-            </select>
-          </label>
-          <label>
-            <span>On (local day)</span>
-            <input id="pie-users-on" type="date" style="display:none">
-          </label>
-        </div>
-        <span class="subtitle">Total completions by email</span>
-        <canvas id="analytics-pie-users" width="400" height="260" style="width:100%;height:auto;background:rgba(0,0,0,0.1);border-radius:12px"></canvas>
-        <div id="legend-pie-users" class="chart-legend"></div>
-      </div>
-
-      <!-- Pie 2: Selected tasks by email with day and task selection -->
-      <div class="panel" style="margin-top:12px">
-        <div class="grid" style="margin-bottom:8px">
-          <label>
-            <span>Timeframe (Selected tasks)</span>
-            <select id="pie-selected-timeframe">
-              <option value="7">Last 7 days</option>
-              <option value="14">Last 14 days</option>
-              <option value="30">Last 30 days</option>
-              <option value="mtd">Month to date</option>
-              <option value="ytd">Year to date</option>
-              <option value="day">Specific day…</option>
-            </select>
-          </label>
-          <label>
-            <span>On (local day)</span>
-            <input id="pie-selected-on" type="date" style="display:none">
-          </label>
-          <label>
-            <span>Select tasks to compare (by email)</span>
-            <select id="pie-selected-tasks" multiple size="4" style="min-height:90px"></select>
-          </label>
-        </div>
-        <span class="subtitle">Selected tasks by email</span>
-        <canvas id="analytics-pie-selected" width="400" height="260" style="width:100%;height:auto;background:rgba(0,0,0,0.1);border-radius:12px"></canvas>
-        <div id="legend-pie-selected" class="chart-legend"></div>
-      </div>
-
-      <!-- Pie 3: Breakdown of tasks for a chosen email -->
+      <!-- Pie 3 (moved to top): Breakdown of tasks for a chosen email -->
       <div class="panel" style="margin-top:12px">
         <div class="grid" style="margin-bottom:8px">
           <label>
@@ -281,6 +233,60 @@
         <span class="subtitle">Breakdown of tasks for selected email</span>
         <canvas id="analytics-pie-by-task" width="400" height="260" style="width:100%;height:auto;background:rgba(0,0,0,0.1);border-radius:12px"></canvas>
         <div id="legend-pie-by-task" class="chart-legend"></div>
+      </div>
+
+      <!-- Pie 1: Total completions by email with timeframe selector -->
+      <div class="panel" style="margin-top:12px">
+        <div class="grid" style="margin-bottom:8px">
+          <label>
+            <span>Timeframe (Totals by email)</span>
+            <select id="pie-users-timeframe">
+              <option value="7">Last 7 days</option>
+              <option value="14">Last 14 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="mtd">Month to date</option>
+              <option value="ytd">Year to date</option>
+              <option value="day">Specific day…</option>
+            </select>
+          </label>
+          <label>
+            <span>On (local day)</span>
+            <input id="pie-users-on" type="date" style="display:none">
+          </label>
+        </div>
+        <span class="subtitle">Total completions by email</span>
+        <canvas id="analytics-pie-users" width="400" height="260" style="width:100%;height:auto;background:rgba(0,0,0,0.1);border-radius:12px"></canvas>
+        <div id="legend-pie-users" class="chart-legend"></div>
+        <span class="subtitle" style="margin-top:8px;display:block">Weighted score by email (difficulty-adjusted)</span>
+        <div id="score-pie-users" class="chart-legend"></div>
+      </div>
+
+      <!-- Pie 2: Selected tasks by email with day and task selection -->
+      <div class="panel" style="margin-top:12px">
+        <div class="grid" style="margin-bottom:8px">
+          <label>
+            <span>Timeframe (Selected tasks)</span>
+            <select id="pie-selected-timeframe">
+              <option value="7">Last 7 days</option>
+              <option value="14">Last 14 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="mtd">Month to date</option>
+              <option value="ytd">Year to date</option>
+              <option value="day">Specific day…</option>
+            </select>
+          </label>
+          <label>
+            <span>On (local day)</span>
+            <input id="pie-selected-on" type="date" style="display:none">
+          </label>
+          <label>
+            <span>Select tasks to compare (by email)</span>
+            <select id="pie-selected-tasks" multiple size="1"></select>
+          </label>
+        </div>
+        <span class="subtitle">Selected tasks by email</span>
+        <canvas id="analytics-pie-selected" width="400" height="260" style="width:100%;height:auto;background:rgba(0,0,0,0.1);border-radius:12px"></canvas>
+        <div id="legend-pie-selected" class="chart-legend"></div>
       </div>
 
       <p class="empty" id="analytics-empty" style="display:none">No data yet. Start logging tasks on the Family tab.</p>

@@ -1602,6 +1602,7 @@
       elements.ireneTitle.value = '';
       elements.ireneNotes.value = '';
       elements.ireneCategory.value = (Array.isArray(settings.categoriesIrene) ? settings.categoriesIrene[0] : 'Default') || 'Default';
+      const dEl = document.getElementById('irene-difficulty'); if (dEl) dEl.value = '1';
     }
   }
   function hideIreneForm(){ if (elements.ireneForm) elements.ireneForm.classList.add('hidden'); }
@@ -1690,7 +1691,10 @@
         const row2 = document.createElement('div'); row2.className='row2';
         const notes = document.createElement('span'); notes.className='notes'; notes.textContent=t.notes||'';
         row2.appendChild(notes);
-        const row3 = document.createElement('div'); row3.className='row3 meta'; row3.textContent = t.category ? `Category: ${t.category}` : '';
+        const row3 = document.createElement('div'); row3.className='row3 meta';
+        const catTxt = t.category ? `Category: ${t.category}` : '';
+        const diffTxt = (t.difficulty && Number(t.difficulty) >= 1) ? ` • Difficulty: ${t.difficulty}` : '';
+        row3.textContent = (catTxt + diffTxt) || '';
         main.appendChild(row1); main.appendChild(row2); main.appendChild(row3);
         const actions = document.createElement('div'); actions.className='item-actions';
         const btnDel = document.createElement('button'); btnDel.className='btn icon delete'; btnDel.title='Delete'; btnDel.textContent='🗑️';
@@ -1772,7 +1776,14 @@
           ctx.closePath(); ctx.fillStyle = colors[i]; ctx.fill(); start = end; i++;
         }
         legendUsers.innerHTML=''; i=0;
-        for (const [email, c] of entries){ const chip = document.createElement('div'); chip.className='legend-item'; chip.innerHTML = `<span class="dot" style="background:${colors[i]}"></span><span class="name">${email}</span><span class="val"> ${c}</span>`; legendUsers.appendChild(chip); i++; }
+        for (const [email, c] of entries){ const chip = document.createElement('div'); chip.className='legend-item'; chip.innerHTML = `<span class=\"dot\" style=\"background:${colors[i]}\"></span><span class=\"name\">${email}</span><span class=\"val\"> ${c}</span>`; legendUsers.appendChild(chip); i++; }
+        const scoreEl = document.getElementById('score-pie-users');
+        if (scoreEl){
+          scoreEl.innerHTML = '';
+          const scores = Object.entries(dataUsers.scoreByUser || {}).filter(([k,v])=> v>0 && (!k || (k.toLowerCase()!=='unknown' && k.toLowerCase()!=='(unknown)'))).sort((a,b)=> b[1]-a[1]);
+          let j=0;
+          for (const [email, s] of scores){ const chip = document.createElement('div'); chip.className='legend-item'; const col = `hsl(${(j*67)%360} 70% 60%)`; chip.innerHTML = `<span class=\"dot\" style=\"background:${col}\"></span><span class=\"name\">${email}</span><span class=\"val\"> ${Math.round(s)}</span>`; scoreEl.appendChild(chip); j++; }
+        }
       }
 
       // 2) Selected tasks by email pie
@@ -1839,7 +1850,9 @@
   if (elements.ireneForm) elements.ireneForm.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     try {
-      const t = { id: elements.ireneId.value || undefined, title: elements.ireneTitle.value.trim(), notes: elements.ireneNotes.value.trim(), category: elements.ireneCategory.value };
+      const dEl = document.getElementById('irene-difficulty');
+      const diff = dEl ? Math.max(1, Math.min(10, parseInt(dEl.value || '1', 10) || 1)) : undefined;
+      const t = { id: elements.ireneId.value || undefined, title: elements.ireneTitle.value.trim(), notes: elements.ireneNotes.value.trim(), category: elements.ireneCategory.value, difficulty: diff };
       if (!t.title) return;
       await API.createIreneTask(t);
       hideIreneForm();

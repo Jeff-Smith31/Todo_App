@@ -210,3 +210,6 @@ details.category-section > summary {
 .legend-item .dot { width: 10px; height: 10px; border-radius: 50%; display:inline-block; }
 .legend-item .name { opacity: 0.9; }
 .legend-item .val { margin-left: 6px; opacity: 0.85; }
+
+/* Make the Selected tasks multi-select a single line tall */
+#pie-selected-tasks { max-height: 36px; }
