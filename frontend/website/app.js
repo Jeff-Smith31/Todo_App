@@ -601,7 +601,7 @@
     if (elements.category) {
       ensureCategoryState();
       populateCategorySelect();
-      elements.category.value = settings.categories[0] || 'Default';
+      elements.category.value = (Array.isArray(settings.categoriesIndividual) ? settings.categoriesIndividual[0] : 'Default') || 'Default';
     }
   }
 
@@ -689,15 +689,16 @@
     // Categories to render: union of known categories and those present in filtered tasks
     ensureCategoryState();
     const presentCats = Array.from(new Set(filtered.map(t => t.category || 'Default')));
-    const catOrder = Array.from(new Set([...(settings.categories || []), ...presentCats]));
+    const baseCats = Array.isArray(settings.categoriesIndividual) ? settings.categoriesIndividual : ['Default'];
+    const catOrder = Array.from(new Set([...(baseCats || []), ...presentCats]));
 
     for (const catName of catOrder){
       const catTasks = filtered.filter(t => (t.category || 'Default') === catName);
       // Build section
       const details = document.createElement('details');
       details.className = 'category-section';
-      details.open = settings.categoryOpen[catName] !== false; // default open
-      details.addEventListener('toggle', () => setCategoryOpen(catName, details.open));
+      details.open = settings.catOpenIndividual[catName] !== false; // default open
+      details.addEventListener('toggle', () => setCategoryOpenInd(catName, details.open));
 
       const summary = document.createElement('summary');
       summary.innerHTML = `<strong>${catName}</strong> <span style="opacity:0.7">(${catTasks.length})</span>`;
@@ -850,24 +851,28 @@
 
   function populateCategorySelect(){
     if (!elements.category) return;
+    ensureCategoryState();
     // Clear
     elements.category.innerHTML = '';
-    for (const name of settings.categories){
+    const cats = Array.isArray(settings.categoriesIndividual) ? settings.categoriesIndividual : ['Default'];
+    for (const name of cats){
       const opt = document.createElement('option');
       opt.value = name; opt.textContent = name;
       elements.category.appendChild(opt);
     }
     // Ensure a value is selected
     const cur = elements.category.value;
-    if (!cur || !settings.categories.includes(cur)) elements.category.value = settings.categories[0] || 'Default';
+    if (!cur || !cats.includes(cur)) elements.category.value = cats[0] || 'Default';
   }
 
   function addCategoryViaPrompt(){
     const name = (prompt('New category name:') || '').trim();
     if (!name) return;
-    if (settings.categories.includes(name)) { alert('Category already exists'); return; }
-    settings.categories.push(name);
-    settings.categoryOpen[name] = true;
+    ensureCategoryState();
+    const cats = settings.categoriesIndividual;
+    if (cats.includes(name)) { alert('Category already exists'); return; }
+    cats.push(name);
+    settings.catOpenIndividual[name] = true;
     saveSettings();
     populateCategorySelect();
     render();
@@ -876,18 +881,20 @@
   async function renameCategory(oldName){
     const name = (prompt('Rename category:', oldName) || '').trim();
     if (!name || name === oldName) return;
-    if (settings.categories.includes(name)) { alert('A category with that name already exists'); return; }
+    ensureCategoryState();
+    const cats = settings.categoriesIndividual;
+    if (cats.includes(name)) { alert('A category with that name already exists'); return; }
 
-    const idx = settings.categories.indexOf(oldName);
-    if (idx >= 0) settings.categories[idx] = name;
+    const idx = cats.indexOf(oldName);
+    if (idx >= 0) cats[idx] = name;
 
     // Collect tasks to update
     const toUpdate = tasks.filter(t => (t.category || 'Default') === oldName);
     for (const t of toUpdate) { t.category = name; }
 
     // Preserve open/closed state for the renamed section
-    settings.categoryOpen[name] = !!settings.categoryOpen[oldName];
-    delete settings.categoryOpen[oldName];
+    settings.catOpenIndividual[name] = !!settings.catOpenIndividual[oldName];
+    delete settings.catOpenIndividual[oldName];
 
     // Persist locally first for instant UX
     saveTasks();
@@ -908,15 +915,20 @@
     if (name === 'Default') { alert('Default category cannot be deleted'); return; }
     const used = tasks.some(t => t.category === name);
     if (used) { alert('Category has tasks. Move or edit tasks before deleting.'); return; }
-    settings.categories = settings.categories.filter(n => n !== name);
-    delete settings.categoryOpen[name];
+    ensureCategoryState();
+    settings.categoriesIndividual = settings.categoriesIndividual.filter(n => n !== name);
+    delete settings.catOpenIndividual[name];
     saveSettings();
     populateCategorySelect();
     render();
   }
 
-  function setCategoryOpen(name, open){
-    settings.categoryOpen[name] = !!open;
+  function setCategoryOpenInd(name, open){
+    settings.catOpenIndividual[name] = !!open;
+    saveSettings();
+  }
+  function setIreneCategoryOpen(name, open){
+    settings.catOpenIrene[name] = !!open;
     saveSettings();
   }
 
@@ -1589,14 +1601,15 @@
       elements.ireneId.value = '';
       elements.ireneTitle.value = '';
       elements.ireneNotes.value = '';
-      elements.ireneCategory.value = settings.categories[0] || 'Default';
+      elements.ireneCategory.value = (Array.isArray(settings.categoriesIrene) ? settings.categoriesIrene[0] : 'Default') || 'Default';
     }
   }
   function hideIreneForm(){ if (elements.ireneForm) elements.ireneForm.classList.add('hidden'); }
   function populateIreneCategorySelect(){
     if (!elements.ireneCategory) return;
     elements.ireneCategory.innerHTML='';
-    const cats = Array.from(new Set([...(settings.categories||['Default']), ...ireneTasks.map(t => t.category||'Default')]));
+    const baseCats = Array.isArray(settings.categoriesIrene) ? settings.categoriesIrene : ['Default'];
+    const cats = Array.from(new Set([...(baseCats||['Default']), ...ireneTasks.map(t => t.category||'Default')]));
     for (const name of cats){ const opt = document.createElement('option'); opt.value = name; opt.textContent = name; elements.ireneCategory.appendChild(opt); }
   }
 
@@ -1615,7 +1628,7 @@
       const tasksInCat = list.filter(t => (t.category || 'Default') === cat);
       if (tasksInCat.length === 0) continue;
       const det = document.createElement('details'); det.className='category-section';
-      det.open = !!(settings.categoryOpen && settings.categoryOpen[cat]);
+      det.open = !!(settings.catOpenIrene && settings.catOpenIrene[cat]);
       const sum = document.createElement('summary');
       const left = document.createElement('div'); left.style.display='inline-flex'; left.style.alignItems='center'; left.style.gap='8px';
       const title = document.createElement('span'); title.className='chip'; title.textContent = cat;
@@ -1652,7 +1665,7 @@
       });
       right.appendChild(btnEdit); right.appendChild(btnDelCat);
       sum.appendChild(left); sum.appendChild(right);
-      sum.addEventListener('click', () => { setCategoryOpen(cat, !det.open); });
+      sum.addEventListener('click', () => { setIreneCategoryOpen(cat, !det.open); });
       det.appendChild(sum);
 
       // List tasks within this category

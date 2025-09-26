@@ -44,11 +44,47 @@ export default function App() {
   const [taskForm, setTaskForm] = useState({ title: '', everyDays: '1', nextDue: '2025-01-01', remindAt: '09:00', notes: '', priority: false });
   const [message, setMessage] = useState('');
 
+  // Load persisted auth on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const t = await AsyncStorage.getItem('tt_auth_token');
+        const u = await AsyncStorage.getItem('tt_user_json');
+        if (t) setToken(t);
+        if (u) {
+          try { setUser(JSON.parse(u)); } catch {}
+        }
+      } catch {}
+    })();
+  }, []);
+
+  // Persist auth changes
+  useEffect(() => {
+    (async () => { try { if (token) await AsyncStorage.setItem('tt_auth_token', token); else await AsyncStorage.removeItem('tt_auth_token'); } catch {} })();
+  }, [token]);
+  useEffect(() => {
+    (async () => { try { if (user) await AsyncStorage.setItem('tt_user_json', JSON.stringify(user)); else await AsyncStorage.removeItem('tt_user_json'); } catch {} })();
+  }, [user]);
+
   const headers = useMemo(() => ({ 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }), [token]);
 
+  const normBase = (url) => {
+    const u = String(url || '').trim();
+    if (!u) return '';
+    const withScheme = /^https?:\/\//i.test(u) ? u : ('https://' + u);
+    return withScheme.replace(/\/?$/,'');
+  };
+
   const call = async (path, opts = {}) => {
-    if (!baseUrl) throw new Error('Set backend URL');
-    const res = await fetch(baseUrl + path, { ...opts, headers: { ...(opts.headers || {}), ...headers } });
+    const base = normBase(baseUrl);
+    if (!base) throw new Error('Set backend URL');
+    const url = base + (path.startsWith('/') ? path : ('/' + path));
+    let res;
+    try {
+      res = await fetch(url, { ...opts, headers: { ...(opts.headers || {}), ...headers } });
+    } catch (e) {
+      throw new Error('Network error. Check your Backend URL and internet connection.');
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
     return data;
@@ -57,13 +93,23 @@ export default function App() {
   const doRegister = async () => {
     try {
       const data = await call('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) });
-      setUser(data.user); setToken(data.token); setMessage('Registered');
+      setToken(data.token);
+      setUser(data.user);
+      setMessage('Registered');
+      try { const me = await call('/api/auth/me', { method: 'GET' }); if (me && me.user) setUser(me.user); } catch {}
+      try { await call('/api/user/timezone', { method: 'POST', body: JSON.stringify({ tzOffsetMinutes: -new Date().getTimezoneOffset() }) }); } catch {}
+      try { await loadTasks(); } catch {}
     } catch (e) { setMessage(e.message); }
   };
   const doLogin = async () => {
     try {
       const data = await call('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
-      setUser(data.user); setToken(data.token); setMessage('Logged in');
+      setToken(data.token);
+      setUser(data.user);
+      setMessage('Logged in');
+      try { const me = await call('/api/auth/me', { method: 'GET' }); if (me && me.user) setUser(me.user); } catch {}
+      try { await call('/api/user/timezone', { method: 'POST', body: JSON.stringify({ tzOffsetMinutes: -new Date().getTimezoneOffset() }) }); } catch {}
+      try { await loadTasks(); } catch {}
     } catch (e) { setMessage(e.message); }
   };
   const loadTasks = async () => {
