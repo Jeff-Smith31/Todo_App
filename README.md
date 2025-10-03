@@ -59,17 +59,18 @@ This setup removes CloudFront/S3. The frontend is served by Nginx on the same EC
   - backend (Express API on 8080 inside the network)
   - nginx (serves frontend from frontend/website and proxies /api/* to backend)
 
-2) TLS (HTTPS on frontend)
-- HTTPS is enabled in nginx with Let’s Encrypt certs. We use the ACME webroot at /var/www/certbot (mapped to the certbot_challenges volume) and expect certs under /etc/letsencrypt (mapped to the letsencrypt volume).
-- One-time issue certificate (replace DOMAIN with your real domain):
+2) TLS (HTTPS on frontend) — optional
+- By default, the stack serves over HTTP only (port 80) so the site is reachable without certificates.
+- To enable HTTPS: obtain Let’s Encrypt certs using the ACME webroot at /var/www/certbot (mapped to certbot_challenges) and place certs under /etc/letsencrypt (letsencrypt volume).
+- One-time issuance (replace DOMAIN with your real domain):
   docker compose run --rm \
     -p 80:80 \
     -v certbot_challenges:/var/www/certbot \
     -v letsencrypt:/etc/letsencrypt \
     nginx sh -c "apk add --no-cache certbot && certbot certonly --webroot -w /var/www/certbot -d DOMAIN -d www.DOMAIN --agree-tos -m admin@DOMAIN --non-interactive"
-- Update nginx.conf server_name and certificate paths if your domain differs from ticktocktasks.com.
-- Reload nginx after certs are obtained: docker compose exec nginx nginx -s reload
-- 443 is exposed by docker-compose. HTTP (80) redirects to HTTPS, while ACME challenges and health endpoints remain available on HTTP.
+- Then, add an HTTPS server block in nginx.conf that references your certs and re-expose 443 in docker-compose. Finally reload nginx:
+  docker compose exec nginx nginx -s reload
+- Until you complete these steps, keep using HTTP (port 80).
 
 3) DNS
 - Create A/AAAA records in Route53 (or your DNS) to point your domain to the EC2 public IP/Elastic IP.

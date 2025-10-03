@@ -11,11 +11,10 @@ set -euo pipefail
 # Example:
 #   ./infra/scripts/deploy-backend.sh \
 #     ttt-backend example.com Z123456ABCDEFG vpc-0123456789abcdef0 subnet-0123abcd \
-#     "https://example.com,https://www.example.com,https://d111111abcdef8.cloudfront.net" \
+#     "https://example.com,https://www.example.com" \
 #     api https://github.com/jeff/Todo_App.git us-east-1
 #
-# After stack creation, run link-frontend to wire the frontend automatically:
-#   ./infra/scripts/link-frontend.sh <FRONTEND_STACK_NAME> <BACKEND_STACK_NAME> [AWS_REGION]
+# Note: Frontend is not deployed via CloudFront anymore. Serve it via Nginx on the backend EC2.
 
 STACK_NAME=${1:?'STACK_NAME required'}
 DOMAIN=${2:?'DOMAIN_NAME required'}

@@ -1,22 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Link frontend to backend by writing config.js into the S3 site bucket
-# Requirements:
-# - AWS CLI v2 configured
-# - Frontend stack deployed from infra/frontend/template.yaml
-# - Backend stack deployed from infra/backend/template.yaml
-#
-# Usage:
-#   ./infra/scripts/link-frontend.sh <FRONTEND_STACK_NAME> <BACKEND_STACK_NAME> [FRONTEND_REGION] [BACKEND_REGION]
-#
-# Examples:
-#   ./infra/scripts/link-frontend.sh ttt-frontend ttt-backend us-east-1 us-east-1
-#   ./infra/scripts/link-frontend.sh ttt-frontend ttt-backend us-east-1 (uses same region for both)
-#
-# Optional env vars:
-#   BACKEND_OVERRIDE_URL   If set, use this URL instead of the backend stack output
-#   USE_RELATIVE_API=true  If true, write an empty BACKEND_URL to force same-origin relative API calls
+# DEPRECATED: This project no longer deploys the frontend to S3/CloudFront.
+# The frontend is served by Nginx on the same EC2 instance as the backend.
+# This script is kept for historical reference but is disabled to prevent misuse.
+# To configure the frontend, edit frontend/website/config.js (BACKEND_URL) or use same-origin via Nginx.
+
+echo "[DEPRECATED] infra/scripts/link-frontend.sh is disabled. Frontend is no longer deployed to S3/CloudFront." >&2
+exit 1
 
 FRONT_STACK=${1:?"Frontend stack name required"}
 BACK_STACK=${2:?"Backend stack name required"}

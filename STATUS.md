@@ -45,3 +45,16 @@ Operator notes:
   - curl http://<host>/.well-known/acme-challenge/test → served (HTTP 200) for renewal
   - curl http://<host>/nginx-healthz → ok (200)
   - curl -k https://<host>/healthz → proxies to backend
+
+2025-10-03 (diagnosis + fix - frontend unreachable)
+- Root cause: Nginx was configured to require Let’s Encrypt certificates and listen on 443, causing the container to crash-loop when certs were not present. As a result, the frontend was not reachable at all.
+- Fix: Made Nginx HTTP-only by default. Removed the HTTPS server block and the HTTP→HTTPS redirect in nginx.conf. The site is now served directly over HTTP (port 80), and /nginx-healthz and /healthz work independently. Updated docker-compose.yml to expose only port 80.
+- TLS: HTTPS remains supported as an optional step. To enable, issue certs with Certbot, add an HTTPS server block referencing the certs, and re-expose 443 in docker-compose, then reload Nginx. README updated with clear instructions.
+
+2025-10-03 (cleanup - CloudFront)
+- CloudFront/S3 is no longer used. Removed CloudFront deployment steps from GitHub deployment/scripts context:
+  - Marked infra/scripts/link-frontend.sh as DEPRECATED and disabled (exits with guidance), to prevent S3/CloudFront usage.
+  - Cleaned CloudFront example from deployment/infra/scripts/deploy-backend.sh-E and removed recommendation to run link-frontend.
+  - Updated scripts/frontend/README.md to mark link-frontend.sh as deprecated.
+- Verified .github/workflows contains no CloudFront steps.
+
