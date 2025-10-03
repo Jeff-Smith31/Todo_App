@@ -109,6 +109,7 @@ aws cloudformation describe-stacks \
   --output table
 
 echo
-echo "Next: Link the frontend to this backend endpoint:"
-echo "  ./infra/scripts/link-frontend.sh <FRONTEND_STACK_NAME> $STACK_NAME $REGION"
+echo
+echo "Note: Frontend is not deployed via CloudFront/S3. It is served by Nginx on the backend EC2 host."
+echo "Deploy/update frontend by pulling this repo on the EC2 instance and running: docker compose up -d --build"
 echo

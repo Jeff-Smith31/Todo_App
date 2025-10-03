@@ -1,149 +1,15 @@
-name: Deploy Frontend (S3 + CloudFront)
+name: DEPRECATED - Frontend deploy (CloudFront/S3 removed)
 
 on:
   workflow_dispatch:
 
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
-  deploy:
+  noop:
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: us-east-1  # ACM for CloudFront must be in us-east-1
-      STACK_NAME: ttt-frontend
-      DOMAIN_NAME: ticktocktasks.com
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-
-      - name: Deploy Frontend Infra (CloudFormation)
+      - name: Frontend deploy is disabled
         run: |
-          HZ="${{ vars.HOSTED_ZONE_ID }}"
-          if [ -z "$HZ" ]; then
-            HZ="Z08471201NA2PN7ERBIB7"
-            echo "Using default Route53 Hosted Zone ID for ${DOMAIN_NAME}: $HZ"
-          else
-            echo "Using repository variable HOSTED_ZONE_ID: $HZ"
-          fi
-
-          # Detect existing bucket and cert to avoid AlreadyExists errors
-          FRONT_EXISTING_BUCKET=""
-          if [ -n "${{ vars.EXISTING_BUCKET_NAME }}" ]; then
-            FRONT_EXISTING_BUCKET="${{ vars.EXISTING_BUCKET_NAME }}"
-            echo "Reusing existing bucket (override): $FRONT_EXISTING_BUCKET"
-          else
-            CANDIDATE="${DOMAIN_NAME}-site"
-            if aws s3api head-bucket --bucket "$CANDIDATE" >/dev/null 2>&1; then
-              FRONT_EXISTING_BUCKET="$CANDIDATE"
-              echo "Reusing existing bucket: $FRONT_EXISTING_BUCKET"
-            fi
-          fi
-          FRONT_EXISTING_CERT_ARN="${{ vars.EXISTING_CERT_ARN }}"
-          if [ -z "$FRONT_EXISTING_CERT_ARN" ]; then
-            CERT1=$(aws acm list-certificates --region "${AWS_REGION}" --certificate-statuses ISSUED --query "CertificateSummaryList[?DomainName=='${DOMAIN_NAME}'].CertificateArn | [0]" --output text 2>/dev/null || true)
-            WILDC="*.${DOMAIN_NAME}"
-            CERT2=$(aws acm list-certificates --region "${AWS_REGION}" --certificate-statuses ISSUED --query "CertificateSummaryList[?DomainName=='${WILDC}'].CertificateArn | [0]" --output text 2>/dev/null || true)
-            if [ -n "$CERT1" ] && [ "$CERT1" != "None" ]; then FRONT_EXISTING_CERT_ARN="$CERT1"; elif [ -n "$CERT2" ] && [ "$CERT2" != "None" ]; then FRONT_EXISTING_CERT_ARN="$CERT2"; fi
-          fi
-
-          # Detect CNAME conflicts (aliases already in use)
-          SKIP="false"
-          CF_MATCH=$(aws cloudfront list-distributions --query "DistributionList.Items[?contains(Aliases.Items, '${DOMAIN_NAME}') || contains(Aliases.Items, 'www.${DOMAIN_NAME}')][0].Id" --output text 2>/dev/null || true)
-          if [ -n "$CF_MATCH" ] && [ "$CF_MATCH" != "None" ]; then
-            echo "Existing CloudFront distribution with alias found: $CF_MATCH" 
-            SKIP="true"
-          fi
-
-          aws cloudformation deploy \
-            --stack-name ${STACK_NAME} \
-            --template-file infra/frontend/template.yaml \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --region ${AWS_REGION} \
-            --parameter-overrides \
-              DomainName=${DOMAIN_NAME} \
-              IncludeWww=true \
-              IncludeAppSubdomain=true \
-              AppSubdomain=app \
-              HostedZoneId=$HZ \
-              ExistingBucketName=${FRONT_EXISTING_BUCKET} \
-              ExistingCertificateArn=${FRONT_EXISTING_CERT_ARN} \
-              CreateDnsRecords=true \
-              SkipAliases=$SKIP
-
-      - name: Read stack outputs
-        id: out
-        run: |
-          DIST_ID=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text --region ${AWS_REGION})
-          BUCKET=$(aws cloudformation describe-stacks --stack-name ${STACK_NAME} --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" --output text --region ${AWS_REGION})
-          echo "dist_id=${DIST_ID}" >> $GITHUB_OUTPUT
-          echo "bucket=${BUCKET}" >> $GITHUB_OUTPUT
-          echo "Bucket: $BUCKET"
-          echo "DistributionId: $DIST_ID"
-
-      - name: Sync static site to S3 (long-cache assets)
-        run: |
-          BUCKET=${{ steps.out.outputs.bucket }}
-          # Whitelist only the static assets we want to publish (index.html and sw.js are uploaded separately below with no-cache)
-          aws s3 sync frontend/website s3://$BUCKET/ \
-            --no-follow-symlinks \
-            --exclude "*" \
-            --include "icons/*" \
-            --include "app.js" \
-            --include "styles.css" \
-            --include "manifest.json" \
-            --include "manifest.webmanifest" \
-            --include "app/*" \
-            --cache-control "public,max-age=31536000,immutable"
-
-      - name: Upload index.html and critical JS with no-cache
-        run: |
-          BUCKET=${{ steps.out.outputs.bucket }}
-          # HTML should never be cached
-          aws s3 cp frontend/website/index.html s3://$BUCKET/index.html --cache-control "no-cache, no-store, must-revalidate" --content-type "text/html; charset=utf-8"
-          if [ -f frontend/website/app/index.html ]; then
-            aws s3 cp frontend/website/app/index.html s3://$BUCKET/app/index.html --cache-control "no-cache, no-store, must-revalidate" --content-type "text/html; charset=utf-8"
-          fi
-
-          # Service worker should not be cached to allow immediate updates
-          if [ -f frontend/website/sw.js ]; then
-            aws s3 cp frontend/website/sw.js s3://$BUCKET/sw.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
-          fi
-
-          # Critical assets (JS/CSS) should not be cached to always load latest
-          if [ -f frontend/website/app.js ]; then
-            aws s3 cp frontend/website/app.js s3://$BUCKET/app.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
-          fi
-          if [ -f frontend/website/styles.css ]; then
-            aws s3 cp frontend/website/styles.css s3://$BUCKET/styles.css --cache-control "no-cache, no-store, must-revalidate" --content-type "text/css; charset=utf-8"
-          fi
-
-          # Ensure app-version.js exists to avoid SPA 404→index.html MIME trap
-          if [ ! -f frontend/website/app-version.js ]; then
-            echo "window.APP_VERSION='${GITHUB_RUN_NUMBER:-$GITHUB_SHA}';" > frontend/website/app-version.js
-          fi
-          # Ensure config.js exists with safe default (relative API) to avoid MIME trap
-          if [ ! -f frontend/website/config.js ]; then
-            echo "window.RUNTIME_CONFIG=Object.assign({},window.RUNTIME_CONFIG||{},{BACKEND_URL:''});" > frontend/website/config.js
-          fi
-
-          # Upload runtime config and version files with no-cache
-          aws s3 cp frontend/website/app-version.js s3://$BUCKET/app-version.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
-          aws s3 cp frontend/website/config.js s3://$BUCKET/config.js --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
-
-      - name: Invalidate CloudFront cache
-        run: |
-          DIST_ID=${{ steps.out.outputs.dist_id }}
-          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths \
-            "/index.html" \
-            "/app/index.html" \
-            "/sw.js" \
-            "/config.js" \
-            "/app-version.js"
+          echo "This repository no longer deploys the frontend to S3/CloudFront." >> $GITHUB_STEP_SUMMARY
+          echo "The frontend is served by Nginx on the same EC2 instance as the backend." >> $GITHUB_STEP_SUMMARY
+          echo "To deploy, SSH/SSM to the EC2 host, pull latest code, and run: docker compose up -d --build" >> $GITHUB_STEP_SUMMARY
+          echo "Exiting without action."

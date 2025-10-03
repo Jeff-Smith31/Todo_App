@@ -58,3 +58,7 @@ Operator notes:
   - Updated scripts/frontend/README.md to mark link-frontend.sh as deprecated.
 - Verified .github/workflows contains no CloudFront steps.
 
+2025-10-03 (final cleanup - CloudFront workflow)
+- Replaced .github/workflows/deploy-frontend.yml with a no-op, clearly marked DEPRECATED. It no longer deploys to S3 or invalidates CloudFront and instead instructs to deploy via Nginx on EC2 (docker compose up -d --build).
+- Updated backend deploy scripts to remove references to linking the frontend via CloudFront and added guidance for Nginx-based deployment.
+
