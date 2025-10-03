@@ -6,8 +6,8 @@ set -euo pipefail
 # This script is kept for historical reference but is disabled to prevent misuse.
 # To configure the frontend, edit frontend/website/config.js (BACKEND_URL) or use same-origin via Nginx.
 
-echo "[DEPRECATED] infra/scripts/link-frontend.sh is disabled. Frontend is no longer deployed to S3/CloudFront." >&2
-exit 1
+echo "[DEPRECATED] infra/scripts/link-frontend.sh is disabled. Frontend is no longer deployed to S3/CloudFront. Exiting successfully (no-op)." >&2
+exit 0
 
 FRONT_STACK=${1:?"Frontend stack name required"}
 BACK_STACK=${2:?"Backend stack name required"}

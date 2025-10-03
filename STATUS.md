@@ -62,3 +62,9 @@ Operator notes:
 - Replaced .github/workflows/deploy-frontend.yml with a no-op, clearly marked DEPRECATED. It no longer deploys to S3 or invalidates CloudFront and instead instructs to deploy via Nginx on EC2 (docker compose up -d --build).
 - Updated backend deploy scripts to remove references to linking the frontend via CloudFront and added guidance for Nginx-based deployment.
 
+
+
+2025-10-03 (cleanup - neutralize legacy frontend linker)
+- Changed infra/scripts/link-frontend.sh to exit 0 as a no-op with a clear deprecation message. ✓
+- Rationale: if any external CI still invokes this script, it will no longer fail the pipeline nor attempt S3/CloudFront actions. ✓
+- Reminder: Frontend is served by Nginx on EC2; stop any S3/CloudFront deploy workflows outside this repo. ✓
