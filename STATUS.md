@@ -13,3 +13,9 @@ Operator notes:
 - Point DNS directly at the EC2 instance (or an Elastic IP). No CloudFront distribution is needed.
 - Set backend CORS_ORIGIN to your site origin(s) in .env before starting containers.
 - For TLS, use Certbot or your preferred method on the instance; mount certs into the nginx container if terminating TLS there.
+
+
+2025-10-03 (later)
+- Fix: Nginx container healthcheck was using HTTPS on 127.0.0.1:443 while nginx only listened on :80. Updated docker-compose healthcheck to HTTP so the service reports healthy and the frontend is reachable.
+- Note: Port 443 remains exposed for future TLS. Provision certificates (e.g., via Certbot) and add an HTTPS server block before relying on HTTPS for users. Until then, access the site over http://.
+- Verified: CloudFront/S3 is no longer part of the serving path; frontend is served directly by Nginx and /api/* proxies to backend.
