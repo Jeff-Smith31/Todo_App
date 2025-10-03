@@ -23,3 +23,25 @@ Operator notes:
 2025-10-03 (later again)
 - Change: Decoupled Nginx health from backend. Added /nginx-healthz served directly by Nginx and updated docker-compose healthcheck to use it. This prevents backend outages from marking the frontend as unhealthy or “down”.
 - Note: /healthz remains as a passthrough to backend for convenience; use it to check API health, not Nginx health.
+
+2025-10-03 (diagnosis + fix)
+- Diagnosis: Frontend appeared “not reachable” because HTTPS (443) was exposed without an HTTPS server block/cert. Browsers trying https:// would fail TLS, even though http:// was up.
+- Fix: Stop publishing port 443 by default in docker-compose. Only HTTP (80) is exposed until TLS is provisioned and nginx is configured for HTTPS.
+- Verify after redeploy (docker compose up -d --build):
+  - curl -I http://<host>/ → HTTP/1.1 200 OK
+  - curl http://<host>/nginx-healthz → ok (200)
+  - curl http://<host>/healthz → proxies to backend (200 if backend healthy)
+  - Visit http://<your-domain>/ in a browser. If you need HTTPS, complete TLS setup first, then add 443 exposure with an HTTPS server block.
+
+2025-10-03 (TLS enabled)
+- Change: Added HTTPS server block in nginx.conf with HTTP/2, HSTS, and modern TLS ciphers. HTTP now redirects to HTTPS except for ACME challenges and health endpoints.
+- Change: Re-exposed port 443 in docker-compose for the nginx service.
+- How to obtain certs (one-time):
+  docker compose run --rm -p 80:80 -v certbot_challenges:/var/www/certbot -v letsencrypt:/etc/letsencrypt nginx sh -c "apk add --no-cache certbot && certbot certonly --webroot -w /var/www/certbot -d <domain> -d www.<domain> --agree-tos -m admin@<domain> --non-interactive"
+- After issuing certs, reload nginx: docker compose exec nginx nginx -s reload
+- Verify after redeploy:
+  - curl -I http://<host>/ → 301 to https://
+  - curl -kI https://<host>/ → HTTP/2 200
+  - curl http://<host>/.well-known/acme-challenge/test → served (HTTP 200) for renewal
+  - curl http://<host>/nginx-healthz → ok (200)
+  - curl -k https://<host>/healthz → proxies to backend

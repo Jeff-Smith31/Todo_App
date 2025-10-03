@@ -59,8 +59,17 @@ This setup removes CloudFront/S3. The frontend is served by Nginx on the same EC
   - backend (Express API on 8080 inside the network)
   - nginx (serves frontend from frontend/website and proxies /api/* to backend)
 
-2) TLS
-- Use Certbot or your preferred method to provision TLS on the instance. The nginx container exposes 80/443 and has an ACME webroot at /var/www/certbot mounted to certbot_challenges volume. After obtaining certs, mount them under letsencrypt volume and update an HTTPS nginx config if desired.
+2) TLS (HTTPS on frontend)
+- HTTPS is enabled in nginx with Let’s Encrypt certs. We use the ACME webroot at /var/www/certbot (mapped to the certbot_challenges volume) and expect certs under /etc/letsencrypt (mapped to the letsencrypt volume).
+- One-time issue certificate (replace DOMAIN with your real domain):
+  docker compose run --rm \
+    -p 80:80 \
+    -v certbot_challenges:/var/www/certbot \
+    -v letsencrypt:/etc/letsencrypt \
+    nginx sh -c "apk add --no-cache certbot && certbot certonly --webroot -w /var/www/certbot -d DOMAIN -d www.DOMAIN --agree-tos -m admin@DOMAIN --non-interactive"
+- Update nginx.conf server_name and certificate paths if your domain differs from ticktocktasks.com.
+- Reload nginx after certs are obtained: docker compose exec nginx nginx -s reload
+- 443 is exposed by docker-compose. HTTP (80) redirects to HTTPS, while ACME challenges and health endpoints remain available on HTTP.
 
 3) DNS
 - Create A/AAAA records in Route53 (or your DNS) to point your domain to the EC2 public IP/Elastic IP.
@@ -72,7 +81,7 @@ This setup removes CloudFront/S3. The frontend is served by Nginx on the same EC
 - Pull latest code and run docker compose up -d --build to redeploy. Static files are served live from ./frontend/website mounted into Nginx.
 
 Verify
-- Open https://your-domain.com, register or log in, and create tasks.
+- Open http://your-domain.com (HTTP) to verify reachability. If you need HTTPS, complete TLS setup first, then add and expose the 443 listener.
 - Push notifications require VAPID keys on the backend and user permission in the browser (Enable Notifications).
 
 License
