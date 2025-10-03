@@ -19,3 +19,7 @@ Operator notes:
 - Fix: Nginx container healthcheck was using HTTPS on 127.0.0.1:443 while nginx only listened on :80. Updated docker-compose healthcheck to HTTP so the service reports healthy and the frontend is reachable.
 - Note: Port 443 remains exposed for future TLS. Provision certificates (e.g., via Certbot) and add an HTTPS server block before relying on HTTPS for users. Until then, access the site over http://.
 - Verified: CloudFront/S3 is no longer part of the serving path; frontend is served directly by Nginx and /api/* proxies to backend.
+
+2025-10-03 (later again)
+- Change: Decoupled Nginx health from backend. Added /nginx-healthz served directly by Nginx and updated docker-compose healthcheck to use it. This prevents backend outages from marking the frontend as unhealthy or “down”.
+- Note: /healthz remains as a passthrough to backend for convenience; use it to check API health, not Nginx health.
