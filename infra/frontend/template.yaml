@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Frontend hosting for TickTock Tasks - S3 + CloudFront + ACM + Route53
+Description: DEPRECATED - legacy CloudFront/S3 frontend stack (no longer used). Frontend is now served by Nginx on the backend EC2 instance.
 
 Parameters:
   DomainName:

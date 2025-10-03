@@ -10,9 +10,9 @@ What you get
 - Minimal UI: dedicated login page, task list page, and a separate task form page
 
 Architecture
-- Frontend: Static HTML/CSS/JS with a Service Worker and Web App Manifest. Served from any static host (locally or S3+CloudFront in production).
-- Backend (optional): Django + Django REST Framework + SQLite (Dockerized). Secure defaults (CORS with credentials, session auth). Web Push subscribe endpoints provided (VAPID key exposure when configured).
-- Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from an optional config.js file at the site root. We provide a script that writes this file during deployment so the frontend is automatically connected to the backend without manual edits.
+- Frontend: Static HTML/CSS/JS with a Service Worker and Web App Manifest. Served by Nginx on the same EC2 instance as the backend in production (and can be served locally for dev).
+- Backend: Node.js/Express API (Dockerized) with DynamoDB persistence and Web Push. Nginx proxies /api/* to the backend container.
+- Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from config.js at the site root. In the Nginx setup this is set to empty string, meaning same‑origin requests to /api/*.
 
 Quick start (frontend only)
 - From the frontend/website directory, serve the site locally:
@@ -45,41 +45,31 @@ Backend configuration (.env)
   - WEB_PUSH_PUBLIC_KEY / WEB_PUSH_PRIVATE_KEY: VAPID keys for Web Push (auto‑generated when npx web-push is available)
   - REDIRECT_HTTP_TO_HTTPS: true/false (default true inside container; set false when behind TLS proxy)
 
-Production deployment on AWS (auto‑wired frontend + free‑tier EC2 backend)
-We include CloudFormation templates and helper scripts to deploy the whole stack and automatically link the frontend to the backend.
+Production deployment on AWS (single EC2: Nginx serves frontend + backend API)
+This setup removes CloudFront/S3. The frontend is served by Nginx on the same EC2 instance as the backend. Route53 can point your apex or app subdomain directly to the EC2 public IP or an Elastic IP.
 
-1) Frontend stack (S3 + CloudFront + ACM + Route53)
-- Deploy in us‑east‑1 (ACM for CloudFront must be in us‑east‑1):
-  aws cloudformation deploy \
-    --region us-east-1 \
-    --stack-name ttt-frontend \
-    --template-file infra/frontend/template.yaml \
-    --parameter-overrides DomainName=your-domain.com HostedZoneId=Z123456ABCDEFG IncludeWww=true \
-    --capabilities CAPABILITY_NAMED_IAM
-- Note Outputs: BucketName, DistributionId, DistributionDomainName.
-- Upload the site to S3 (sync only the website folder):
-  aws s3 sync frontend/website s3://<BucketName>
+1) Provision backend EC2 (free‑tier) and start services
+- SSH into the instance and clone this repo (or use your existing CI/CD to pull updates).
+- Ensure Docker and Docker Compose are installed.
+- From the repo root, create a .env file (optional) to set CORS_ORIGIN to your site’s URL(s):
+  CORS_ORIGIN=https://your-domain.com,https://www.your-domain.com
+- Start the stack:
+  docker compose up -d --build
+- This runs two containers:
+  - backend (Express API on 8080 inside the network)
+  - nginx (serves frontend from frontend/website and proxies /api/* to backend)
 
-2) Backend stack (free‑tier EC2 with automatic TLS)
-- Deploy to your preferred region with your VPC/Subnet:
-  ./infra/scripts/deploy-backend.sh \
-    ttt-backend your-domain.com Z123456ABCDEFG vpc-0123456789abcdef0 subnet-0123abcd \
-    "https://your-domain.com,https://www.your-domain.com,https://<CloudFrontDomainName>" \
-    api https://github.com/your/repo.git us-east-1
-- What this does:
-  - Creates an EC2 t2.micro with Docker and Caddy
-  - Starts the backend Docker container (HTTP on 8080 inside the instance)
-  - Provisions TLS for api.your-domain.com via Caddy and Route53 DNS A record
-  - CORS is set to the AllowedOrigins values you pass to the script/template
-  - Reuse-friendly: if an API Route53 record already exists, the template can skip creating it (CreateApiDnsRecord=false). Our GitHub workflow auto-detects and sets this to avoid conflicts.
+2) TLS
+- Use Certbot or your preferred method to provision TLS on the instance. The nginx container exposes 80/443 and has an ACME webroot at /var/www/certbot mounted to certbot_challenges volume. After obtaining certs, mount them under letsencrypt volume and update an HTTPS nginx config if desired.
 
-3) Auto‑wire the frontend to the backend endpoint
-- Write config.js to the site bucket with the backend URL from stack outputs:
-  ./infra/scripts/link-frontend.sh ttt-frontend ttt-backend us-east-1
-- This script:
-  - Reads BackendEndpoint from the backend stack
-  - Uploads config.js to s3://<BucketName>/ with BACKEND_URL set
-  - Invalidates /config.js on CloudFront so clients pick it up immediately
+3) DNS
+- Create A/AAAA records in Route53 (or your DNS) to point your domain to the EC2 public IP/Elastic IP.
+
+4) Frontend configuration
+- The file frontend/website/config.js sets BACKEND_URL to empty string, so the web app uses same-origin requests to /api/* via Nginx. No CloudFront is used anymore.
+
+5) Deploy updates
+- Pull latest code and run docker compose up -d --build to redeploy. Static files are served live from ./frontend/website mounted into Nginx.
 
 Verify
 - Open https://your-domain.com, register or log in, and create tasks.

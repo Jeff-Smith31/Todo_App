@@ -1,14 +1,19 @@
-const CACHE_NAME = 'ticktock-cache-v5';
+const CACHE_NAME = 'ticktock-cache-v6';
 const ASSETS = [
   '/',
   '/index.html',
+  '/styles.css',
+  '/app.js',
+  '/app-version.js',
   '/icons/logo.svg',
-  '/manifest.webmanifest'
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/manifest.webmanifest',
+  '/manifest.json'
 ];
 // Optional assets that may not always exist locally (exist in production). Cache best-effort.
 const OPTIONAL_ASSETS = [
   '/config.js',
-  '/app-version.js',
   '/version.json'
 ];
 
