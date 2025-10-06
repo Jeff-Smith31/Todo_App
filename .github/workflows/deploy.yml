@@ -26,7 +26,7 @@ env:
   USE_RELATIVE_API: ${{ vars.USE_RELATIVE_API || '' }}
   USE_CLOUDFRONT: ${{ vars.USE_CLOUDFRONT || 'false' }}
   # DNS safeguard (ensure Hosted Zone points to EC2 Nginx when not using CloudFront)
-  FIX_DNS_TO_EC2: ${{ vars.FIX_DNS_TO_EC2 || 'false' }}
+  FIX_DNS_TO_EC2: ${{ vars.FIX_DNS_TO_EC2 || 'true' }}
   EC2_PUBLIC_IP: ${{ vars.EC2_PUBLIC_IP || '' }}
   # DNS enforcement: fail CI if CloudFront is still configured when USE_CLOUDFRONT=false
   DNS_ENFORCE_STRICT: ${{ vars.DNS_ENFORCE_STRICT || 'true' }}

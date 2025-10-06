@@ -115,3 +115,8 @@ Operator notes:
   - Falls back to resolving InstanceId, then queries EC2 for its PublicIpAddress. ✓
 - The step applies the Route53 UPSERT using the resolved IP, avoiding a hard failure (exit code 1) due to missing EC2_PUBLIC_IP. If auto-resolution fails and DNS_ENFORCE_STRICT=true, the step will still fail with a clear message. ✓
 
+
+2025-10-06 (CI DNS auto-fix default)
+- Changed GitHub Actions deploy workflow default: FIX_DNS_TO_EC2 now defaults to true. When USE_CLOUDFRONT=false and Route53 records still point to CloudFront, the workflow will automatically UPSERT A records for ticktocktasks.com (and www) to the EC2 public IP (auto-resolved from the backend stack if EC2_PUBLIC_IP is unset). This prevents CI failures and enforces the new Nginx-on-EC2 serving path by default.
+- You can opt out by setting repository Variable FIX_DNS_TO_EC2=false or DNS_ENFORCE_STRICT=false (not recommended). 
+

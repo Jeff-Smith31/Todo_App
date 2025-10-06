@@ -128,3 +128,8 @@ Switch Route53 from CloudFront to EC2
 
 License
 This project is licensed under the MIT License. See LICENSE for details.
+
+
+Note (2025-10-06): CI default now auto-fixes Route53 when not using CloudFront.
+- The deploy workflow defaults FIX_DNS_TO_EC2=true. If USE_CLOUDFRONT=false and your hosted zone still points to a cloudfront.net alias, the workflow will UPSERT A records for the apex and www to your EC2 public IP. It auto-resolves the IP from the backend CloudFormation stack if EC2_PUBLIC_IP is unset.
+- To opt out of automatic DNS changes, set repo Variable FIX_DNS_TO_EC2=false (or relax enforcement with DNS_ENFORCE_STRICT=false, not recommended).
