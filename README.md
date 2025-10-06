@@ -11,7 +11,7 @@ What you get
 
 Architecture
 - Frontend: Static HTML/CSS/JS with a Service Worker and Web App Manifest. Served by Nginx on the same EC2 instance as the backend in production (and can be served locally for dev).
-- Backend: Node.js/Express API (Dockerized) with DynamoDB persistence and Web Push. Nginx proxies /api/* to the backend container.
+- Backend: Node.js/Express API (Dockerized) with DynamoDB persistence and Web Push. Nginx proxies /api/* to the backend container. Backend health is exposed at /api/healthz (not /healthz).
 - Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from config.js at the site root. In the Nginx setup this is set to empty string, meaning same‑origin requests to /api/*.
 
 Quick start (frontend only)

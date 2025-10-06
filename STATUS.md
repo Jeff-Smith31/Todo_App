@@ -91,6 +91,15 @@ Operator notes:
 - Change: Serve the SPA over HTTP (port 80) instead of forcing a redirect to HTTPS. The port 80 server block now mirrors the HTTPS block (static files + /api proxy) while keeping ACME and health endpoints. HTTPS on 443 remains available when certs are valid. ✓
 - Operator guidance: Fix certificates for your actual domain under /etc/letsencrypt/live/<domain> and verify HTTPS works. Once stable, you may re-enable HTTP→HTTPS redirect by restoring the redirect rule in nginx.conf or introducing an env-gated config. ✓
 
+2025-10-06 (frontend routing + PWA installability)
+- Change: Moved backend health endpoint from /healthz to /api/healthz in Nginx to prevent accidental navigation to the backend health page. /healthz now returns 410. ✓
+- Change: Added a safe client-side HTTP→HTTPS upgrade in index.html that checks https://<host>/nginx-healthz first; if reachable, the app redirects to HTTPS. This enables PWA install prompts on mobile, which generally require HTTPS. ✓
+- Ops: Ensure valid certs exist at /etc/letsencrypt/live/<domain>/ and that port 443 is open. The app will auto-upgrade to HTTPS when available; otherwise it stays on HTTP. ✓
+- Verify:
+  - Visit http://<domain>/ → loads login page (no redirect if HTTPS not ready).
+  - Visit https://<domain>/ → loads SPA; browser shows install option on Android/Chrome and iOS via Add to Home Screen.
+  - GET https://<domain>/api/healthz → returns backend health JSON (200). ✓
+
 
 
 2025-10-06 (DNS troubleshooting enhancement)
