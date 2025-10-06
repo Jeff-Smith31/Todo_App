@@ -73,3 +73,9 @@ Operator notes:
 - Updated .github/workflows/deploy.yml to gate all S3/CloudFront steps and CloudFront invalidations behind USE_CLOUDFRONT=false by default. ✓
 - Recovery step that resyncs to CloudFront origin is also disabled unless explicitly enabled. ✓
 - Output summary now prints CloudFront details only when enabled. ✓
+
+2025-10-06 (frontend HTTPS + redirect)
+- Enabled HTTPS serving via Nginx with Let’s Encrypt certificates mounted from /etc/letsencrypt. ✓
+- Port 443 exposed in docker-compose for nginx; HTTP port 80 now only serves ACME and health and redirects all other requests to HTTPS. ✓
+- HTTPS server block serves SPA and proxies /api/* to backend; HSTS enabled. ✓
+- Note: Ensure certs exist at /etc/letsencrypt/live/ticktocktasks.com/{fullchain.pem,privkey.pem}; obtain via Certbot using the provided webroot. ✓
