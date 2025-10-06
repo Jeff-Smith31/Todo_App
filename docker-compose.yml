@@ -51,6 +51,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-us-east-1}
+        awslogs-group: /TickTock/Frontend-${DOMAIN_NAME:-ticktocktasks.com}
+        awslogs-create-group: "true"
 
 volumes:
   letsencrypt:

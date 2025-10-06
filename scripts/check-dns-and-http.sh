@@ -71,6 +71,26 @@ else
   err "HTTP request failed: $(tr -d '\r' < /tmp/ttt_http.err)"
 fi
 
+header "HTTPS reachability and certificate"
+set +e
+curl -sS -o /dev/null -w "%{http_code} %{ssl_verify_result} %{remote_ip} %{remote_port}\n" "https://$DOMAIN" > /tmp/ttt_https.txt 2>/tmp/ttt_https.err
+RC=$?
+set -e
+if [[ $RC -eq 0 ]]; then
+  read -r HCODE SSLVER HRIP HRPORT < /tmp/ttt_https.txt || true
+  if [[ "$HCODE" =~ ^(200|204|30[12]|40[1347]|50[0-9])$ ]]; then
+    if [[ "$SSLVER" = "0" ]]; then
+      ok "HTTPS responded with $HCODE (cert OK) from $HRIP:$HRPORT"
+    else
+      err "HTTPS responded with $HCODE but certificate verify result=$SSLVER (not 0)"
+    fi
+  else
+    err "Unexpected HTTPS status: $HCODE"
+  fi
+else
+  err "HTTPS request failed: $(tr -d '\r' < /tmp/ttt_https.err)"
+fi
+
 header "Nginx container health endpoint"
 set +e
 curl -sS -o /dev/null -w "%{http_code}\n" "http://$DOMAIN/nginx-healthz" > /tmp/ttt_hz.txt 2>/tmp/ttt_hz.err

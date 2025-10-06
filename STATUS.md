@@ -79,3 +79,9 @@ Operator notes:
 - Port 443 exposed in docker-compose for nginx; HTTP port 80 now only serves ACME and health and redirects all other requests to HTTPS. ✓
 - HTTPS server block serves SPA and proxies /api/* to backend; HSTS enabled. ✓
 - Note: Ensure certs exist at /etc/letsencrypt/live/ticktocktasks.com/{fullchain.pem,privkey.pem}; obtain via Certbot using the provided webroot. ✓
+
+2025-10-06 (frontend CloudWatch logs + HTTPS diagnostics)
+- Nginx logs now stream to stdout/stderr (access_log -> /dev/stdout, error_log -> /dev/stderr) for container-level log shipping. ✓
+- docker-compose: configured awslogs driver for the nginx container with auto log group creation (/TickTock/Frontend-${DOMAIN_NAME:-ticktocktasks.com} in ${AWS_REGION:-us-east-1}). Requires EC2 role permissions for CloudWatch Logs. ✓
+- Diagnostics: Enhanced scripts/check-dns-and-http.sh to verify HTTPS reachability and certificate validation (ssl_verify_result). ✓
+- Ops: If frontend is unreachable over HTTPS, check CloudWatch Logs for Nginx errors (cert missing/mispath), verify Let’s Encrypt files exist in /etc/letsencrypt/live/<domain> inside the container, or temporarily serve over HTTP only while issuing certs. ✓

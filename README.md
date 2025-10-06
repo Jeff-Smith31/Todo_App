@@ -95,6 +95,19 @@ DNS and routing checks
   - EC2 security group allows inbound TCP 80 from 0.0.0.0/0 (and ::/0)
   - docker compose ps shows nginx up and listening on 0.0.0.0:80
 
+CloudWatch Logs (frontend)
+- The nginx container now ships access and error logs to Amazon CloudWatch Logs using the awslogs driver.
+- Requirements: the EC2 instance role (or credentials on the host) must allow logs:CreateLogGroup, logs:CreateLogStream, and logs:PutLogEvents in your region.
+- Log group name (default): /TickTock/Frontend-${DOMAIN_NAME:-ticktocktasks.com}
+- Region: ${AWS_REGION:-us-east-1}
+- View logs: open CloudWatch Logs > Log groups > /TickTock/Frontend-<your-domain> to see access lines (2xx/3xx/4xx/5xx) and Nginx error messages when loading the page.
+- Tip: Trigger entries by hitting https://<your-domain>/ and watch for corresponding access/error log entries.
+
+HTTPS and certificate checks
+- Use the Bash script to verify HTTPS and certificate validity:
+  - ./scripts/check-dns-and-http.sh your-domain.com [EC2_PUBLIC_IP]
+- The script reports the HTTPS status code and ssl_verify_result (0 means certificate validated successfully).
+
 License
 This project is licensed under the MIT License. See LICENSE for details.
 
