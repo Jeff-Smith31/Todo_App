@@ -92,13 +92,20 @@ Operator notes:
 - Operator guidance: Fix certificates for your actual domain under /etc/letsencrypt/live/<domain> and verify HTTPS works. Once stable, you may re-enable HTTP→HTTPS redirect by restoring the redirect rule in nginx.conf or introducing an env-gated config. ✓
 
 2025-10-06 (frontend routing + PWA installability)
-- Change: Moved backend health endpoint from /healthz to /api/healthz in Nginx to prevent accidental navigation to the backend health page. /healthz now returns 410. ✓
+- Change: Moved backend health endpoint from /healthz to /api/healthz in Nginx to prevent accidental navigation to the backend health page. /healthz now returns 410 on both HTTP and HTTPS. ✓
 - Change: Added a safe client-side HTTP→HTTPS upgrade in index.html that checks https://<host>/nginx-healthz first; if reachable, the app redirects to HTTPS. This enables PWA install prompts on mobile, which generally require HTTPS. ✓
 - Ops: Ensure valid certs exist at /etc/letsencrypt/live/<domain>/ and that port 443 is open. The app will auto-upgrade to HTTPS when available; otherwise it stays on HTTP. ✓
 - Verify:
   - Visit http://<domain>/ → loads login page (no redirect if HTTPS not ready).
   - Visit https://<domain>/ → loads SPA; browser shows install option on Android/Chrome and iOS via Add to Home Screen.
   - GET https://<domain>/api/healthz → returns backend health JSON (200). ✓
+
+2025-10-06 (split frontend/backend EC2 + DNS)
+- New: Added CloudFormation template infra/frontend-ec2/template.yaml to provision a dedicated t3.micro EC2 for the frontend (Nginx only). ✓
+- CI: Updated .github/workflows/deploy.yml to optionally deploy the frontend EC2 (SEPARATE_FRONTEND=true), set apex/www DNS to the frontend EC2 IP, and push a config.js override via SSM pointing BACKEND_URL to https://api.<domain>. ✓
+- docker-compose: Removed nginx depends_on backend so Nginx can run standalone on the frontend instance. ✓
+- Nginx: Ensured HTTPS /healthz returns 410 and added /api/healthz under HTTPS as well. ✓
+- Result: Frontend and backend are now separated across two EC2 instances. DNS routes ticktocktasks.com and www to the frontend EC2, while api.ticktocktasks.com routes to the backend EC2. ✓
 
 
 

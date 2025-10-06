@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'TickTock Tasks - Dedicated Frontend EC2 (serves static via Nginx container)'
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: Apex domain for the site (e.g., example.com)
+  VpcId:
+    Type: String
+    Description: VPC to launch the instance into
+  SubnetId:
+    Type: String
+    Description: Public subnet ID (MapPublicIpOnLaunch=true)
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small, t2.micro]
+    Description: EC2 instance type for the frontend
+  KeyName:
+    Type: String
+    Default: ''
+    Description: Optional EC2 KeyPair name for SSH (leave empty to skip)
+  RepoZipUrl:
+    Type: String
+    Description: Public URL to a tar.gz of the repository (main branch)
+  AwsRegion:
+    Type: String
+    Default: us-east-1
+    Description: AWS region (for CloudWatch Logs)
+
+Mappings:
+  LinuxAmi:
+    AMZ2023:
+      # Amazon Linux 2023 AMI - resolve via SSM parameter at deploy time, fallback via region map if needed
+      Name: "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64"
+
+Resources:
+  FrontendInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: AllowCloudWatchLogsFromContainers
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  FrontendInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref FrontendInstanceRole]
+
+  FrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP/HTTPS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  FrontendEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref FrontendInstanceProfile
+      InstanceType: !Ref InstanceType
+      KeyName: !If [HasKey, !Ref KeyName, !Ref "AWS::NoValue"]
+      ImageId: !Sub "{{resolve:ssm:${LinuxAmi.AMZ2023.Name}}}"
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          SubnetId: !Ref SubnetId
+          GroupSet: [!Ref FrontendSecurityGroup]
+      Tags:
+        - Key: Name
+          Value: !Sub "ttt-frontend-${DomainName}"
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive || true
+          # Install base tools
+          yum update -y
+          yum install -y docker git curl tar
+          systemctl enable docker
+          systemctl start docker
+          # Install docker compose plugin
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -L "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          # Fetch repository contents
+          mkdir -p /opt/ticktock
+          cd /opt/ticktock
+          curl -L "${RepoZipUrl}" -o repo.tar.gz
+          mkdir src
+          tar -xzf repo.tar.gz -C src --strip-components=1 || tar -xzf repo.tar.gz -C src || true
+          rsync -a src/ ./
+          # Configure environment for logs and domain
+          echo "AWS_REGION=${AwsRegion}" > .env
+          echo "DOMAIN_NAME=${DomainName}" >> .env
+          # Bring up only nginx
+          /usr/local/bin/docker compose up -d nginx || docker compose up -d nginx
+          # Print status
+          docker ps
+
+Conditions:
+  HasKey: !Not [!Equals [!Ref KeyName, ""]]
+
+Outputs:
+  InstanceId:
+    Value: !Ref FrontendEC2
+  PublicIp:
+    Value: !GetAtt FrontendEC2.PublicIp
+    Export:
+      Name: !Sub "ttt-frontend-${DomainName}-PublicIp"

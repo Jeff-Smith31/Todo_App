@@ -43,8 +43,6 @@ services:
       - ./frontend/website:/usr/share/nginx/html:ro
       - letsencrypt:/etc/letsencrypt
       - certbot_challenges:/var/www/certbot
-    depends_on:
-      - backend
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/nginx-healthz >/dev/null || exit 1"]
       interval: 30s

@@ -10,9 +10,11 @@ What you get
 - Minimal UI: dedicated login page, task list page, and a separate task form page
 
 Architecture
-- Frontend: Static HTML/CSS/JS with a Service Worker and Web App Manifest. Served by Nginx on the same EC2 instance as the backend in production (and can be served locally for dev).
-- Backend: Node.js/Express API (Dockerized) with DynamoDB persistence and Web Push. Nginx proxies /api/* to the backend container. Backend health is exposed at /api/healthz (not /healthz).
-- Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from config.js at the site root. In the Nginx setup this is set to empty string, meaning same‑origin requests to /api/*.
+- Frontend: Static HTML/CSS/JS with a Service Worker and Web App Manifest. Served by Nginx. In production you can run it:
+  - Split-EC2 (recommended): Dedicated EC2 instance runs only Nginx to serve the SPA; API calls go to https://api.<domain>. ✓
+  - Single-EC2 (legacy): Nginx serves the SPA and proxies /api/* to the backend container on the same instance.
+- Backend: Node.js/Express API (Dockerized) with DynamoDB persistence and Web Push. In split mode, the frontend calls the API via https://api.<domain>. Backend health is exposed at /api/healthz (not /healthz).
+- Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from config.js at the site root. In split mode the CI writes BACKEND_URL to https://api.<domain>; in single-EC2 it is empty for same‑origin /api/*.
 
 Quick start (frontend only)
 - From the frontend/website directory, serve the site locally:
