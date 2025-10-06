@@ -25,10 +25,29 @@ Header "DNS lookup for $Domain"
 try {
   $aRecords = @()
   $aaaaRecords = @()
+  $cnameRecord = ''
   try { $aRecords = (Resolve-DnsName -Type A $Domain -ErrorAction Stop).IPAddress } catch { }
   try { $aaaaRecords = (Resolve-DnsName -Type AAAA $Domain -ErrorAction Stop).IPAddress } catch { }
+  try { $cnameRecord = (Resolve-DnsName -Type CNAME $Domain -ErrorAction Stop).NameHost } catch { }
   if ($aRecords.Count -gt 0) { Ok "A records: $($aRecords -join ' ')"; $pass++ } else { Err "No A records found."; $fail++ }
   if ($aaaaRecords.Count -gt 0) { Ok "AAAA records: $($aaaaRecords -join ' ')"; $pass++ } else { Warn "No AAAA records found (IPv6 optional)." }
+  if ($cnameRecord) { Ok "CNAME: $cnameRecord" }
+  if ($cnameRecord -and $cnameRecord -match 'cloudfront\.net\.?$') { Warn "DNS appears to point to CloudFront (CNAME to cloudfront.net). If your frontend is served by EC2 Nginx, update Route53 A record to your EC2 IP." }
+
+  # If no A and no AAAA, this maps to browser error: ERR_NAME_NOT_RESOLVED
+  if (($aRecords -eq $null -or $aRecords.Count -eq 0) -and ($aaaaRecords -eq $null -or $aaaaRecords.Count -eq 0)) {
+    Err "No DNS records found for $Domain. This typically appears in the browser as: net::ERR_NAME_NOT_RESOLVED"
+    Write-Host "`nHow to fix:" -ForegroundColor Yellow
+    Write-Host "- Create an A record for $Domain in Route53 (or your DNS) pointing to your EC2 public IP." -ForegroundColor Yellow
+    if ($Ec2Ip) {
+      Write-Host "  Example (Route53 CLI upsert):" -ForegroundColor Yellow
+      Write-Host "  aws route53 change-resource-record-sets --hosted-zone-id <HOSTED_ZONE_ID> --change-batch '{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$Domain\",\"Type\":\"A\",\"TTL\":60,\"ResourceRecords\":[{\"Value\":\"$Ec2Ip\"}]}}]}'" -ForegroundColor Yellow
+    } else {
+      Write-Host "  Example (Route53 CLI upsert): replace <EC2_PUBLIC_IP> with your instance IP" -ForegroundColor Yellow
+      Write-Host "  aws route53 change-resource-record-sets --hosted-zone-id <HOSTED_ZONE_ID> --change-batch '{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$Domain\",\"Type\":\"A\",\"TTL\":60,\"ResourceRecords\":[{\"Value\":\"<EC2_PUBLIC_IP>\"}]}}]}'" -ForegroundColor Yellow
+    }
+    Write-Host "- Ensure the EC2 security group allows inbound TCP 80 (and 443 if using HTTPS)." -ForegroundColor Yellow
+  }
 }
 catch {
   Err "DNS lookup failed: $_"

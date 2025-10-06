@@ -30,9 +30,11 @@ if ! command -v dig >/dev/null 2>&1; then HAVE_DIG=0; fi
 
 A_RECORDS=""
 AAAA_RECORDS=""
+CNAME_RECORD=""
 if [[ $HAVE_DIG -eq 1 ]]; then
   A_RECORDS=$(dig +short A "$DOMAIN" | tr '\n' ' ' | sed 's/ *$//') || true
   AAAA_RECORDS=$(dig +short AAAA "$DOMAIN" | tr '\n' ' ' | sed 's/ *$//') || true
+  CNAME_RECORD=$(dig +short CNAME "$DOMAIN" | tr '\n' ' ' | sed 's/ *$//') || true
 else
   if getent ahostsv4 "$DOMAIN" >/dev/null 2>&1; then
     A_RECORDS=$(getent ahostsv4 "$DOMAIN" | awk '{print $1}' | sort -u | tr '\n' ' ' | sed 's/ *$//')
@@ -44,6 +46,27 @@ fi
 
 if [[ -n "$A_RECORDS" ]]; then ok "A records: $A_RECORDS"; else err "No A records found."; fi
 if [[ -n "$AAAA_RECORDS" ]]; then ok "AAAA records: $AAAA_RECORDS"; else warn "No AAAA records found (IPv6 optional)."; fi
+if [[ -n "$CNAME_RECORD" ]]; then ok "CNAME: $CNAME_RECORD"; fi
+# Detect CloudFront alias via CNAME
+if [[ -n "$CNAME_RECORD" ]] && echo "$CNAME_RECORD" | grep -qi "cloudfront\.net"; then
+  warn "DNS appears to point to CloudFront (CNAME to cloudfront.net). If your frontend is served by EC2 Nginx, update Route53 A record to your EC2 IP."
+fi
+
+# If no A and no AAAA records exist, this maps to browser error: ERR_NAME_NOT_RESOLVED
+if [[ -z "$A_RECORDS" && -z "$AAAA_RECORDS" ]]; then
+  echo
+  err "No DNS records found for $DOMAIN. This typically appears in the browser as: net::ERR_NAME_NOT_RESOLVED"
+  echo "\nHow to fix:" >&2
+  echo "- Create an A record for $DOMAIN in Route53 (or your DNS) pointing to your EC2 public IP." >&2
+  if [[ -n "$EC2_IP" ]]; then
+    echo "  Example (Route53 CLI upsert):" >&2
+    echo "  aws route53 change-resource-record-sets --hosted-zone-id <HOSTED_ZONE_ID> --change-batch '{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$DOMAIN\",\"Type\":\"A\",\"TTL\":60,\"ResourceRecords\":[{\"Value\":\"$EC2_IP\"}]}}]}'" >&2
+  else
+    echo "  Example (Route53 CLI upsert): replace <EC2_PUBLIC_IP> with your instance IP" >&2
+    echo "  aws route53 change-resource-record-sets --hosted-zone-id <HOSTED_ZONE_ID> --change-batch '{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$DOMAIN\",\"Type\":\"A\",\"TTL\":60,\"ResourceRecords\":[{\"Value\":\"<EC2_PUBLIC_IP>\"}]}}]}'" >&2
+  fi
+  echo "- Ensure the EC2 security group allows inbound TCP 80 (and 443 if using HTTPS)." >&2
+fi
 
 if [[ -n "$EC2_IP" ]]; then
   header "DNS matches EC2 IP"

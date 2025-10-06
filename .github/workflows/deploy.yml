@@ -25,6 +25,9 @@ env:
   BACKEND_OVERRIDE_URL: ${{ vars.BACKEND_OVERRIDE_URL || '' }}
   USE_RELATIVE_API: ${{ vars.USE_RELATIVE_API || '' }}
   USE_CLOUDFRONT: ${{ vars.USE_CLOUDFRONT || 'false' }}
+  # DNS safeguard (ensure Hosted Zone points to EC2 Nginx when not using CloudFront)
+  FIX_DNS_TO_EC2: ${{ vars.FIX_DNS_TO_EC2 || 'false' }}
+  EC2_PUBLIC_IP: ${{ vars.EC2_PUBLIC_IP || '' }}
 
 jobs:
   deploy:
@@ -216,6 +219,46 @@ jobs:
           for v in DOMAIN_NAME HOSTED_ZONE_ID VPC_ID SUBNET_ID; do
             if [ -z "${!v}" ]; then echo "Missing required repo variable: $v"; exit 2; fi
           done
+
+      - name: Assert Route53 DNS points to EC2 (not CloudFront)
+        if: ${{ env.USE_CLOUDFRONT == 'false' }}
+        run: |
+          set -e
+          ZID="${HOSTED_ZONE_ID}"
+          DN="${DOMAIN_NAME}"
+          INC_WWW="${INCLUDE_WWW}"
+          FIX="${FIX_DNS_TO_EC2}"
+          EC2IP="${EC2_PUBLIC_IP}"
+          echo "Checking Route53 records for ${DN} in zone ${ZID} (CloudFront aliases are not allowed when USE_CLOUDFRONT=false)" >> $GITHUB_STEP_SUMMARY
+          # Ensure jq installed
+          if ! command -v jq >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y jq >/dev/null; fi
+          JSON=$(aws route53 list-resource-record-sets --hosted-zone-id "$ZID")
+          check_name(){
+            local NAME="$1"
+            local CF=false
+            local REC=$(echo "$JSON" | jq -r --arg N "${NAME}." '.ResourceRecordSets[] | select(.Name==$N and (.Type=="A" or .Type=="CNAME")) | if .AliasTarget then .AliasTarget.DNSName else (if .ResourceRecords then .ResourceRecords[0].Value else "" end) end')
+            if echo "$REC" | grep -qi 'cloudfront\.net'; then CF=true; fi
+            echo "${NAME}: target=${REC:-<none>}" >> $GITHUB_STEP_SUMMARY
+            if $CF; then echo "Warning: ${NAME} points to CloudFront (cloudfront.net)." >> $GITHUB_STEP_SUMMARY; fi
+            $CF && return 0 || return 1
+          }
+          CF_APEX=false; CF_WWW=false
+          if check_name "$DN"; then CF_APEX=true; fi
+          if [ "$INC_WWW" = "true" ]; then if check_name "www.$DN"; then CF_WWW=true; fi; fi
+          NEED_FIX=false
+          if $CF_APEX || $CF_WWW; then NEED_FIX=true; fi
+          if ! $NEED_FIX; then echo "DNS OK: no CloudFront aliases detected." >> $GITHUB_STEP_SUMMARY; exit 0; fi
+          if [ "$FIX" != "true" ]; then
+            echo "Action required: Update Route53 A record(s) to point to your EC2 IP. Set FIX_DNS_TO_EC2=true and EC2_PUBLIC_IP to auto-fix in this workflow, or run scripts/route53-switch-to-ec2.sh locally." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          if [ -z "$EC2IP" ]; then echo "FIX_DNS_TO_EC2=true but EC2_PUBLIC_IP is empty. Cannot apply fix." >> $GITHUB_STEP_SUMMARY; exit 1; fi
+          echo "Applying UPSERT to point ${DN} (and www if enabled) to ${EC2IP}" >> $GITHUB_STEP_SUMMARY
+          CHANGES=$(jq -cn --arg dom "$DN" --arg ip "$EC2IP" --arg inc "$INC_WWW" '
+            ([{Action:"UPSERT",ResourceRecordSet:{Name:$dom,Type:"A",TTL:60,ResourceRecords:[{Value:$ip}]}}]
+             + (if $inc=="true" then [{Action:"UPSERT",ResourceRecordSet:{Name:("www."+$dom),Type:"A",TTL:60,ResourceRecords:[{Value:$ip}]}}] else [] end))')
+          aws route53 change-resource-record-sets --hosted-zone-id "$ZID" --change-batch "{\"Changes\":$(echo "$CHANGES" | jq -c .)}" >/dev/null
+          echo "Submitted DNS changes. Propagation may take a few minutes." >> $GITHUB_STEP_SUMMARY
 
       - name: Detect existing frontend resources (bucket, cert, DNS)
         run: |

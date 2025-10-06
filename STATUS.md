@@ -91,3 +91,15 @@ Operator notes:
 - Change: Serve the SPA over HTTP (port 80) instead of forcing a redirect to HTTPS. The port 80 server block now mirrors the HTTPS block (static files + /api proxy) while keeping ACME and health endpoints. HTTPS on 443 remains available when certs are valid. ✓
 - Operator guidance: Fix certificates for your actual domain under /etc/letsencrypt/live/<domain> and verify HTTPS works. Once stable, you may re-enable HTTP→HTTPS redirect by restoring the redirect rule in nginx.conf or introducing an env-gated config. ✓
 
+
+
+2025-10-06 (DNS troubleshooting enhancement)
+- Enhanced DNS/HTTP check scripts to explicitly detect missing A/AAAA records and map this to the browser error net::ERR_NAME_NOT_RESOLVED, with clear Route53 CLI examples to fix. ✓
+- README updated with a troubleshooting section for ERR_NAME_NOT_RESOLVED and verification steps. ✓
+
+
+2025-10-06 (DNS routing enforcement)
+- Added scripts to detect and switch Route53 records from CloudFront to EC2 A records: scripts/route53-switch-to-ec2.sh and scripts/route53-switch-to-ec2.ps1. ✓
+- Enhanced DNS check scripts to warn when the domain CNAME points to cloudfront.net. ✓
+- CI: Updated .github/workflows/deploy.yml to assert that when USE_CLOUDFRONT=false, Hosted Zone records do not point to CloudFront; optional auto-fix via FIX_DNS_TO_EC2=true and EC2_PUBLIC_IP. ✓
+- README: Documented how to switch DNS and how to use the CI safeguard/variables. ✓
