@@ -108,3 +108,10 @@ Operator notes:
 - CI: Added DNS_ENFORCE_STRICT (default true) to .github/workflows/deploy.yml. When USE_CLOUDFRONT=false and Hosted Zone records point to CloudFront, the job now fails unless FIX_DNS_TO_EC2=true and EC2_PUBLIC_IP are set to auto-fix. ✓
 - Docs: README now includes a clear "Switch Route53 from CloudFront to EC2" section with Bash/PowerShell commands using scripts/route53-switch-to-ec2.(sh|ps1), and guidance for CI variables FIX_DNS_TO_EC2, EC2_PUBLIC_IP, and DNS_ENFORCE_STRICT. ✓
 - Goal: Ensure ticktocktasks.com and www.ticktocktasks.com stop routing to cloudfront.net and point to the EC2-hosted Nginx instead. ✓
+
+2025-10-06 (CI DNS auto-fix enhancement)
+- Improved the GitHub Actions step "Assert Route53 DNS points to EC2". When FIX_DNS_TO_EC2=true but EC2_PUBLIC_IP is not set, the workflow now auto-resolves the EC2 public IP from the backend CloudFormation stack:
+  - Tries Outputs: InstancePublicIp or PublicIp. ✓
+  - Falls back to resolving InstanceId, then queries EC2 for its PublicIpAddress. ✓
+- The step applies the Route53 UPSERT using the resolved IP, avoiding a hard failure (exit code 1) due to missing EC2_PUBLIC_IP. If auto-resolution fails and DNS_ENFORCE_STRICT=true, the step will still fail with a clear message. ✓
+

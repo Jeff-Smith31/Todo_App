@@ -259,7 +259,33 @@ jobs:
               exit 0
             fi
           fi
-          if [ -z "$EC2IP" ]; then echo "FIX_DNS_TO_EC2=true but EC2_PUBLIC_IP is empty. Cannot apply fix." >> $GITHUB_STEP_SUMMARY; exit 1; fi
+          if [ -z "$EC2IP" ]; then
+            echo "FIX_DNS_TO_EC2=true but EC2_PUBLIC_IP is empty. Attempting to auto-resolve EC2 public IP from backend stack..." >> $GITHUB_STEP_SUMMARY
+            # Try common backend stack outputs first
+            IP_OUT=$(aws cloudformation describe-stacks \
+              --region "${BACKEND_REGION}" \
+              --stack-name "${BACKEND_STACK_NAME}" \
+              --query "Stacks[0].Outputs[?OutputKey=='InstancePublicIp' || OutputKey=='PublicIp'].OutputValue | [0]" \
+              --output text 2>/dev/null || echo None)
+            if [ -n "$IP_OUT" ] && [ "$IP_OUT" != "None" ]; then
+              EC2IP="$IP_OUT"
+            else
+              # Resolve InstanceId then describe its PublicIpAddress
+              IID=$(aws cloudformation describe-stacks \
+                --region "${BACKEND_REGION}" \
+                --stack-name "${BACKEND_STACK_NAME}" \
+                --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue | [0]" \
+                --output text 2>/dev/null || echo None)
+              if [ -n "$IID" ] && [ "$IID" != "None" ]; then
+                EC2IP=$(aws ec2 describe-instances \
+                  --region "${BACKEND_REGION}" \
+                  --instance-ids "$IID" \
+                  --query "Reservations[0].Instances[0].PublicIpAddress" \
+                  --output text 2>/dev/null || echo "")
+              fi
+            fi
+          fi
+          if [ -z "$EC2IP" ]; then echo "Auto-resolution failed; provide EC2_PUBLIC_IP or ensure backend stack outputs InstancePublicIp/InstanceId. Failing." >> $GITHUB_STEP_SUMMARY; exit 1; fi
           echo "Applying UPSERT to point ${DN} (and www if enabled) to ${EC2IP}" >> $GITHUB_STEP_SUMMARY
           CHANGES=$(jq -cn --arg dom "$DN" --arg ip "$EC2IP" --arg inc "$INC_WWW" '
             ([{Action:"UPSERT",ResourceRecordSet:{Name:$dom,Type:"A",TTL:60,ResourceRecords:[{Value:$ip}]}}]
