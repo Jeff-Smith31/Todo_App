@@ -108,5 +108,23 @@ HTTPS and certificate checks
   - ./scripts/check-dns-and-http.sh your-domain.com [EC2_PUBLIC_IP]
 - The script reports the HTTPS status code and ssl_verify_result (0 means certificate validated successfully).
 
+Switch Route53 from CloudFront to EC2
+- If your hosted zone still points ticktocktasks.com or www.ticktocktasks.com to a cloudfront.net target, switch them to A records that point to your EC2 public IP.
+- Bash (Linux/macOS):
+  - Dry run (shows what will change):
+    ./scripts/route53-switch-to-ec2.sh -z <HOSTED_ZONE_ID> -d ticktocktasks.com -i <EC2_PUBLIC_IP> --include-www
+  - Apply changes:
+    ./scripts/route53-switch-to-ec2.sh -z <HOSTED_ZONE_ID> -d ticktocktasks.com -i <EC2_PUBLIC_IP> --include-www --apply
+- PowerShell (Windows):
+  - Dry run:
+    powershell -ExecutionPolicy Bypass -File .\scripts\route53-switch-to-ec2.ps1 -HostedZoneId <HOSTED_ZONE_ID> -Domain ticktocktasks.com -Ec2Ip <EC2_PUBLIC_IP> -IncludeWww
+  - Apply changes:
+    powershell -ExecutionPolicy Bypass -File .\scripts\route53-switch-to-ec2.ps1 -HostedZoneId <HOSTED_ZONE_ID> -Domain ticktocktasks.com -Ec2Ip <EC2_PUBLIC_IP> -IncludeWww -Apply
+- CI enforcement (GitHub Actions):
+  - The deploy workflow now fails early if USE_CLOUDFRONT=false and Route53 records still point to CloudFront. To allow the workflow to auto-fix, set repository Variables:
+    - FIX_DNS_TO_EC2=true
+    - EC2_PUBLIC_IP=<your EC2 public or Elastic IP>
+  - You can relax this behavior by setting DNS_ENFORCE_STRICT=false in repo Variables (not recommended).
+
 License
 This project is licensed under the MIT License. See LICENSE for details.

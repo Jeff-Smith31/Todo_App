@@ -103,3 +103,8 @@ Operator notes:
 - Enhanced DNS check scripts to warn when the domain CNAME points to cloudfront.net. ✓
 - CI: Updated .github/workflows/deploy.yml to assert that when USE_CLOUDFRONT=false, Hosted Zone records do not point to CloudFront; optional auto-fix via FIX_DNS_TO_EC2=true and EC2_PUBLIC_IP. ✓
 - README: Documented how to switch DNS and how to use the CI safeguard/variables. ✓
+
+2025-10-06 (DNS enforcement + docs)
+- CI: Added DNS_ENFORCE_STRICT (default true) to .github/workflows/deploy.yml. When USE_CLOUDFRONT=false and Hosted Zone records point to CloudFront, the job now fails unless FIX_DNS_TO_EC2=true and EC2_PUBLIC_IP are set to auto-fix. ✓
+- Docs: README now includes a clear "Switch Route53 from CloudFront to EC2" section with Bash/PowerShell commands using scripts/route53-switch-to-ec2.(sh|ps1), and guidance for CI variables FIX_DNS_TO_EC2, EC2_PUBLIC_IP, and DNS_ENFORCE_STRICT. ✓
+- Goal: Ensure ticktocktasks.com and www.ticktocktasks.com stop routing to cloudfront.net and point to the EC2-hosted Nginx instead. ✓

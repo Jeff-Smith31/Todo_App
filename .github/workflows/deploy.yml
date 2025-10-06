@@ -28,6 +28,8 @@ env:
   # DNS safeguard (ensure Hosted Zone points to EC2 Nginx when not using CloudFront)
   FIX_DNS_TO_EC2: ${{ vars.FIX_DNS_TO_EC2 || 'false' }}
   EC2_PUBLIC_IP: ${{ vars.EC2_PUBLIC_IP || '' }}
+  # DNS enforcement: fail CI if CloudFront is still configured when USE_CLOUDFRONT=false
+  DNS_ENFORCE_STRICT: ${{ vars.DNS_ENFORCE_STRICT || 'true' }}
 
 jobs:
   deploy:
@@ -250,7 +252,12 @@ jobs:
           if ! $NEED_FIX; then echo "DNS OK: no CloudFront aliases detected." >> $GITHUB_STEP_SUMMARY; exit 0; fi
           if [ "$FIX" != "true" ]; then
             echo "Action required: Update Route53 A record(s) to point to your EC2 IP. Set FIX_DNS_TO_EC2=true and EC2_PUBLIC_IP to auto-fix in this workflow, or run scripts/route53-switch-to-ec2.sh locally." >> $GITHUB_STEP_SUMMARY
-            exit 0
+            if [ "${DNS_ENFORCE_STRICT}" = "true" ]; then
+              echo "Failing job due to DNS pointing to CloudFront while USE_CLOUDFRONT=false (DNS_ENFORCE_STRICT=true)." >> $GITHUB_STEP_SUMMARY
+              exit 1
+            else
+              exit 0
+            fi
           fi
           if [ -z "$EC2IP" ]; then echo "FIX_DNS_TO_EC2=true but EC2_PUBLIC_IP is empty. Cannot apply fix." >> $GITHUB_STEP_SUMMARY; exit 1; fi
           echo "Applying UPSERT to point ${DN} (and www if enabled) to ${EC2IP}" >> $GITHUB_STEP_SUMMARY
