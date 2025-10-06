@@ -85,6 +85,16 @@ Verify
 - Open http://your-domain.com (HTTP) to verify reachability. If you need HTTPS, complete TLS setup first, then add and expose the 443 listener.
 - Push notifications require VAPID keys on the backend and user permission in the browser (Enable Notifications).
 
+DNS and routing checks
+- Use the provided scripts to validate DNS and Nginx reachability from outside and from EC2:
+  - Linux/macOS: ./scripts/check-dns-and-http.sh your-domain.com [EC2_PUBLIC_IP]
+  - Windows PowerShell: powershell -ExecutionPolicy Bypass -File .\scripts\check-dns-and-http.ps1 -Domain your-domain.com [-Ec2Ip EC2_PUBLIC_IP]
+- The script verifies A/AAAA records, checks that the A record matches your EC2 IP (if provided), and confirms HTTP and /nginx-healthz are reachable.
+- If checks fail, ensure:
+  - Route53 (or your DNS) A record points to the EC2 public or Elastic IP
+  - EC2 security group allows inbound TCP 80 from 0.0.0.0/0 (and ::/0)
+  - docker compose ps shows nginx up and listening on 0.0.0.0:80
+
 License
 This project is licensed under the MIT License. See LICENSE for details.
 

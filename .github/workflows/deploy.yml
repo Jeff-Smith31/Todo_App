@@ -24,6 +24,7 @@ env:
   API_SUBDOMAIN: ${{ vars.API_SUBDOMAIN || 'api' }}
   BACKEND_OVERRIDE_URL: ${{ vars.BACKEND_OVERRIDE_URL || '' }}
   USE_RELATIVE_API: ${{ vars.USE_RELATIVE_API || '' }}
+  USE_CLOUDFRONT: ${{ vars.USE_CLOUDFRONT || 'false' }}
 
 jobs:
   deploy:
@@ -266,6 +267,7 @@ jobs:
           fi
 
       - name: Deploy frontend stack (S3 + CloudFront + ACM + Route53)
+        if: ${{ env.USE_CLOUDFRONT == 'true' }}
         run: |
           set +e
           aws cloudformation deploy \
@@ -288,6 +290,7 @@ jobs:
           exit 0
 
       - name: Get frontend outputs
+        if: ${{ env.USE_CLOUDFRONT == 'true' }}
         id: front
         run: |
           set -e
@@ -382,6 +385,7 @@ jobs:
           fi
 
       - name: Sync site to S3 bucket(s) (proactive origin sync)
+        if: ${{ env.USE_CLOUDFRONT == 'true' }}
         run: |
           set -e
           PRIMARY_BUCKET='${{ steps.front.outputs.bucket }}'
@@ -501,7 +505,7 @@ jobs:
           set -e
 
       - name: "Recovery: resync to active CloudFront origin if homepage not 200"
-        if: ${{ steps.verify1.outputs.need_recovery == 'true' }}
+        if: ${{ env.USE_CLOUDFRONT == 'true' && steps.verify1.outputs.need_recovery == 'true' }}
         run: |
           set -e
           echo "Attempting recovery: determine active CloudFront distribution by alias and resync" >> $GITHUB_STEP_SUMMARY
@@ -868,9 +872,11 @@ jobs:
 
       - name: Output Summary
         run: |
-          echo "Frontend Bucket: ${{ steps.front.outputs.bucket }}" >> $GITHUB_STEP_SUMMARY
-          echo "CloudFront ID: ${{ steps.front.outputs.dist_id }}" >> $GITHUB_STEP_SUMMARY
-          echo "CloudFront Domain: ${{ steps.front.outputs.cf_domain }}" >> $GITHUB_STEP_SUMMARY
+          if [ "${USE_CLOUDFRONT}" = "true" ]; then
+            echo "Frontend Bucket: ${{ steps.front.outputs.bucket }}" >> $GITHUB_STEP_SUMMARY
+            echo "CloudFront ID: ${{ steps.front.outputs.dist_id }}" >> $GITHUB_STEP_SUMMARY
+            echo "CloudFront Domain: ${{ steps.front.outputs.cf_domain }}" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "Allowed Origins: ${{ steps.origins.outputs.allowed }}" >> $GITHUB_STEP_SUMMARY
           BE_URL=$(aws cloudformation describe-stacks \
             --region "${BACKEND_REGION}" \

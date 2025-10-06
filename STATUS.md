@@ -68,3 +68,8 @@ Operator notes:
 - Changed infra/scripts/link-frontend.sh to exit 0 as a no-op with a clear deprecation message. ✓
 - Rationale: if any external CI still invokes this script, it will no longer fail the pipeline nor attempt S3/CloudFront actions. ✓
 - Reminder: Frontend is served by Nginx on EC2; stop any S3/CloudFront deploy workflows outside this repo. ✓
+
+2025-10-06 (disable CloudFront in CI)
+- Updated .github/workflows/deploy.yml to gate all S3/CloudFront steps and CloudFront invalidations behind USE_CLOUDFRONT=false by default. ✓
+- Recovery step that resyncs to CloudFront origin is also disabled unless explicitly enabled. ✓
+- Output summary now prints CloudFront details only when enabled. ✓
