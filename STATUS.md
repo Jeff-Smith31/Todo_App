@@ -85,3 +85,9 @@ Operator notes:
 - docker-compose: configured awslogs driver for the nginx container with auto log group creation (/TickTock/Frontend-${DOMAIN_NAME:-ticktocktasks.com} in ${AWS_REGION:-us-east-1}). Requires EC2 role permissions for CloudWatch Logs. ✓
 - Diagnostics: Enhanced scripts/check-dns-and-http.sh to verify HTTPS reachability and certificate validation (ssl_verify_result). ✓
 - Ops: If frontend is unreachable over HTTPS, check CloudWatch Logs for Nginx errors (cert missing/mispath), verify Let’s Encrypt files exist in /etc/letsencrypt/live/<domain> inside the container, or temporarily serve over HTTP only while issuing certs. ✓
+
+2025-10-06 (reachability hotfix)
+- Root cause symptoms: CloudWatch showed only GET /healthz by Wget while browsers could not load the homepage. Likely browsers were redirected to HTTPS, but TLS handshake failed (missing/incorrect certs), so no HTTPS access logs were recorded. 
+- Change: Serve the SPA over HTTP (port 80) instead of forcing a redirect to HTTPS. The port 80 server block now mirrors the HTTPS block (static files + /api proxy) while keeping ACME and health endpoints. HTTPS on 443 remains available when certs are valid. ✓
+- Operator guidance: Fix certificates for your actual domain under /etc/letsencrypt/live/<domain> and verify HTTPS works. Once stable, you may re-enable HTTP→HTTPS redirect by restoring the redirect rule in nginx.conf or introducing an env-gated config. ✓
+
