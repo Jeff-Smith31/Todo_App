@@ -163,3 +163,13 @@ Verify after redeploy (docker compose up -d --build):
 - curl http://ticktocktasks.com/api/healthz → 200 (backend health via frontend host)
 - Browser: navigate to http://ticktocktasks.com and confirm app loads and API calls succeed.
 
+2025-10-07 (fix: ensure apex never shows backend landing)
+- Change: Made the frontend virtual host the explicit default_server on port 80 and added a catch‑all server_name "_" so any non‑api host serves the SPA instead of proxying to the backend. ✓
+- Rationale: Some requests to ticktocktasks.com were hitting the backend landing page. This hardens routing so only api.ticktocktasks.com ever proxies all paths to the backend; apex/www always serve the frontend. ✓
+- Files: nginx.conf (listen 80 default_server; server_name now includes _). ✓
+- Verify:
+  - curl -I http://ticktocktasks.com/ → 200, HTML title "TickTock Tasks". ✓
+  - curl -I http://api.ticktocktasks.com/ → 200, HTML title "TickTock Backend". ✓
+  - curl http://ticktocktasks.com/healthz → 410 Gone. ✓
+  - curl http://ticktocktasks.com/nginx-healthz → ok. ✓
+
