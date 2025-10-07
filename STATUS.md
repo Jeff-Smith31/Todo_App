@@ -190,3 +190,21 @@ Verify after redeploy (docker compose up -d --build):
   - curl -I http://api.ticktocktasks.com/healthz → 200 (backend health)
   - curl -kI https://api.ticktocktasks.com/healthz → 200 (if you issued an api cert with --include-api and added an API HTTPS server block)
   - Browser: visiting https://ticktocktasks.com shows the frontend app; https://api.ticktocktasks.com shows backend health endpoints only.
+
+2025-10-07 (frontend unreachable after deploy – fix)
+- Symptom: Frontend not reachable after successful deploy. Browsers timed out/connection failed. ✓
+- Root cause: Nginx config included an HTTPS (443) server block pointing to Let’s Encrypt cert files that were not yet present on the host. Nginx refused to start due to missing ssl_certificate files, leaving no listener on port 80/443. ✓
+- Fix: Serve HTTP by default; removed the HTTPS server block from nginx.conf and stopped publishing 443 in docker-compose. This ensures Nginx starts cleanly and serves the SPA over HTTP. HTTPS can be re-enabled later once certs are issued. ✓
+- Files changed:
+  - nginx.conf — removed the 443 server block (TLS). ✓
+  - docker-compose.yml — removed port mapping 443:443 for nginx. ✓
+- Verify after redeploy (docker compose up -d --build):
+  - curl -I http://ticktocktasks.com/ → 200
+  - curl http://ticktocktasks.com/nginx-healthz → ok
+  - curl http://ticktocktasks.com/api/healthz → 200 (backend healthy)
+  - docker compose ps → nginx Up, backend Up
+- To enable HTTPS later:
+  1) Issue certs using scripts/issue-certs.sh ticktocktasks.com (adds www as SAN; optional --include-api). ✓
+  2) Re-introduce an HTTPS server block in nginx.conf that references /etc/letsencrypt/live/<domain>/*.pem and expose 443 in docker-compose. ✓
+  3) Reload nginx: docker compose exec nginx nginx -s reload. ✓
+
