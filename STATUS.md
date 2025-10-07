@@ -146,3 +146,20 @@ Operator notes:
 - Verification: Re-run CloudFormation deploy for the frontend-ec2 stack. The change set should create successfully. You can confirm the export is present via:
   aws cloudformation list-exports --query "Exports[?Name=='${STACK_NAME}:PublicIp']" --output table
 
+
+2025-10-07 (consolidation: single EC2, two containers)
+- Removed the need for a separate frontend EC2. The original backend EC2 now serves both roles via two containers: backend API and frontend Nginx. ✓
+- Nginx now routes hostnames:
+  - ticktocktasks.com and www.ticktocktasks.com → serve SPA directly. ✓
+  - api.ticktocktasks.com → proxied to the backend container. ✓
+- Updated nginx.conf with explicit server_name blocks for apex/www and api subdomain. ✓
+- Marked infra/frontend-ec2/template.yaml as DEPRECATED (no longer used). ✓
+- README updated to document the single-EC2 architecture and routing. ✓
+
+Verify after redeploy (docker compose up -d --build):
+- curl -I http://ticktocktasks.com/ → 200 (served by frontend)
+- curl -I http://www.ticktocktasks.com/ → 200 (served by frontend)
+- curl -I http://api.ticktocktasks.com/healthz → 200 (backend health via API host)
+- curl http://ticktocktasks.com/api/healthz → 200 (backend health via frontend host)
+- Browser: navigate to http://ticktocktasks.com and confirm app loads and API calls succeed.
+

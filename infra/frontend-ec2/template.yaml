@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'TickTock Tasks - Dedicated Frontend EC2 (serves static via Nginx container)'
+Description: 'DEPRECATED - Dedicated Frontend EC2 (no longer used). Frontend is served by Nginx container on the backend EC2.'
 
 Parameters:
   DomainName:
@@ -13,7 +13,7 @@ Parameters:
     Description: Public subnet ID (MapPublicIpOnLaunch=true)
   InstanceType:
     Type: String
-    Default: t3.micro
+    Default: t2.micro
     AllowedValues: [t3.micro, t3.small, t2.micro]
     Description: EC2 instance type for the frontend
   KeyName:

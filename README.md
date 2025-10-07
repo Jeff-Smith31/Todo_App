@@ -10,11 +10,11 @@ What you get
 - Minimal UI: dedicated login page, task list page, and a separate task form page
 
 Architecture
-- Frontend: Static HTML/CSS/JS with a Service Worker and Web App Manifest. Served by Nginx. In production you can run it:
-  - Split-EC2 (recommended): Dedicated EC2 instance runs only Nginx to serve the SPA; API calls go to https://api.<domain>. ✓
-  - Single-EC2 (legacy): Nginx serves the SPA and proxies /api/* to the backend container on the same instance.
-- Backend: Node.js/Express API (Dockerized) with DynamoDB persistence and Web Push. In split mode, the frontend calls the API via https://api.<domain>. Backend health is exposed at /api/healthz (not /healthz).
-- Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from config.js at the site root. In split mode the CI writes BACKEND_URL to https://api.<domain>; in single-EC2 it is empty for same‑origin /api/*.
+- Single EC2 host (now standard): One EC2 instance runs two containers via Docker Compose:
+  - Frontend: Nginx serves the SPA for ticktocktasks.com and www.ticktocktasks.com.
+  - Backend: Node.js/Express API container. The api.ticktocktasks.com hostname is routed by the Nginx container directly to the backend container.
+- Backend health is exposed at /healthz on api.ticktocktasks.com and at /api/healthz via the frontend host (apex/www) proxy. The SPA uses same‑origin /api/* when loaded from apex/www.
+- Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from config.js at the site root. In this setup it is empty so API calls go to same‑origin /api/*.
 
 Quick start (frontend only)
 - From the frontend/website directory, serve the site locally:
@@ -135,3 +135,11 @@ This project is licensed under the MIT License. See LICENSE for details.
 Note (2025-10-06): CI default now auto-fixes Route53 when not using CloudFront.
 - The deploy workflow defaults FIX_DNS_TO_EC2=true. If USE_CLOUDFRONT=false and your hosted zone still points to a cloudfront.net alias, the workflow will UPSERT A records for the apex and www to your EC2 public IP. It auto-resolves the IP from the backend CloudFormation stack if EC2_PUBLIC_IP is unset.
 - To opt out of automatic DNS changes, set repo Variable FIX_DNS_TO_EC2=false (or relax enforcement with DNS_ENFORCE_STRICT=false, not recommended).
+
+
+Troubleshooting: EC2 instance type unsupported in AZ
+- If CloudFormation fails with an error like: "Your requested instance type (t3.micro) is not supported in your requested Availability Zone (...)", it means the selected SubnetId is in an AZ that doesn’t offer that instance type in your account.
+- Fix options:
+  - Use the default t2.micro (now the default for the frontend EC2 template), which is broadly available.
+  - Or choose a different SubnetId that resides in a supported AZ for t3.micro (e.g., us-east-1a/1b/1c/1d/1f in us-east-1 per the error message).
+- The backend stack already defaults to t2.micro. The dedicated frontend-ec2 stack has been updated to also default to t2.micro while still allowing t3.micro.
