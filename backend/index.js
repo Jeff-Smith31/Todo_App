@@ -831,10 +831,23 @@ app.get('/healthz', (req, res) => res.json({ ok: true }));
 
 // Friendly landing page so users don't see "Cannot GET /" after accepting the TLS warning
 app.get('/', (req, res) => {
-  const origin = ORIGIN;
-  const beUrl = `https://${req.headers.host || 'localhost:8443'}`;
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.end(`<!doctype html>
+  try {
+    // Only present the backend landing page on API hostnames. For any other host,
+    // do not render this page to avoid confusing users on the apex domain.
+    const hostHdr = String(req.headers.host || '').toLowerCase();
+    const host = hostHdr.split(':')[0];
+    const isLocal = host === 'localhost' || host === '127.0.0.1';
+    const apiHostFromEnv = (process.env.API_HOST || '').toLowerCase();
+    const isApiByEnv = apiHostFromEnv && host === apiHostFromEnv;
+    const isApiByPrefix = /^api\./.test(host);
+    if (!(isLocal || isApiByEnv || isApiByPrefix)) {
+      return res.status(404).send('Not Found');
+    }
+
+    const origin = ORIGIN;
+    const beUrl = `https://${req.headers.host || 'localhost:8443'}`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.end(`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -862,11 +875,13 @@ app.get('/', (req, res) => {
     <p>Next, set your frontend to use this backend URL:<br>
       <code>${beUrl}</code>
     </p>
-    <p>In production, this is automated by writing <code>config.js</code> to your S3 site via <code>infra/scripts/link-frontend.sh</code>.</p>
     <p style="margin-top:.75rem;color:#6b7280">© 2025 CodeSmith Consulting. All rights reserved.</p>
   </div>
 </body>
 </html>`);
+  } catch (e) {
+    return res.status(500).send('Internal Server Error');
+  }
 });
 
 // Serve a standalone copy of the web app from the backend under /app

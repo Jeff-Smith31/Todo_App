@@ -61,18 +61,18 @@ This setup removes CloudFront/S3. The frontend is served by Nginx on the same EC
   - backend (Express API on 8080 inside the network)
   - nginx (serves frontend from frontend/website and proxies /api/* to backend)
 
-2) TLS (HTTPS on frontend) — optional
-- By default, the stack serves over HTTP only (port 80) so the site is reachable without certificates.
-- To enable HTTPS: obtain Let’s Encrypt certs using the ACME webroot at /var/www/certbot (mapped to certbot_challenges) and place certs under /etc/letsencrypt (letsencrypt volume).
-- One-time issuance (replace DOMAIN with your real domain):
-  docker compose run --rm \
-    -p 80:80 \
-    -v certbot_challenges:/var/www/certbot \
-    -v letsencrypt:/etc/letsencrypt \
-    nginx sh -c "apk add --no-cache certbot && certbot certonly --webroot -w /var/www/certbot -d DOMAIN -d www.DOMAIN --agree-tos -m admin@DOMAIN --non-interactive"
-- Then, add an HTTPS server block in nginx.conf that references your certs and re-expose 443 in docker-compose. Finally reload nginx:
-  docker compose exec nginx nginx -s reload
-- Until you complete these steps, keep using HTTP (port 80).
+2) TLS (HTTPS on frontend)
+- By default, HTTP (port 80) is available so the site is reachable even before certs are issued.
+- To enable real HTTPS (no self-signed), use Let's Encrypt via the provided script (ACME webroot):
+  - scripts/issue-certs.sh ticktocktasks.com
+  - This issues a certificate for ticktocktasks.com and www.ticktocktasks.com and reloads Nginx.
+  - To also issue an API cert: scripts/issue-certs.sh ticktocktasks.com --include-api
+- ACM note: AWS Certificate Manager (ACM) certs cannot be attached directly to Nginx on EC2. If you must use ACM, terminate TLS on an AWS load balancer (ALB) or CloudFront and proxy to the instance over HTTP. For the single-EC2 setup, Let's Encrypt is the supported approach.
+- Verify HTTPS:
+  - curl -I http://ticktocktasks.com/ → 200
+  - curl -kI https://ticktocktasks.com/ → 200 (valid cert; browser shows secure lock)
+  - Optional API: curl -kI https://api.ticktocktasks.com/healthz → 200 if API cert was issued and API HTTPS is configured.
+- If HTTPS fails, check that cert files exist in /etc/letsencrypt/live/<domain>/ inside the nginx container and review container logs.
 
 3) DNS
 - Create A/AAAA records in Route53 (or your DNS) to point your domain to the EC2 public IP/Elastic IP.

@@ -173,3 +173,20 @@ Verify after redeploy (docker compose up -d --build):
   - curl http://ticktocktasks.com/healthz → 410 Gone. ✓
   - curl http://ticktocktasks.com/nginx-healthz → ok. ✓
 
+
+
+2025-10-07 (fix: apex showed backend page + HTTPS enablement)
+- Symptom: Visiting ticktocktasks.com sometimes showed the backend "is running" page instead of the frontend SPA. ✓
+- Root cause: Direct hits to the backend container (or misrouted Host traffic) would render the backend landing page at '/'. This could occur if traffic bypassed Nginx or the browser cached HSTS and hit a different port. ✓
+- Fix: Backend now serves its landing page only on API hosts (api.* or localhost). For any other hostname, '/' returns 404. This prevents the apex from ever showing the backend page even if requests reach the backend directly. ✓
+- HTTPS: Added a certbot helper service and a script (scripts/issue-certs.sh) to obtain real Let's Encrypt certificates for ticktocktasks.com and www.ticktocktasks.com (optionally api.*) using the Nginx webroot. After issuance, Nginx is reloaded and HTTPS is ready without self-signed certs. ✓
+- Note: ACM certificates cannot be attached to Nginx on EC2 directly. To use ACM, terminate TLS on an AWS load balancer (ALB/NLB with TLS via ALB) or CloudFront, and proxy to Nginx over HTTP. For the single-EC2 setup, Let's Encrypt is the supported approach. ✓
+- Verify after redeploy (docker compose up -d --build):
+  - Issue certs: scripts/issue-certs.sh ticktocktasks.com
+  - curl -I http://ticktocktasks.com/ → 200 (serves SPA)
+  - curl -kI https://ticktocktasks.com/ → 200 (valid cert; ssl_verify_result 0 if using curl with CA trust)
+  - curl -I http://www.ticktocktasks.com/ → 200
+  - curl -kI https://www.ticktocktasks.com/ → 200
+  - curl -I http://api.ticktocktasks.com/healthz → 200 (backend health)
+  - curl -kI https://api.ticktocktasks.com/healthz → 200 (if you issued an api cert with --include-api and added an API HTTPS server block)
+  - Browser: visiting https://ticktocktasks.com shows the frontend app; https://api.ticktocktasks.com shows backend health endpoints only.

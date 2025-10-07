@@ -56,6 +56,15 @@ services:
         awslogs-group: /TickTock/Frontend-${DOMAIN_NAME:-ticktocktasks.com}
         awslogs-create-group: "true"
 
+  certbot:
+    image: certbot/certbot
+    container_name: ttt-certbot
+    restart: "no"
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_challenges:/var/www/certbot
+    entrypoint: ["sh", "-c", "sleep infinity"]
+
 volumes:
   letsencrypt:
   certbot_challenges:
