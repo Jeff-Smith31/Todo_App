@@ -136,3 +136,6 @@ Operator notes:
 - Changed GitHub Actions deploy workflow default: FIX_DNS_TO_EC2 now defaults to true. When USE_CLOUDFRONT=false and Route53 records still point to CloudFront, the workflow will automatically UPSERT A records for ticktocktasks.com (and www) to the EC2 public IP (auto-resolved from the backend stack if EC2_PUBLIC_IP is unset). This prevents CI failures and enforces the new Nginx-on-EC2 serving path by default.
 - You can opt out by setting repository Variable FIX_DNS_TO_EC2=false or DNS_ENFORCE_STRICT=false (not recommended). 
 
+2025-10-06 (fix: CloudFormation AMI resolution)
+- Fixed ValidationError during CreateChangeSet: Fn::Sub referenced an invalid resource attribute LinuxAmi.AMZ2023.Name in infra/frontend-ec2/template.yaml. Updated ImageId to use the list form of Fn::Sub with a variable map and !FindInMap to resolve the SSM parameter path: Fn::Sub ["{{resolve:ssm:${AmiParam}}}", { AmiParam: !FindInMap [ LinuxAmi, AMZ2023, Name ] }]. This produces a valid dynamic reference to the Amazon Linux 2023 AMI via SSM.
+

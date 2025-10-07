@@ -89,7 +89,10 @@ Resources:
       IamInstanceProfile: !Ref FrontendInstanceProfile
       InstanceType: !Ref InstanceType
       KeyName: !If [HasKey, !Ref KeyName, !Ref "AWS::NoValue"]
-      ImageId: !Sub "{{resolve:ssm:${LinuxAmi.AMZ2023.Name}}}"
+      ImageId:
+        Fn::Sub:
+          - "{{resolve:ssm:${AmiParam}}}"
+          - { AmiParam: !FindInMap [ LinuxAmi, AMZ2023, Name ] }
       NetworkInterfaces:
         - AssociatePublicIpAddress: true
           DeviceIndex: 0
