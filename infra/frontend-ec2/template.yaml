@@ -139,4 +139,4 @@ Outputs:
   PublicIp:
     Value: !GetAtt FrontendEC2.PublicIp
     Export:
-      Name: !Sub "ttt-frontend-${DomainName}-PublicIp"
+      Name: !Sub "${AWS::StackName}:PublicIp"

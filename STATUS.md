@@ -139,3 +139,10 @@ Operator notes:
 2025-10-06 (fix: CloudFormation AMI resolution)
 - Fixed ValidationError during CreateChangeSet: Fn::Sub referenced an invalid resource attribute LinuxAmi.AMZ2023.Name in infra/frontend-ec2/template.yaml. Updated ImageId to use the list form of Fn::Sub with a variable map and !FindInMap to resolve the SSM parameter path: Fn::Sub ["{{resolve:ssm:${AmiParam}}}", { AmiParam: !FindInMap [ LinuxAmi, AMZ2023, Name ] }]. This produces a valid dynamic reference to the Amazon Linux 2023 AMI via SSM.
 
+2025-10-06 (fix: CloudFormation Output Export Name)
+- Fixed CreateChangeSet ValidationError: "Template format error: Output PublicIp is malformed. The Name field of every Export member must be specified and consist only of alphanumeric characters, colons, or hyphens."
+- Root cause: infra/frontend-ec2/template.yaml exported PublicIp with Name "ttt-frontend-${DomainName}-PublicIp"; DomainName contains dots (e.g., ticktocktasks.com), which are invalid in Export names.
+- Change: Set Export Name to !Sub "${AWS::StackName}:PublicIp" to ensure only allowed characters and uniqueness per stack.
+- Verification: Re-run CloudFormation deploy for the frontend-ec2 stack. The change set should create successfully. You can confirm the export is present via:
+  aws cloudformation list-exports --query "Exports[?Name=='${STACK_NAME}:PublicIp']" --output table
+
