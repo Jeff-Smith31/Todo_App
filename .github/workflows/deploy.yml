@@ -518,6 +518,47 @@ jobs:
             echo "Warning: Could not resolve a CloudFront distribution. Subsequent invalidation will fail." >> $GITHUB_STEP_SUMMARY
           fi
 
+      - name: Ensure Route53 alias -> CloudFront (apex and www)
+        if: ${{ env.USE_CLOUDFRONT == 'true' && env.SKIP_ALIASES != 'true' }}
+        run: |
+          set -e
+          CF_ZONE_ID="Z2FDTNDATAQYW2"
+          # Prefer CF domain from alias distribution if available
+          CF_DOM='${{ steps.front.outputs.alias_cf_domain }}'
+          if [ -z "$CF_DOM" ] || [ "$CF_DOM" = "None" ]; then CF_DOM='${{ steps.front.outputs.cf_domain }}'; fi
+          if [ -z "$CF_DOM" ] || [ "$CF_DOM" = "None" ]; then
+            echo "No CloudFront domain resolved; skipping DNS alias ensure." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          echo "Ensuring Route53 A/AAAA for ${DOMAIN_NAME} (and www if enabled) alias to $CF_DOM" >> $GITHUB_STEP_SUMMARY
+
+          # Build change batch for apex and optional www
+          CHANGES=$(mktemp)
+          cat > "$CHANGES" <<JSON
+          {
+            "Comment": "UPSERT alias A/AAAA to CloudFront for apex and www",
+            "Changes": [
+              {"Action":"UPSERT","ResourceRecordSet":{"Name":"${DOMAIN_NAME}","Type":"A","AliasTarget":{"HostedZoneId":"${CF_ZONE_ID}","DNSName":"${CF_DOM}","EvaluateTargetHealth":false}}},
+              {"Action":"UPSERT","ResourceRecordSet":{"Name":"${DOMAIN_NAME}","Type":"AAAA","AliasTarget":{"HostedZoneId":"${CF_ZONE_ID}","DNSName":"${CF_DOM}","EvaluateTargetHealth":false}}}
+            ]
+          }
+          JSON
+
+          # Optionally add www records
+          if [ "${INCLUDE_WWW}" = "true" ]; then
+            # Append entries to CHANGES JSON (simple jq merge)
+            TMP=$(mktemp)
+            jq '.Changes += [
+              {"Action":"UPSERT","ResourceRecordSet":{"Name":("www."+env.DOMAIN_NAME),"Type":"A","AliasTarget":{"HostedZoneId":env.CF_ZONE_ID,"DNSName":env.CF_DOM,"EvaluateTargetHealth":false}}},
+              {"Action":"UPSERT","ResourceRecordSet":{"Name":("www."+env.DOMAIN_NAME),"Type":"AAAA","AliasTarget":{"HostedZoneId":env.CF_ZONE_ID,"DNSName":env.CF_DOM,"EvaluateTargetHealth":false}}}
+            ]' "$CHANGES" > "$TMP"
+            mv "$TMP" "$CHANGES"
+          fi
+
+          aws route53 change-resource-record-sets --hosted-zone-id "${HOSTED_ZONE_ID}" --change-batch file://"$CHANGES" >/dev/null
+          echo "Submitted alias DNS change(s). Propagation can take a few minutes." >> $GITHUB_STEP_SUMMARY
+
       - name: Sync site to S3 bucket(s) (proactive origin sync)
         if: ${{ env.USE_CLOUDFRONT == 'true' }}
         run: |
