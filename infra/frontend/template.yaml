@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: DEPRECATED - legacy CloudFront/S3 frontend stack (no longer used). Frontend is now served by Nginx on the backend EC2 instance.
+Description: CloudFront + S3 frontend stack for TickTock Tasks (active). Serves static site via S3 with CloudFront, ACM, and Route53.
 
 Parameters:
   DomainName:

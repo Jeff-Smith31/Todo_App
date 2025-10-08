@@ -24,9 +24,9 @@ env:
   API_SUBDOMAIN: ${{ vars.API_SUBDOMAIN || 'api' }}
   BACKEND_OVERRIDE_URL: ${{ vars.BACKEND_OVERRIDE_URL || '' }}
   USE_RELATIVE_API: ${{ vars.USE_RELATIVE_API || '' }}
-  USE_CLOUDFRONT: ${{ vars.USE_CLOUDFRONT || 'false' }}
-  # Split-EC2 architecture: deploy a dedicated frontend EC2 and route apex/www to it
-  SEPARATE_FRONTEND: ${{ vars.SEPARATE_FRONTEND || 'true' }}
+  USE_CLOUDFRONT: ${{ vars.USE_CLOUDFRONT || 'true' }}
+  # Split-EC2 architecture disabled: use S3/CloudFront for frontend
+  SEPARATE_FRONTEND: ${{ vars.SEPARATE_FRONTEND || 'false' }}
   FRONTEND_EC2_STACK_NAME: ${{ vars.FRONTEND_EC2_STACK_NAME || 'ttt-frontend-ec2' }}
 
   # DNS safeguard (ensure Hosted Zone points correctly when not using CloudFront)

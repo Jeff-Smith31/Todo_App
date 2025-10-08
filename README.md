@@ -10,11 +10,10 @@ What you get
 - Minimal UI: dedicated login page, task list page, and a separate task form page
 
 Architecture
-- Single EC2 host (now standard): One EC2 instance runs two containers via Docker Compose:
-  - Frontend: Nginx serves the SPA for ticktocktasks.com and www.ticktocktasks.com.
-  - Backend: Node.js/Express API container. The api.ticktocktasks.com hostname is routed by the Nginx container directly to the backend container.
-- Backend health is exposed at /healthz on api.ticktocktasks.com and at /api/healthz via the frontend host (apex/www) proxy. The SPA uses same‑origin /api/* when loaded from apex/www.
-- Auto‑connect: The frontend reads window.RUNTIME_CONFIG.BACKEND_URL from config.js at the site root. In this setup it is empty so API calls go to same‑origin /api/*.
+- Frontend: Deployed to Amazon S3 and served globally via Amazon CloudFront (ACM certificate in us-east-1 and Route53 aliases for apex and www).
+- Backend: Single EC2 instance running the Node.js/Express API (Docker). Public HTTPS is exposed at api.<DomainName> with DNS via Route53.
+- CORS: The backend allows origins for https://<DomainName>, https://www.<DomainName>, and the CloudFront domain by default (configurable).
+- Frontend config: window.RUNTIME_CONFIG.BACKEND_URL in frontend/website/config.js can be set by CI to point to the API hostname; otherwise the app can be served relative if proxied.
 
 Quick start (frontend only)
 - From the frontend/website directory, serve the site locally:
