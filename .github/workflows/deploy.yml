@@ -12,6 +12,8 @@ env:
   DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'ticktocktasks.com' }}
   HOSTED_ZONE_ID: ${{ vars.HOSTED_ZONE_ID || 'Z08471201NA2PN7ERBIB7' }}
   INCLUDE_WWW: ${{ vars.INCLUDE_WWW || 'true' }}
+  INCLUDE_APP_SUBDOMAIN: ${{ vars.INCLUDE_APP_SUBDOMAIN || 'false' }}
+  APP_SUBDOMAIN: ${{ vars.APP_SUBDOMAIN || 'app' }}
   # Optional explicit resource reuse overrides
   EXISTING_BUCKET_NAME: ${{ vars.EXISTING_BUCKET_NAME || '' }}
   EXISTING_CERT_ARN: ${{ vars.EXISTING_CERT_ARN || '' }}
@@ -345,6 +347,56 @@ jobs:
             echo "CREATE_DNS_RECORDS=true" >> "$GITHUB_ENV"
           fi
 
+      - name: Decide SkipAliases based on ACM certificate coverage
+        if: ${{ env.USE_CLOUDFRONT == 'true' }}
+        run: |
+          set -e
+          SA="false"
+          # Only evaluate when reusing an existing ACM certificate
+          if [ -n "${FRONT_EXISTING_CERT_ARN:-}" ]; then
+            # Ensure jq is installed
+            if ! command -v jq >/dev/null 2>&1; then
+              sudo apt-get update -y && sudo apt-get install -y jq
+            fi
+            CERT_ARN="${FRONT_EXISTING_CERT_ARN}"
+            echo "Evaluating ACM cert coverage for aliases using ${CERT_ARN}" >> $GITHUB_STEP_SUMMARY
+            JSON=$(aws acm describe-certificate --region "${FRONTEND_REGION}" --certificate-arn "$CERT_ARN" --output json || echo '')
+            if [ -z "$JSON" ]; then
+              echo "Warning: Unable to describe ACM certificate; will not skip aliases." >> $GITHUB_STEP_SUMMARY
+            else
+              CN=$(echo "$JSON" | jq -r '.Certificate.DomainName // empty')
+              SANS=$(echo "$JSON" | jq -r '.Certificate.SubjectAlternativeNames[]?')
+              ALL=$(printf "%s\n%s\n" "$CN" "$SANS" | awk 'NF' | sort -u)
+              APEX="${DOMAIN_NAME}"
+              REQS="$APEX"
+              if [ "${INCLUDE_WWW}" = "true" ]; then REQS="$REQS www.${DOMAIN_NAME}"; fi
+              WILDC="*.${DOMAIN_NAME}"
+              # Helper to test coverage for one name
+              covered(){
+                local N="$1"
+                # apex must be explicitly present
+                if [ "$N" = "$APEX" ]; then echo "$ALL" | grep -Fxq "$N" && return 0 || return 1; fi
+                # subdomains covered by explicit name or wildcard
+                echo "$ALL" | grep -Fxq "$N" && return 0
+                echo "$ALL" | grep -Fxq "$WILDC" && return 0
+                return 1
+              }
+              for N in $REQS; do
+                if ! covered "$N"; then
+                  echo "Certificate does not cover required name: $N" >> $GITHUB_STEP_SUMMARY
+                  SA="true"
+                fi
+              done
+            fi
+          fi
+          if [ "$SA" = "true" ]; then
+            echo "SKIP_ALIASES=true" >> "$GITHUB_ENV"
+            echo "CREATE_DNS_RECORDS=false" >> "$GITHUB_ENV"
+            echo "Outcome: Will deploy CloudFront WITHOUT Aliases and will NOT create DNS records to avoid mismatch." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "SKIP_ALIASES=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Deploy frontend stack (S3 + CloudFront + ACM + Route53)
         if: ${{ env.USE_CLOUDFRONT == 'true' }}
         run: |
@@ -357,9 +409,12 @@ jobs:
               DomainName="${DOMAIN_NAME}" \
               HostedZoneId="${HOSTED_ZONE_ID}" \
               IncludeWww="${INCLUDE_WWW}" \
+              IncludeAppSubdomain="${INCLUDE_APP_SUBDOMAIN}" \
+              AppSubdomain="${APP_SUBDOMAIN}" \
               ExistingBucketName="${FRONT_EXISTING_BUCKET:-}" \
               ExistingCertificateArn="${FRONT_EXISTING_CERT_ARN:-}" \
               CreateDnsRecords="${CREATE_DNS_RECORDS:-true}" \
+              SkipAliases="${SKIP_ALIASES:-false}" \
             --capabilities CAPABILITY_NAMED_IAM
           RC=$?
           set -e
