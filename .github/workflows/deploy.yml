@@ -549,6 +549,8 @@ jobs:
           if [ "${INCLUDE_WWW}" = "true" ]; then
             # Append entries to CHANGES JSON (simple jq merge)
             TMP=$(mktemp)
+            # Ensure variables are exported so jq env.* can read them
+            export CF_ZONE_ID CF_DOM DOMAIN_NAME
             jq '.Changes += [
               {"Action":"UPSERT","ResourceRecordSet":{"Name":("www."+env.DOMAIN_NAME),"Type":"A","AliasTarget":{"HostedZoneId":env.CF_ZONE_ID,"DNSName":env.CF_DOM,"EvaluateTargetHealth":false}}},
               {"Action":"UPSERT","ResourceRecordSet":{"Name":("www."+env.DOMAIN_NAME),"Type":"AAAA","AliasTarget":{"HostedZoneId":env.CF_ZONE_ID,"DNSName":env.CF_DOM,"EvaluateTargetHealth":false}}}
