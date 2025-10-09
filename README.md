@@ -96,10 +96,6 @@ DNS and routing checks
   - EC2 security group allows inbound TCP 80 from 0.0.0.0/0 (and ::/0)
   - docker compose ps shows nginx up and listening on 0.0.0.0:80
 
-Download the app (ZIP)
-- You can download the entire frontend as a ZIP from the site header (Download App). To generate/update this ZIP locally before deploying:
-  - npm run build:frontend-zip
-  - This creates frontend/website/app-download.zip which is linked from the header.
 
 CloudFront + S3 frontend (optional advanced setup)
 - The infra/frontend/template.yaml now supports proxying the API through CloudFront when you set the parameter BackendAlbDnsName (the DNS name of your backend ALB).
