@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TickTock Tasks – Offline</title>
+  <link rel="icon" href="icons/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/logo.svg">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    main.offline { display:flex; align-items:center; justify-content:center; min-height:60vh; text-align:center; }
+    .offline-card { background: rgba(255,255,255,0.06); padding: 24px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); max-width: 520px; margin: 16px; }
+    .offline-card h2 { margin-top: 0; }
+    .offline-card p { color: #cbd5e1; }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <img src="icons/logo.svg" alt="TickTock Tasks logo" class="logo">
+      <div class="titles">
+        <h1>TickTock Tasks</h1>
+      </div>
+    </div>
+  </header>
+  <main class="container offline">
+    <div class="offline-card">
+      <h2>Check your internet connection</h2>
+      <p>You appear to be offline. Please connect to the internet and retry.</p>
+      <p>The app is still installed and will resume automatically when you are back online.</p>
+      <div style="margin-top:16px">
+        <button class="btn" onclick="location.reload()">Retry</button>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

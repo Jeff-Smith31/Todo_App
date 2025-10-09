@@ -1,7 +1,8 @@
-const CACHE_NAME = 'ticktock-cache-v6';
+const CACHE_NAME = 'ticktock-cache-v7';
 const ASSETS = [
   '/',
   '/index.html',
+  '/offline.html',
   '/styles.css',
   '/app.js',
   '/app-version.js',
@@ -49,10 +50,10 @@ self.addEventListener('fetch', (e) => {
   // Intercept only same-origin requests
   if (url.origin !== location.origin) return;
 
-  // Navigation requests: try network first, fall back to cached index.html
+  // Navigation requests: try network first, fall back to cached offline page (keeps app styling)
   if (req.mode === 'navigate') {
     e.respondWith(
-      fetch(req).catch(() => caches.match('/index.html'))
+      fetch(req).catch(() => caches.match('/offline.html'))
     );
     return;
   }
@@ -76,7 +77,7 @@ self.addEventListener('fetch', (e) => {
         return new Response("window.APP_VERSION='offline';", { headers: { 'Content-Type': 'application/javascript; charset=utf-8' } });
       }
       if (req.destination === 'document') {
-        return caches.match('/index.html');
+        return caches.match('/offline.html');
       }
       return new Response('', { status: 504, statusText: 'Offline' });
     })

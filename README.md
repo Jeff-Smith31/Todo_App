@@ -96,5 +96,18 @@ DNS and routing checks
   - EC2 security group allows inbound TCP 80 from 0.0.0.0/0 (and ::/0)
   - docker compose ps shows nginx up and listening on 0.0.0.0:80
 
+Download the app (ZIP)
+- You can download the entire frontend as a ZIP from the site header (Download App). To generate/update this ZIP locally before deploying:
+  - npm run build:frontend-zip
+  - This creates frontend/website/app-download.zip which is linked from the header.
+
+CloudFront + S3 frontend (optional advanced setup)
+- The infra/frontend/template.yaml now supports proxying the API through CloudFront when you set the parameter BackendAlbDnsName (the DNS name of your backend ALB).
+- When BackendAlbDnsName is set, CloudFront routes /api/* to the backend origin with no caching and forwards Authorization headers, cookies, and query strings.
+- The app reads BACKEND_URL from frontend/website/config.js. Leave it empty to use same-origin (recommended with CloudFront /api path), or set to a full https URL to talk to a separate API domain.
+
+Offline behavior
+- A dedicated offline page (offline.html) is shown when there’s no internet connection. It uses the same CSS to preserve the app’s look and feel. The service worker precaches required assets and falls back to offline.html on navigations when offline.
+
 License
 This project is licensed under the MIT License. See LICENSE for details.

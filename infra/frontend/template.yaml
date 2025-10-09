@@ -57,6 +57,7 @@ Conditions:
   DoWwwDns: !And [ !Condition UseWww, !Condition DoDns ]
   DoAppDns: !And [ !Condition UseApp, !Condition DoDns ]
   UseAliases: !Equals [ !Ref SkipAliases, 'false' ]
+  HasBackend: !Not [ !Equals [ !Ref BackendAlbDnsName, '' ] ]
 
 Mappings:
   CloudFront:
@@ -152,11 +153,40 @@ Resources:
           CachedMethods: [GET, HEAD]
           Compress: true
           CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+        CacheBehaviors:
+          - !If
+            - HasBackend
+            - PathPattern: '/api/*'
+              TargetOriginId: backend-origin
+              ViewerProtocolPolicy: https-only
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+              CachedMethods: [GET, HEAD]
+              Compress: true
+              ForwardedValues:
+                QueryString: true
+                Headers:
+                  Quantity: 6
+                  Items: ['Authorization','Content-Type','Origin','Accept','X-Requested-With','Cookie']
+                Cookies:
+                  Forward: all
+              MinTTL: 0
+              DefaultTTL: 0
+              MaxTTL: 0
+            - !Ref 'AWS::NoValue'
         Origins:
           - Id: site-s3-origin
             DomainName: !If [HasExistingBucket, !Sub '${ExistingBucketName}.s3.${AWS::Region}.amazonaws.com', !GetAtt SiteBucket.RegionalDomainName]
             S3OriginConfig: {}
             OriginAccessControlId: !Ref OriginAccessControl
+          - !If
+            - HasBackend
+            - Id: backend-origin
+              DomainName: !Ref BackendAlbDnsName
+              CustomOriginConfig:
+                OriginProtocolPolicy: https-only
+                HTTPSPort: 443
+                OriginSSLProtocols: [TLSv1.2]
+            - !Ref 'AWS::NoValue'
         PriceClass: PriceClass_100
         CustomErrorResponses:
           # SPA routing: serve index.html for 403/404

@@ -9,7 +9,8 @@
     "node": "20.x"
   },
   "scripts": {
-    "check:backend": "bash scripts/check-backend.sh ${BACKEND_URL:-}"
+    "check:backend": "bash scripts/check-backend.sh ${BACKEND_URL:-}",
+    "build:frontend-zip": "powershell -ExecutionPolicy Bypass -File scripts/make-frontend-zip.ps1"
   },
   "overrides": {
     "metro": "0.83.0",
