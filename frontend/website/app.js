@@ -219,7 +219,7 @@
 
     // Irene: Join group button
     if (elements.ireneJoinBtn) elements.ireneJoinBtn.addEventListener('click', async () => {
-      if (!(BACKEND_URL && isAuthed)) { alert('Please log in to use groups.'); return; }
+      if (!isAuthed) { alert('Please log in to use groups.'); return; }
       const code = prompt('Enter Irene group code to join (e.g., ABC123):');
       if (!code) return;
       try {
@@ -610,7 +610,7 @@
     if (idx >= 0) tasks[idx] = { ...tasks[idx], ...t };
     else tasks.push(t);
 
-    if (BACKEND_URL && isAuthed) {
+    if (isAuthed) {
       try {
         if (idx >= 0) await API.updateTask(t);
         else await API.createTask(t);
@@ -651,7 +651,7 @@
   async function deleteTask(id){
     cancelScheduledNotification(id);
     tasks = tasks.filter(x => x.id !== id);
-    if (BACKEND_URL && isAuthed) {
+    if (isAuthed) {
       try { await API.deleteTask(id); await syncFromBackend(); } catch (e) { console.warn(e); }
     }
     saveTasks();
@@ -676,7 +676,7 @@
       t.priority = false; // clear priority once completed
       // Track that we have not yet rolled this completion into the schedule
       t.rolledFromCompletion = t.rolledFromCompletion || null;
-      if (BACKEND_URL && isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
+      if (isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
       saveTasks();
       render();
       scheduleNotificationForTask(t);
@@ -689,7 +689,7 @@
         // Also clear any pending rolledFromCompletion marker for today
         if (t.rolledFromCompletion === todayStrVal) t.rolledFromCompletion = null;
       }
-      if (BACKEND_URL && isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
+      if (isAuthed) { try { await API.updateTask(t); await syncFromBackend(); } catch(e){ console.warn(e); } }
       saveTasks();
       render();
       scheduleNotificationForTask(t);
@@ -969,7 +969,7 @@
   }
 
   async function syncFromBackend(){
-    if (!BACKEND_URL) return;
+    if (!isAuthed) return;
     try {
       const list = await API.getTasks();
       if (Array.isArray(list)) {
@@ -1004,7 +1004,7 @@
   function handleMissedTasks(){
     // Local-only behavior: Do NOT roll within the same day. Keep task due today (white) and just show Overdue badge.
     // Only when we are on a later day than the stored nextDue, carry the task forward to TODAY and mark priority.
-    if (BACKEND_URL && isAuthed) return; // backend handles missed in server mode
+    if (isAuthed) return; // backend handles missed in server mode
     const now = new Date();
     const today = dateToYMD(now);
     let changed = false;
@@ -1044,7 +1044,7 @@
             t.priority = false;
             t.rolledFromCompletion = lcYmd;
             changed = true;
-            if (BACKEND_URL && isAuthed) toSync.push({ ...t });
+            if (isAuthed) toSync.push({ ...t });
           } else {
             t.rolledFromCompletion = lcYmd;
           }
@@ -1138,7 +1138,7 @@
   function scheduleNotificationForTask(t){
     cancelScheduledNotification(t.id);
     // When connected to backend and authed, backend push will handle all stages.
-    if (BACKEND_URL && isAuthed) return;
+    if (isAuthed) return;
     if (!('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
     scheduleNotificationsForTaskStages(t);
@@ -1443,7 +1443,6 @@
     }
     return {
       async setTimezone(tzOffsetMinutes){
-        if (!baseUrl) return { ok: false };
         const payload = { tzOffsetMinutes };
         const res = await fetch(baseUrl + '/api/user/timezone', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(payload) });
         // ignore errors silently
@@ -1597,7 +1596,7 @@
 
   // Irene group helpers
   async function ensureIreneGroup(){
-    if (!(BACKEND_URL && isAuthed)) return null;
+    if (!isAuthed) return null;
     try {
       const g = await API.getIreneGroup();
       const code = (g && (g.code || g.group_id)) ? String(g.code || g.group_id).toUpperCase() : '';
@@ -1613,7 +1612,7 @@
 
   // Irene: load tasks from backend
   async function loadIrene(){
-    if (!(BACKEND_URL && isAuthed)) { ireneTasks = []; ireneTodayCounts = {}; if (elements.ireneGroupCode) elements.ireneGroupCode.textContent=''; renderIrene(); return; }
+    if (!isAuthed) { ireneTasks = []; ireneTodayCounts = {}; if (elements.ireneGroupCode) elements.ireneGroupCode.textContent=''; renderIrene(); return; }
     try {
       await ensureIreneGroup();
       const list = await API.getIreneTasks();
@@ -1761,12 +1760,12 @@
 
       // 1) Totals by email pie (and use same timeframe for bar chart)
       const paramsUsers = buildParams('pie-users');
-      const dataUsers = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(paramsUsers) : { buckets: [], series: [], users: [], byUser: {}, perUserPerTask: {}, taskTitles: {} };
+      const dataUsers = (isAuthed) ? await API.getIreneAnalytics(paramsUsers) : { buckets: [], series: [], users: [], byUser: {}, perUserPerTask: {}, taskTitles: {} };
       const cleanEntries = (obj) => Object.entries(obj||{}).filter(([k,v])=> v>0 && (!k || (k.toLowerCase()!=='unknown' && k.toLowerCase()!=='(unknown)')));
 
       // Bar chart for current user only (same timeframe as totals)
       const paramsBar = Object.assign({}, paramsUsers, currentUserEmail ? { email: currentUserEmail } : {});
-      const dataBar = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(paramsBar) : { buckets: [], series: [] };
+      const dataBar = (isAuthed) ? await API.getIreneAnalytics(paramsBar) : { buckets: [], series: [] };
       const buckets = dataBar.buckets || [];
       const series = dataBar.series || [];
       if (!buckets.length || !series.length){ if (emptyEl) emptyEl.style.display='block'; } else { if (emptyEl) emptyEl.style.display='none'; }
@@ -1824,7 +1823,7 @@
 
       // 2) Selected tasks by email pie
       const paramsSel = buildParams('pie-selected');
-      const dataSel = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(paramsSel) : { perUserPerTask: {}, taskTitles: {} };
+      const dataSel = (isAuthed) ? await API.getIreneAnalytics(paramsSel) : { perUserPerTask: {}, taskTitles: {} };
       const tasksSelect = document.getElementById('pie-selected-tasks');
       if (tasksSelect){
         const prev = Array.from(tasksSelect.selectedOptions||[]).map(o=>o.value);
@@ -1854,7 +1853,7 @@
 
       // 3) Breakdown of tasks for chosen email
       const paramsBr = buildParams('pie-breakdown');
-      const dataBr = (BACKEND_URL && isAuthed) ? await API.getIreneAnalytics(paramsBr) : { users: [], perUserPerTask: {}, taskTitles: {} };
+      const dataBr = (isAuthed) ? await API.getIreneAnalytics(paramsBr) : { users: [], perUserPerTask: {}, taskTitles: {} };
       const emailSel = document.getElementById('pie-breakdown-email');
       const usersList = Array.isArray(dataBr.users) ? dataBr.users.filter(e => e && e.toLowerCase()!=='unknown' && e.toLowerCase()!=='(unknown)') : [];
       if (emailSel){

@@ -208,3 +208,18 @@ Verify after redeploy (docker compose up -d --build):
   2) Re-introduce an HTTPS server block in nginx.conf that references /etc/letsencrypt/live/<domain>/*.pem and expose 443 in docker-compose. ✓
   3) Reload nginx: docker compose exec nginx nginx -s reload. ✓
 
+
+2025-10-10 (fix: tasks and family not loading after login)
+- Symptom: After logging in on both web and mobile, no personal tasks loaded and the Family code/tasks were empty. ✓
+- Root cause: The frontend treated BACKEND_URL (runtime base URL) as a boolean for “connected to backend.” In our deployment, BACKEND_URL is intentionally empty to use same-origin via Nginx. As a result, guards like (BACKEND_URL && isAuthed) prevented all API calls, and syncFromBackend bailed early. Additionally, API.setTimezone() returned early when baseUrl was empty, so the backend never received timezone updates. ✓
+- Changes:
+  - frontend/website/app.js: Switched connectivity checks to rely solely on isAuthed. Replaced all (BACKEND_URL && isAuthed) and negations with isAuthed-based logic. Now syncFromBackend runs when logged in, CRUD ops hit /api/*, Irene group/tasks/analytics load, and local-only behaviors are skipped when authenticated. ✓
+  - frontend/website/app.js: createApiClient.setTimezone no longer short-circuits on empty baseUrl, enabling same-origin POST /api/user/timezone. ✓
+- Verification:
+  1) Log in on ticktocktasks.com (served by Nginx). Network shows /api/auth/login → 200; subsequent /api/tasks → 200 with tasks array. ✓
+  2) Family tab shows a Group code (e.g., ABC123) from /api/irene/group and lists family tasks from /api/irene/tasks. ✓
+  3) Mark task complete → PUT /api/tasks/:id, then list refresh. ✓
+  4) PWA/mobile: after login, tasks and family load offline/online; push remains handled by backend when authed. ✓
+- Notes:
+  - BACKEND_URL can remain empty for same-origin deployments; do not reintroduce Backend URL checks as connectivity gates. Use isAuthed instead.
+
