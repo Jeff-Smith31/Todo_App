@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# DEPRECATED: This project no longer deploys the frontend to S3/CloudFront.
-# The frontend is served by Nginx on the same EC2 instance as the backend.
-# This script is kept for historical reference but is disabled to prevent misuse.
-# To configure the frontend, edit frontend/website/config.js (BACKEND_URL) or use same-origin via Nginx.
+# Link the CloudFront+S3 frontend to the backend API by writing config.js and invalidating CloudFront.
+# Usage:
+#   infra/scripts/link-frontend.sh <FRONT_STACK_NAME> <BACK_STACK_NAME> [FRONT_REGION] [BACK_REGION]
+# Env overrides:
+#   BACKEND_OVERRIDE_URL  If set, use this URL for BACKEND_URL instead of stack output
+#   USE_RELATIVE_API=true Use relative API (empty BACKEND_URL) when CloudFront routes /api/* to backend
+#   EXTRA_INVALIDATE      Additional paths (space-separated) to include in invalidation
 
-echo "[DEPRECATED] infra/scripts/link-frontend.sh is disabled. Frontend is no longer deployed to S3/CloudFront. Exiting successfully (no-op)." >&2
-exit 0
-
-FRONT_STACK=${1:?"Frontend stack name required"}
-BACK_STACK=${2:?"Backend stack name required"}
+FRONT_STACK=${1:?'Frontend stack name required'}
+BACK_STACK=${2:?'Backend stack name required'}
 FRONT_REGION=${3:-$(aws configure get region || echo us-east-1)}
 BACK_REGION=${4:-$FRONT_REGION}
 
@@ -53,11 +53,21 @@ fi
 
 CONFIG_CONTENT="window.RUNTIME_CONFIG = Object.assign({}, window.RUNTIME_CONFIG || {}, { BACKEND_URL: '${CHOSEN_URL}' });\n"
 
-echo "Uploading config.js to s3://$BUCKET/config.js with BACKEND_URL=$CHOSEN_URL"
+echo "Uploading config.js to s3://$BUCKET/config.js with BACKEND_URL=${CHOSEN_URL:-<relative>}"
 echo -e "$CONFIG_CONTENT" | aws s3 cp - "s3://$BUCKET/config.js" --content-type application/javascript --cache-control "no-cache, no-store, must-revalidate" --region "$FRONT_REGION"
 
-echo "Creating CloudFront invalidation for /config.js"
-aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/config.js" >/dev/null
+# Invalidate CloudFront for config and core shell so clients pick up new backend
+INVALIDATE_PATHS=(
+  "/config.js" "/index.html" "/app.js" "/styles.css" "/sw.js" "/manifest.json" "/manifest.webmanifest" "/app-version.js" "/version.json" "/icons/*"
+)
+if [[ -n "${EXTRA_INVALIDATE:-}" ]]; then
+  for p in ${EXTRA_INVALIDATE}; do INVALIDATE_PATHS+=("$p"); done
+fi
+
+echo "Creating CloudFront invalidation..."
+aws cloudfront create-invalidation \
+  --distribution-id "$DIST_ID" \
+  --paths "${INVALIDATE_PATHS[@]}" >/dev/null
 
 # Append a note to GitHub Actions job summary if available
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

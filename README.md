@@ -46,45 +46,33 @@ Backend configuration (.env)
   - WEB_PUSH_PUBLIC_KEY / WEB_PUSH_PRIVATE_KEY: VAPID keys for Web Push (auto‑generated when npx web-push is available)
   - REDIRECT_HTTP_TO_HTTPS: true/false (default true inside container; set false when behind TLS proxy)
 
-Production deployment on AWS (single EC2: Nginx serves frontend + backend API)
-This setup removes CloudFront/S3. The frontend is served by Nginx on the same EC2 instance as the backend. Route53 can point your apex or app subdomain directly to the EC2 public IP or an Elastic IP.
+Production deployment on AWS (CloudFront + S3 frontend, EC2 backend)
+The frontend is deployed to S3 and served globally via CloudFront (ACM in us-east-1, Route53 aliases for apex and www). The backend API runs on a single EC2 instance at api.<DomainName>.
 
-1) Provision backend EC2 (free‑tier) and start services
-- SSH into the instance and clone this repo (or use your existing CI/CD to pull updates).
-- Ensure Docker and Docker Compose are installed.
-- From the repo root, create a .env file (optional) to set CORS_ORIGIN to your site’s URL(s):
-  CORS_ORIGIN=https://your-domain.com,https://www.your-domain.com
-- Start the stack:
-  docker compose up -d --build
-- This runs two containers:
-  - backend (Express API on 8080 inside the network)
-  - nginx (serves frontend from frontend/website and proxies /api/* to backend)
+1) Provision stacks
+- Frontend (S3 + CloudFront): deploy infra/frontend/template.yaml in us-east-1. Provide DomainName, HostedZoneId, and optionally ExistingCertificateArn/ExistingBucketName.
+- Backend (EC2 API): deploy infra/backend/template.yaml to your region. This creates api.<DomainName> and exposes HTTPS.
 
-2) TLS (HTTPS on frontend)
-- By default, HTTP (port 80) is available so the site is reachable even before certs are issued.
-- To enable real HTTPS (no self-signed), use Let's Encrypt via the provided script (ACME webroot):
-  - scripts/issue-certs.sh ticktocktasks.com
-  - This issues a certificate for ticktocktasks.com and www.ticktocktasks.com and reloads Nginx.
-  - To also issue an API cert: scripts/issue-certs.sh ticktocktasks.com --include-api
-- ACM note: AWS Certificate Manager (ACM) certs cannot be attached directly to Nginx on EC2. If you must use ACM, terminate TLS on an AWS load balancer (ALB) or CloudFront and proxy to the instance over HTTP. For the single-EC2 setup, Let's Encrypt is the supported approach.
-- Verify HTTPS:
-  - curl -I http://ticktocktasks.com/ → 200
-  - curl -kI https://ticktocktasks.com/ → 200 (valid cert; browser shows secure lock)
-  - Optional API: curl -kI https://api.ticktocktasks.com/healthz → 200 if API cert was issued and API HTTPS is configured.
-- If HTTPS fails, check that cert files exist in /etc/letsencrypt/live/<domain>/ inside the nginx container and review container logs.
+2) Deploy frontend
+- Use GitHub Actions workflow: "Frontend Deploy to S3 + CloudFront" (workflow_dispatch). It will:
+  - Sync ./frontend/website to the S3 bucket
+  - Write config.js with BACKEND_URL pointing to the API endpoint (https://api.<DomainName>)
+  - Invalidate CloudFront so new assets are served
+- Alternatively, deploy manually:
+  - aws s3 sync frontend/website s3://<your-bucket>
+  - BACKEND_OVERRIDE_URL=https://api.<DomainName> infra/scripts/link-frontend.sh <FRONT_STACK> <BACK_STACK>
 
-3) DNS
-- Create A/AAAA records in Route53 (or your DNS) to point your domain to the EC2 public IP/Elastic IP.
+3) CORS and config
+- The backend AllowedOrigins should include https://<DomainName>, https://www.<DomainName>, and the CloudFront domain.
+- The app reads window.RUNTIME_CONFIG.BACKEND_URL from config.js set during deploy; with this, login and task syncing work from CloudFront.
 
-4) Frontend configuration
-- The file frontend/website/config.js sets BACKEND_URL to empty string, so the web app uses same-origin requests to /api/* via Nginx. No CloudFront is used anymore.
+4) Verify
+- Browse https://<DomainName>/ → app loads
+- Log in → Network shows calls to https://api.<DomainName>/api/* succeeding
+- Family tab shows your group code and tasks
 
-5) Deploy updates
-- Pull latest code and run docker compose up -d --build to redeploy. Static files are served live from ./frontend/website mounted into Nginx.
-
-Verify
-- Open http://your-domain.com (HTTP) to verify reachability. If you need HTTPS, complete TLS setup first, then add and expose the 443 listener.
-- Push notifications require VAPID keys on the backend and user permission in the browser (Enable Notifications).
+5) Updates
+- Re-run the GitHub workflow after pushing changes to frontend/website to publish updates globally via CloudFront.
 
 DNS and routing checks
 - Use the provided scripts to validate DNS and Nginx reachability from outside and from EC2:

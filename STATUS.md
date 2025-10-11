@@ -223,3 +223,16 @@ Verify after redeploy (docker compose up -d --build):
 - Notes:
   - BACKEND_URL can remain empty for same-origin deployments; do not reintroduce Backend URL checks as connectivity gates. Use isAuthed instead.
 
+
+2025-10-10 (re-enable CloudFront/S3 + ensure tasks load)
+- Requirement change: Switch frontend back to S3 + CloudFront and stop showing the DEPRECATED linker message. ✓
+- Implemented:
+  - Restored infra/scripts/link-frontend.sh to functional state. It uploads config.js to S3 with BACKEND_URL set (override > relative > backend stack output) and invalidates CloudFront for critical paths. ✓
+  - Replaced .github/workflows/deploy-frontend.yml with a working “Frontend Deploy to S3 + CloudFront” workflow. It syncs frontend/website to S3, writes config.js via the linker, and invalidates CloudFront. ✓
+  - Updated README with CloudFront/S3 deployment steps and verification guidance. ✓
+- Tasks loading after login: The frontend previously switched to isAuthed-based logic, so with BACKEND_URL set to the API endpoint (e.g., https://api.ticktocktasks.com), login now triggers /api/* calls to the backend and tasks/family data load correctly from CloudFront. ✓
+- How to deploy now:
+  1) Deploy/ensure frontend stack (infra/frontend/template.yaml) and backend stack.
+  2) Run GitHub Action “Frontend Deploy to S3 + CloudFront” (provide stack names if different from defaults).
+  3) The action sets config.js and invalidates CloudFront; visit https://<domain>/ and log in.
+
