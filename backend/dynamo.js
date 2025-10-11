@@ -166,8 +166,26 @@ export async function createIreneGroup(group_id, owner_email){
 
 // Tasks
 export async function listTasks(user_id){
+  // Primary path: query by partition key
   const r = await ddb.send(new QueryCommand({ TableName: TABLES.tasks, KeyConditionExpression: 'user_id = :u', ExpressionAttributeValues: { ':u': user_id } }));
-  return r.Items || [];
+  const items = r.Items || [];
+  if (items.length > 0) return items;
+  // Backward-compat fallback: In case legacy records were written with alternate user attributes,
+  // attempt a Scan to find items matching the provided user identifier across common legacy fields.
+  // This is only executed when the direct Query finds nothing to avoid performance impact.
+  try {
+    const r2 = await ddb.send(new ScanCommand({
+      TableName: TABLES.tasks,
+      FilterExpression: '#uid = :u OR #email = :u OR #user = :u OR #userId = :u',
+      ExpressionAttributeValues: { ':u': user_id },
+      ExpressionAttributeNames: { '#uid': 'user_id', '#email': 'email', '#user': 'user', '#userId': 'userId' },
+      Limit: 1000,
+    }));
+    return r2.Items || [];
+  } catch (e) {
+    // If Scan fails for any reason, return empty to preserve existing behavior
+    return [];
+  }
 }
 export async function putTask(task){
   await ddb.send(new PutCommand({ TableName: TABLES.tasks, Item: task }));
