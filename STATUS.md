@@ -236,3 +236,19 @@ Verify after redeploy (docker compose up -d --build):
   2) Run GitHub Action “Frontend Deploy to S3 + CloudFront” (provide stack names if different from defaults).
   3) The action sets config.js and invalidates CloudFront; visit https://<domain>/ and log in.
 
+
+2025-10-13 (fix: login failed to fetch)
+- Symptom: Attempting to log in from the CloudFront/S3-hosted frontend resulted in a browser "Failed to fetch" error. Users could not authenticate and no API calls succeeded. ✓
+- Root cause: The frontend is served over HTTPS, but the API subdomain (api.ticktocktasks.com) was only served over HTTP by Nginx on the EC2 host. Browsers block mixed content, and HTTPS requests to api.* on port 443 failed because Nginx wasn’t listening with a valid certificate. ✓
+- Changes:
+  - nginx.conf: Added an HTTPS (443) server block for api.ticktocktasks.com with HTTP/2 and modern TLS, proxying to the backend container. Kept ACME webroot on HTTP (80). ✓
+  - docker-compose.yml: Exposed port 443 for the nginx service so api.ticktocktasks.com is reachable over HTTPS. ✓
+  - docker-compose.yml: Broadened backend CORS_ORIGIN default to include both https://ticktocktasks.com and https://www.ticktocktasks.com. ✓
+- Certs required: The API TLS server block assumes valid Let’s Encrypt certs at /etc/letsencrypt/live/api.ticktocktasks.com/{fullchain.pem,privkey.pem}. Issue them on the EC2 host with:
+  scripts/issue-certs.sh ticktocktasks.com --include-api
+  Then reload Nginx: docker compose exec nginx nginx -s reload
+- Verify after redeploy (docker compose up -d --build):
+  - curl -kI https://api.ticktocktasks.com/healthz → 200
+  - From the CloudFront site (https://ticktocktasks.com), log in → Network shows HTTPS /api/auth/login 200 and subsequent /api/tasks 200.
+  - Family tab loads group code and tasks.
+

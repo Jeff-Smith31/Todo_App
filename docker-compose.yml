@@ -9,7 +9,7 @@ services:
     environment:
       - PORT=8080
       - HTTPS_PORT=8443
-      - CORS_ORIGIN=${CORS_ORIGIN:-https://ticktocktasks.com}
+      - CORS_ORIGIN=${CORS_ORIGIN:-https://ticktocktasks.com,https://www.ticktocktasks.com}
       - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
       - NODE_ENV=production
       - WEB_PUSH_PUBLIC_KEY=${WEB_PUSH_PUBLIC_KEY}
@@ -37,6 +37,7 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./frontend/website:/usr/share/nginx/html:ro
