@@ -244,9 +244,10 @@ Verify after redeploy (docker compose up -d --build):
   - nginx.conf: Added an HTTPS (443) server block for api.ticktocktasks.com with HTTP/2 and modern TLS, proxying to the backend container. Kept ACME webroot on HTTP (80). ✓
   - docker-compose.yml: Exposed port 443 for the nginx service so api.ticktocktasks.com is reachable over HTTPS. ✓
   - docker-compose.yml: Broadened backend CORS_ORIGIN default to include both https://ticktocktasks.com and https://www.ticktocktasks.com. ✓
-- Certs required: The API TLS server block assumes valid Let’s Encrypt certs at /etc/letsencrypt/live/api.ticktocktasks.com/{fullchain.pem,privkey.pem}. Issue them on the EC2 host with:
-  scripts/issue-certs.sh ticktocktasks.com --include-api
-  Then reload Nginx: docker compose exec nginx nginx -s reload
+  - CI: Added workflow .github/workflows/issue-api-cert.yml to issue/renew Let's Encrypt certificates for api.<domain> via SSM on the backend host. Run this after provisioning to eliminate TLS-related login failures. ✓
+- Certs required: The API TLS server block assumes valid Let’s Encrypt certs at /etc/letsencrypt/live/api.ticktocktasks.com/{fullchain.pem,privkey.pem}. Issue them on the EC2 host with either:
+  - GitHub Actions → "Issue/Renew API TLS Cert (Let’s Encrypt)" (provide domain and stack name), or
+  - Locally via SSH: scripts/issue-certs.sh ticktocktasks.com --include-api; then reload Nginx: docker compose exec nginx nginx -s reload
 - Verify after redeploy (docker compose up -d --build):
   - curl -kI https://api.ticktocktasks.com/healthz → 200
   - From the CloudFront site (https://ticktocktasks.com), log in → Network shows HTTPS /api/auth/login 200 and subsequent /api/tasks 200.

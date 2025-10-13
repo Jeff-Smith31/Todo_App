@@ -1,0 +1,101 @@
+name: Issue/Renew API TLS Cert (Let’s Encrypt)
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_stack_name:
+        description: "Backend CloudFormation stack name (resolves api.<domain>)"
+        required: false
+        default: "ttt-backend"
+      backend_region:
+        description: "AWS region for backend EC2"
+        required: false
+        default: "us-east-1"
+      domain_name:
+        description: "Base domain (e.g., ticktocktasks.com)"
+        required: true
+        default: "ticktocktasks.com"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  issue-cert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.backend_region || vars.BACKEND_REGION || 'us-east-1' }}
+
+      - name: Resolve Backend InstanceId via Stack Outputs
+        id: res
+        env:
+          BACKEND_STACK_NAME: ${{ inputs.backend_stack_name || vars.BACKEND_STACK_NAME || 'ttt-backend' }}
+          BACKEND_REGION: ${{ inputs.backend_region || vars.BACKEND_REGION || 'us-east-1' }}
+        run: |
+          set -e
+          IID=$(aws cloudformation describe-stacks \
+            --region "$BACKEND_REGION" \
+            --stack-name "$BACKEND_STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$IID" ] || [ "$IID" = "None" ]; then
+            echo "Could not resolve InstanceId from stack outputs" >&2
+            exit 2
+          fi
+          echo "instance_id=$IID" >> $GITHUB_OUTPUT
+          echo "Backend InstanceId: $IID" >> $GITHUB_STEP_SUMMARY
+
+      - name: Run cert issuance on backend via SSM
+        env:
+          REGION: ${{ inputs.backend_region || vars.BACKEND_REGION || 'us-east-1' }}
+          INSTANCE_ID: ${{ steps.res.outputs.instance_id }}
+          DOMAIN: ${{ inputs.domain_name }}
+        run: |
+          set -e
+          DOC='{\n  "schemaVersion": "2.2",\n  "description": "Issue/renew Let\'s Encrypt certs for TickTock Tasks",\n  "mainSteps": [\n    {\n      "action": "aws:runShellScript",\n      "name": "IssueCerts",\n      "inputs": {\n        "timeoutSeconds": "1800",\n        "runCommand": [\n          "cd /opt/ticktock || cd /home/ec2-user/Todo_App || exit 1",\n          "echo Running scripts/issue-certs.sh $DOMAIN --include-api",\n          "chmod +x scripts/issue-certs.sh || true",\n          "DOMAIN=$DOMAIN ./scripts/issue-certs.sh $DOMAIN --include-api",\n          "docker compose exec -T nginx nginx -s reload || docker compose restart nginx || true"\n        ]\n      }\n    }\n  ]\n}'
+          CMD_ID=$(aws ssm send-command \
+            --region "$REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunDocument" \
+            --comment "TickTock Tasks: issue/renew API TLS certs" \
+            --parameters document="$DOC" \
+            --query "Command.CommandId" \
+            --output text)
+          echo "CommandId=$CMD_ID" >> $GITHUB_STEP_SUMMARY
+          aws ssm wait command-executed --region "$REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID"
+          STATUS=$(aws ssm list-command-invocations --region "$REGION" --command-id "$CMD_ID" --details --query "CommandInvocations[0].Status" --output text)
+          echo "SSM command status: $STATUS" >> $GITHUB_STEP_SUMMARY
+          if [ "$STATUS" != "Success" ]; then
+            echo "SSM command did not complete successfully (status=$STATUS)" >&2
+            exit 3
+          fi
+
+      - name: Public HTTPS health check (API)
+        env:
+          BACKEND_STACK_NAME: ${{ inputs.backend_stack_name || vars.BACKEND_STACK_NAME || 'ttt-backend' }}
+          BACKEND_REGION: ${{ inputs.backend_region || vars.BACKEND_REGION || 'us-east-1' }}
+        run: |
+          set -e
+          API_URL=$(aws cloudformation describe-stacks \
+            --region "$BACKEND_REGION" \
+            --stack-name "$BACKEND_STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendEndpoint'].OutputValue | [0]" \
+            --output text)
+          if [ -z "$API_URL" ] || [ "$API_URL" = "None" ]; then
+            echo "No API URL resolved from stack" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          CODE=$(curl -sk -o /dev/null -w "%{http_code}" "$API_URL/healthz" || true)
+          echo "API endpoint: $API_URL" >> $GITHUB_STEP_SUMMARY
+          echo "HTTPS /healthz -> $CODE" >> $GITHUB_STEP_SUMMARY
+          if [ "$CODE" != "200" ]; then
+            echo "API HTTPS health check failed (code=$CODE)" >&2
+            exit 4
+          fi
