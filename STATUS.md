@@ -253,3 +253,19 @@ Verify after redeploy (docker compose up -d --build):
   - From the CloudFront site (https://ticktocktasks.com), log in → Network shows HTTPS /api/auth/login 200 and subsequent /api/tasks 200.
   - Family tab loads group code and tasks.
 
+
+2025-10-13 (fix: tasks not loading after login – data partition compatibility)
+- Symptom: After successful login, the app showed no personal tasks (and Family appeared empty) even though tasks existed for the account. 
+- Likely root cause: Historical tasks were stored with user_id = email, while the newer backend used user_id = numeric/id. Listing by id only returned an empty set.
+- Change: Backend now supports both partitions for tasks.
+  - GET /api/tasks: fetches tasks for both user.id and user.email and returns the merged, de-duplicated list. ✓
+  - POST /api/tasks: upserts the task under both partitions (user.id and user.email) for backward compatibility. ✓
+  - PUT /api/tasks/:id: upserts under both partitions. ✓
+  - DELETE /api/tasks/:id: deletes from both partitions. ✓
+- Result: Existing tasks keyed by email are visible immediately after login, and future edits/creates work seamlessly. Family (Irene) endpoints were already email-based and required no change.
+- Verify after redeploy (docker compose up -d --build):
+  1) Log in at your frontend (CloudFront or Nginx).
+  2) Network: /api/tasks → 200 with tasks array (not empty if you had prior tasks).
+  3) Create a new task → appears in list; refresh still shows it.
+  4) Update a historical task (from the previously empty view) → persists and stays visible after reload.
+  5) Family tab → shows group code and tasks as before.

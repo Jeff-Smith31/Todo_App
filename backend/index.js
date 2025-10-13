@@ -383,8 +383,21 @@ app.post('/api/user/timezone', authMiddleware, async (req, res) => {
 
 // Task routes (authenticated)
 app.get('/api/tasks', authMiddleware, async (req, res) => {
-  const rows = await ddbListTasks(String(req.user.id));
-  const tasks = rows.map(r => ({
+  // Backward-compat: some historical records may be keyed by user email instead of user id.
+  // Fetch both partitions (by id and by email) and merge by task id.
+  const uid = String(req.user.id);
+  const uemail = String(req.user.email);
+  const [rowsById, rowsByEmail] = await Promise.all([
+    ddbListTasks(uid).catch(() => []),
+    ddbListTasks(uemail).catch(() => []),
+  ]);
+  const merged = new Map();
+  for (const r of [...rowsById, ...rowsByEmail]) {
+    if (!r) continue;
+    const key = String(r.id);
+    if (!merged.has(key)) merged.set(key, r);
+  }
+  const tasks = Array.from(merged.values()).map(r => ({
     id: r.id,
     title: r.title,
     notes: r.notes || '',
@@ -404,9 +417,8 @@ app.post('/api/tasks', authMiddleware, async (req, res) => {
   // Be maximally compatible: accept any payload shape and coerce
   const b = req.body || {};
   const id = (b.id && String(b.id)) || cryptoRandomId();
-  const item = {
+  const base = {
     id,
-    user_id: String(req.user.id),
     title: (b.title && String(b.title)) || 'Untitled',
     notes: (b.notes != null ? String(b.notes) : ''),
     category: (b.category == null || b.category === '') ? 'Default' : String(b.category),
@@ -418,16 +430,18 @@ app.post('/api/tasks', authMiddleware, async (req, res) => {
     last_completed: b.lastCompleted ? String(b.lastCompleted) : null,
     one_off: b.oneOff === true,
   };
-  await ddbPutTask(item);
+  const itemById = { ...base, user_id: String(req.user.id) };
+  const itemByEmail = { ...base, user_id: String(req.user.email) };
+  // Write under both partitions for backward-compatibility (id + email)
+  await Promise.allSettled([ ddbPutTask(itemById), ddbPutTask(itemByEmail) ]);
   res.status(201).json({ id });
 });
 
 app.put('/api/tasks/:id', authMiddleware, async (req, res) => {
   // Max compatibility: accept category and other extra fields without error
   const b = { ...(req.body || {}), id: req.params.id };
-  const item = {
+  const base = {
     id: String(req.params.id),
-    user_id: String(req.user.id),
     title: (b.title && String(b.title)) || 'Untitled',
     notes: (b.notes != null ? String(b.notes) : ''),
     category: (b.category == null || b.category === '') ? 'Default' : String(b.category),
@@ -439,12 +453,19 @@ app.put('/api/tasks/:id', authMiddleware, async (req, res) => {
     last_completed: b.lastCompleted ? String(b.lastCompleted) : null,
     one_off: b.oneOff === true,
   };
-  await ddbPutTask(item);
+  const itemById = { ...base, user_id: String(req.user.id) };
+  const itemByEmail = { ...base, user_id: String(req.user.email) };
+  await Promise.allSettled([ ddbPutTask(itemById), ddbPutTask(itemByEmail) ]);
   res.json({ ok: true });
 });
 
 app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
-  await ddbDeleteTask(String(req.user.id), req.params.id);
+  const uid = String(req.user.id);
+  const uemail = String(req.user.email);
+  await Promise.allSettled([
+    ddbDeleteTask(uid, req.params.id),
+    ddbDeleteTask(uemail, req.params.id)
+  ]);
   res.json({ ok: true });
 });
 
