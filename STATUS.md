@@ -269,3 +269,13 @@ Verify after redeploy (docker compose up -d --build):
   3) Create a new task → appears in list; refresh still shows it.
   4) Update a historical task (from the previously empty view) → persists and stays visible after reload.
   5) Family tab → shows group code and tasks as before.
+
+
+2025-10-13 (fix: tasks not loading after login + Logout button hidden)
+- Symptom: After login, tasks did not load, and the Logout button disappeared.
+- Root cause: In the login/register handlers, the app called syncFromBackend() before setting the authenticated UI state. syncFromBackend() bails when isAuthed is false, so the initial fetch never ran; the UI also stayed in a not‑authed state momentarily, hiding Logout.
+- Change: In frontend/website/app.js, call updateAuthUi(true) immediately after a successful login/register (before setTimezone and syncFromBackend). This sets isAuthed early so the first sync executes and the Logout button stays visible.
+- Verify:
+  1) Log in → Network shows /api/auth/login 200 followed by /api/tasks 200 with your tasks.
+  2) The Logout button remains visible in the header.
+  3) Family tab shows your group code and tasks.

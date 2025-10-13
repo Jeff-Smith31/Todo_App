@@ -153,10 +153,11 @@
           const emailVal = (emailEl.value || '').trim();
           await API.login(emailVal, passEl.value);
           currentUserEmail = emailVal;
+          // Mark authed immediately so initial sync runs and UI updates (Logout visible)
+          updateAuthUi(true);
           // Persist timezone for backend scheduler (benefits users without push subscription)
           try { await API.setTimezone(-new Date().getTimezoneOffset()); } catch {}
           await syncFromBackend();
-          updateAuthUi(true);
           await loadIrene();
           if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); await maybeTestPush('login'); } catch {} }
           location.hash = '#/tasks';
@@ -170,10 +171,11 @@
           const emailVal = (emailEl.value || '').trim();
           await API.register(emailVal, passEl.value);
           currentUserEmail = emailVal;
+          // Mark authed immediately so initial sync runs and UI updates (Logout visible)
+          updateAuthUi(true);
           // Persist timezone for backend scheduler (benefits users without push subscription)
           try { await API.setTimezone(-new Date().getTimezoneOffset()); } catch {}
           await syncFromBackend();
-          updateAuthUi(true);
           if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); await maybeTestPush('register'); } catch {} }
           location.hash = '#/tasks';
           route();
