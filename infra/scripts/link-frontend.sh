@@ -41,13 +41,19 @@ elif [[ -n "${BACKEND_OVERRIDE_URL:-}" ]]; then
   CHOSEN_URL="$BACKEND_OVERRIDE_URL"
 fi
 
-# Health probe (best-effort)
+# Health probe (best-effort) over HTTPS. If it fails and no override/relative is set,
+# fall back to relative API to avoid browser "connection refused" errors from a bad endpoint.
 REACHABLE="unknown"
+FALLBACK_REASON=""
 if [[ -n "$CHOSEN_URL" ]]; then
   if curl -sk --max-time 8 "$CHOSEN_URL/healthz" >/dev/null 2>&1; then
     REACHABLE="ok"
   else
     REACHABLE="fail"
+    if [[ -z "${BACKEND_OVERRIDE_URL:-}" && "${USE_RELATIVE_API:-}" != "true" ]]; then
+      CHOSEN_URL=""
+      FALLBACK_REASON="health-check-failed"
+    fi
   fi
 fi
 
@@ -77,6 +83,9 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo "- CloudFront Distribution: $DIST_ID";
     echo "- Backend URL (chosen): ${CHOSEN_URL:-<relative>}";
     echo "- Health probe: $REACHABLE";
+    if [ -n "$FALLBACK_REASON" ]; then
+      echo "- Fallback to relative API due to: $FALLBACK_REASON";
+    fi
     if [ -n "${STACK_BACKEND_URL:-}" ] && [ "${STACK_BACKEND_URL}" != "None" ]; then
       echo "- Backend URL (stack output): ${STACK_BACKEND_URL}";
     fi
