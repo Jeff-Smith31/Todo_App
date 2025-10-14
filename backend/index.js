@@ -400,15 +400,18 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
     return res.status(500).json({ error: 'Failed to list tasks (storage unavailable). Please try again later.' });
   }
 
+  // Merge rows from both partitions. Support legacy ID fields (task_id/taskId) when id is absent.
   const merged = new Map();
   for (const r of [...rowsById, ...rowsByEmail]) {
     if (!r) continue;
-    const key = String(r.id);
+    const rid = (r.id ?? r.task_id ?? r.taskId);
+    if (!rid) continue; // skip malformed rows without any identifier
+    const key = String(rid);
     if (!merged.has(key)) merged.set(key, r);
   }
 
   const tasks = Array.from(merged.values()).map(r => ({
-    id: r.id,
+    id: String(r.id ?? r.task_id ?? r.taskId),
     title: r.title,
     notes: r.notes || '',
     category: r.category || 'Default',
