@@ -279,3 +279,20 @@ Verify after redeploy (docker compose up -d --build):
   1) Log in → Network shows /api/auth/login 200 followed by /api/tasks 200 with your tasks.
   2) The Logout button remains visible in the header.
   3) Family tab shows your group code and tasks.
+
+2025-10-14 (cleanup: remove frontend from EC2; enforce CloudFront)
+- Removed all frontend serving from the EC2 nginx. The instance now only reverse-proxies the API host (api.ticktocktasks.com) on ports 80/443. ✓
+- nginx.conf: deleted the apex/www server block that served the SPA; kept only api.* HTTP/HTTPS with a local /nginx-healthz endpoint. ✓
+- docker-compose.yml: removed the frontend volume mount into the nginx container. The container no longer serves static site files. ✓
+- scripts/frontend/README.md: updated to reflect CloudFront/S3 deployment is active via link-frontend.sh. ✓
+- Backend deploy helper scripts: corrected post-deploy notes to direct operators to the GitHub Action “Frontend Deploy to S3 + CloudFront” instead of EC2-hosted frontend. ✓
+- Verification plan:
+  1) API TLS: Ensure https://api.ticktocktasks.com/healthz returns 200. If not, run the workflow “Issue/Renew API TLS Cert (Let’s Encrypt)”. ✓
+  2) Frontend deploy: Run GitHub Action “Frontend Deploy to S3 + CloudFront”. It will sync S3, write config.js with BACKEND_URL=https://api.<domain>, and invalidate CloudFront. ✓
+  3) Browser: Visit https://ticktocktasks.com, log in → /api/auth/login and /api/tasks succeed over HTTPS; personal and family tasks load. ✓
+  4) Mobile/PWA: After update (SW cache v8 or newer), login persists and tasks load offline/online. ✓
+- Security notes:
+  • Frontend TLS via ACM on CloudFront (us-east-1). ✓
+  • API TLS via Let’s Encrypt on EC2; cookies use SameSite=None; Secure in production. ✓
+  • CORS: Allowed origins default to https://ticktocktasks.com and https://www.ticktocktasks.com. Add your CloudFront domain if you access via the CF hostname. ✓
+
