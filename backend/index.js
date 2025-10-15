@@ -223,12 +223,20 @@ const corsOptions = {
     if (!origin) return callback(null, true);
     // In non-production, allow any origin to simplify local dev and testing
     if (NODE_ENV !== 'production') return callback(null, true);
+    // In production, allow exact matches or same-apex subdomains of ticktocktasks.com
     if (ORIGINS.includes(origin)) return callback(null, true);
+    try {
+      const o = new URL(origin);
+      const host = (o.hostname || '').toLowerCase();
+      if (host === 'ticktocktasks.com' || host === 'www.ticktocktasks.com' || host.endsWith('.ticktocktasks.com')) {
+        return callback(null, true);
+      }
+    } catch {/* ignore */}
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
   optionsSuccessStatus: 204,
 };
 app.use(cors(corsOptions));
