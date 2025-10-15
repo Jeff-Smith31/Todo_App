@@ -169,9 +169,16 @@ export async function createIreneGroup(group_id, owner_email){
 export async function listTasks(user_id){
   // Helper to query a specific tasks table name and apply a legacy Scan fallback
   async function queryTable(tableName){
-    const r = await ddb.send(new QueryCommand({ TableName: tableName, KeyConditionExpression: 'user_id = :u', ExpressionAttributeValues: { ':u': user_id } }));
-    const items = r.Items || [];
+    let items = [];
+    try {
+      const r = await ddb.send(new QueryCommand({ TableName: tableName, KeyConditionExpression: 'user_id = :u', ExpressionAttributeValues: { ':u': user_id } }));
+      items = r.Items || [];
+    } catch (e) {
+      // Swallow query errors (e.g., key schema mismatch) and fall back to Scan below
+      items = [];
+    }
     if (items.length > 0) return items;
+    // Fallback: permissive Scan to support legacy records where partition key differs (email/user/userId)
     try {
       const r2 = await ddb.send(new ScanCommand({
         TableName: tableName,
