@@ -15,7 +15,7 @@ import fs from 'fs';
 import http from 'http';
 import https from 'https';
 import os from 'os';
-import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { ScanCommand, UpdateCommand, PutCommand, GetCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { CloudWatchLogsClient, CreateLogGroupCommand, CreateLogStreamCommand, DescribeLogStreamsCommand, PutLogEventsCommand } from '@aws-sdk/client-cloudwatch-logs';
 
 dotenv.config();
@@ -397,6 +397,11 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
     lastCompleted: r.last_completed ?? r.lastCompleted,
     oneOff: !!(r.one_off ?? r.oneOff),
   }));
+  if (tasks.length === 0) {
+    try {
+      console.warn(`[tasks] No tasks found for user=${String(req.user.id)} in table=${TABLES.tasks} region=${AWS_REGION || 'default'}`);
+    } catch {}
+  }
   res.json({ tasks });
 });
 
@@ -828,6 +833,20 @@ app.get('/api/ping', (req, res) => {
   });
 });
 app.get('/healthz', (req, res) => res.json({ ok: true }));
+
+// DynamoDB self-test (Put/Get/Delete on config table)
+app.get('/api/health/dynamo', async (req, res) => {
+  try {
+    const key = 'selftest';
+    const ts = new Date().toISOString();
+    await ddb.send(new PutCommand({ TableName: TABLES.config, Item: { key, ts } }));
+    const r = await ddb.send(new GetCommand({ TableName: TABLES.config, Key: { key } }));
+    await ddb.send(new DeleteCommand({ TableName: TABLES.config, Key: { key } }));
+    res.json({ ok: true, region: AWS_REGION || null, tables: TABLES, wrote: !!(r && r.Item), item: r?.Item || null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || String(e) });
+  }
+});
 
 // Friendly landing page so users don't see "Cannot GET /" after accepting the TLS warning
 app.get('/', (req, res) => {
