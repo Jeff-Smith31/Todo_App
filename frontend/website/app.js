@@ -382,31 +382,35 @@
 
     await detectBackendBaseIfNeeded();
 
-    if (BACKEND_URL) {
-      if (authToken) {
-        try {
-          const me = await API.me();
-          isAuthed = !!me;
-          currentUserEmail = me && me.email ? String(me.email) : currentUserEmail;
-          updateAuthUi(isAuthed);
-          if (isAuthed) {
-            // Persist timezone for backend scheduler
-            try { await API.setTimezone(-new Date().getTimezoneOffset()); } catch {}
-            await syncFromBackend();
-            await loadIrene();
-            if (Notification.permission === 'granted') {
-              try { await ensurePushSubscribed(); } catch {}
-            }
+    // If we have a stored token, attempt to authenticate regardless of BACKEND_URL being set.
+    // This supports both same-origin (/api/* via CloudFront) and cross-origin API hosts.
+    if (authToken) {
+      // Optimistically show authed UI to avoid flicker while we confirm via /api/auth/me
+      updateAuthUi(true);
+      try {
+        const me = await API.me();
+        isAuthed = !!me;
+        currentUserEmail = me && me.email ? String(me.email) : currentUserEmail;
+        updateAuthUi(isAuthed);
+        if (isAuthed) {
+          // Persist timezone for backend scheduler
+          try { await API.setTimezone(-new Date().getTimezoneOffset()); } catch {}
+          await syncFromBackend();
+          await loadIrene();
+          if (Notification.permission === 'granted') {
+            try { await ensurePushSubscribed(); } catch {}
           }
-        } catch (e) {
-          // Surface connectivity error if any
-          await updateBackendConnectivityStatus(e);
         }
-      } else {
-        // No token present → skip calling /api/auth/me to avoid 401 noise; remain in local mode
+      } catch (e) {
+        // Surface connectivity error if any and revert UI if truly unauthenticated
+        await updateBackendConnectivityStatus(e);
         isAuthed = false;
         updateAuthUi(false);
       }
+    } else {
+      // No token present → remain in local mode
+      isAuthed = false;
+      updateAuthUi(false);
     }
 
     // Handle missed tasks on load

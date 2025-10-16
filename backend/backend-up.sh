@@ -49,9 +49,11 @@ else
   fi
 fi
 
-echo "Starting backend container with Docker Compose (service: backend)..."
-docker compose up --build -d backend
+echo "Building and restarting backend container..."
+# Always rebuild without cache and force-recreate the backend container so new code takes effect
+(docker compose build --no-cache backend || docker-compose build --no-cache backend)
+(docker compose up -d --force-recreate --no-deps backend || docker-compose up -d --force-recreate --no-deps backend)
 
 echo "Backend is starting. HTTPS port: 8443 (HTTP 8080 redirects to HTTPS)"
 echo "If running on LAN, access it at: https://<YOUR-LAN-IP>:8443"
-echo "Ensure your frontend uses this origin in the browser: localStorage.setItem('tt_backend_url','https://<YOUR-LAN-IP>:8443')"}
+echo "Ensure your frontend uses this origin in the browser: localStorage.setItem('tt_backend_url','https://<YOUR-LAN-IP>:8443')"

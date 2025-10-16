@@ -73,6 +73,10 @@ The frontend is deployed to S3 and served globally via CloudFront (ACM in us-eas
 
 5) Updates
 - Re-run the GitHub workflow after pushing changes to frontend/website to publish updates globally via CloudFront.
+- Or deploy manually via scripts:
+  - Linux/macOS: ./scripts/deploy-frontend.sh <S3_BUCKET_NAME> <CLOUDFRONT_DISTRIBUTION_ID> [--path frontend/website]
+  - Windows PowerShell: powershell -ExecutionPolicy Bypass -File .\scripts\deploy-frontend.ps1 -BucketName <S3_BUCKET_NAME> -DistributionId <DISTRIBUTION_ID> [-Path frontend\website]
+- Backend updates: run backend/backend-up.sh on the EC2 host to rebuild (no cache) and force-recreate the backend container so new code is active.
 
 TLS for API (login failures: "Failed to fetch")
 - If the app at https://<DomainName> shows "Failed to fetch" on login, ensure the API (https://api.<DomainName>) has a valid TLS cert.
