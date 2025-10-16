@@ -397,34 +397,18 @@ app.post('/api/user/timezone', authMiddleware, async (req, res) => {
 
 // Task routes (authenticated)
 app.get('/api/tasks', authMiddleware, async (req, res) => {
-  // Backward-compat: some historical records may be keyed by user email instead of user id.
-  // Fetch both partitions (by id and by email) and merge by task id.
-  const uid = String(req.user.id);
+  // Per requirements, load all tasks where the partition key user_id equals the user's email
   const uemail = String(req.user.email);
 
-  let rowsById = [];
-  let rowsByEmail = [];
-  let errId = null, errEmail = null;
-  try { rowsById = await ddbListTasks(uid); } catch (e) { errId = e; rowsById = []; }
-  try { rowsByEmail = await ddbListTasks(uemail); } catch (e) { errEmail = e; rowsByEmail = []; }
-
-  if (errId && errEmail) {
-    // Surface a clear error if both DDB calls failed (likely permissions/region mismatch)
-    console.warn('[tasks] DDB list failed for both id and email', { uid, uemail, errId: String(errId?.message||errId), errEmail: String(errEmail?.message||errEmail) });
-    return res.status(500).json({ error: 'Failed to list tasks (storage unavailable). Please try again later.' });
+  let rows = [];
+  try {
+    rows = await ddbListTasks(uemail);
+  } catch (e) {
+    console.warn('[tasks] DDB list failed for email', { uemail, err: String(e?.message || e) });
+    return res.status(500).json({ error: 'Failed to list tasks. Please try again later.' });
   }
 
-  // Merge rows from both partitions. Support legacy ID fields (task_id/taskId) when id is absent.
-  const merged = new Map();
-  for (const r of [...rowsById, ...rowsByEmail]) {
-    if (!r) continue;
-    const rid = (r.id ?? r.task_id ?? r.taskId);
-    if (!rid) continue; // skip malformed rows without any identifier
-    const key = String(rid);
-    if (!merged.has(key)) merged.set(key, r);
-  }
-
-  const tasks = Array.from(merged.values()).map(r => ({
+  const tasks = (rows || []).map(r => ({
     id: String(r.id ?? r.task_id ?? r.taskId),
     title: r.title,
     notes: r.notes || '',
@@ -437,7 +421,7 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
     lastCompleted: r.last_completed ?? r.lastCompleted,
     oneOff: !!(r.one_off ?? r.oneOff),
   }));
-  res.setHeader('X-TTT-Tasks-Src', `id:${rowsById.length};email:${rowsByEmail.length}`);
+  res.setHeader('X-TTT-Tasks-Src', `email:${rows.length}`);
   res.json({ tasks });
 });
 
