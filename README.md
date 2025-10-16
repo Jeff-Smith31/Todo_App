@@ -74,6 +74,11 @@ The frontend is deployed to S3 and served globally via CloudFront (ACM in us-eas
 5) Updates
 - Re-run the GitHub workflow after pushing changes to frontend/website to publish updates globally via CloudFront.
 
+TLS for API (login failures: "Failed to fetch")
+- If the app at https://<DomainName> shows "Failed to fetch" on login, ensure the API (https://api.<DomainName>) has a valid TLS cert.
+- Use the GitHub Action "Issue/Renew API TLS Cert (Let’s Encrypt)" (workflow_dispatch) with your backend stack name and domain to issue/renew certs on the EC2 host via SSM, then retry login.
+- Alternatively SSH to the EC2 host and run: scripts/issue-certs.sh <DomainName> --include-api; then reload Nginx: docker compose exec nginx nginx -s reload.
+
 DNS and routing checks
 - Use the provided scripts to validate DNS and Nginx reachability from outside and from EC2:
   - Linux/macOS: ./scripts/check-dns-and-http.sh your-domain.com [EC2_PUBLIC_IP]

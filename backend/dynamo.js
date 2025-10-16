@@ -3,6 +3,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCom
 
 const REGION = process.env.DDB_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1'; // default to us-east-1 if not provided
 const TABLE_PREFIX = process.env.DDB_TABLE_PREFIX || 'ttt';
+const FALLBACK_PREFIX = process.env.DDB_FALLBACK_TABLE_PREFIX || '';
 
 export const TABLES = {
   users: `${TABLE_PREFIX}-users`,
@@ -166,26 +167,68 @@ export async function createIreneGroup(group_id, owner_email){
 
 // Tasks
 export async function listTasks(user_id){
-  // Primary path: query by partition key
-  const r = await ddb.send(new QueryCommand({ TableName: TABLES.tasks, KeyConditionExpression: 'user_id = :u', ExpressionAttributeValues: { ':u': user_id } }));
-  const items = r.Items || [];
-  if (items.length > 0) return items;
-  // Backward-compat fallback: In case legacy records were written with alternate user attributes,
-  // attempt a Scan to find items matching the provided user identifier across common legacy fields.
-  // This is only executed when the direct Query finds nothing to avoid performance impact.
-  try {
-    const r2 = await ddb.send(new ScanCommand({
-      TableName: TABLES.tasks,
-      FilterExpression: '#uid = :u OR #email = :u OR #user = :u OR #userId = :u',
-      ExpressionAttributeValues: { ':u': user_id },
-      ExpressionAttributeNames: { '#uid': 'user_id', '#email': 'email', '#user': 'user', '#userId': 'userId' },
-      Limit: 1000,
-    }));
-    return r2.Items || [];
-  } catch (e) {
-    // If Scan fails for any reason, return empty to preserve existing behavior
+  // Helper to query a specific tasks table name and apply a legacy Scan fallback
+  async function queryTable(tableName){
+    let items = [];
+    // Try common partition key names with Query to avoid needing Scan permissions
+    const candidateKeys = ['user_id', 'email', 'user', 'userId', 'owner', 'pk', 'partitionKey'];
+    // Try value variants to mitigate case/whitespace mismatches (emails are case-sensitive in DynamoDB)
+    const u = String(user_id || '');
+    const valCandidates = Array.from(new Set([u, u.trim(), u.toLowerCase()]));
+
+    for (const pk of candidateKeys) {
+      for (const val of valCandidates) {
+        try {
+          const r = await ddb.send(new QueryCommand({
+            TableName: tableName,
+            KeyConditionExpression: `#pk = :u`,
+            ExpressionAttributeValues: { ':u': val },
+            ExpressionAttributeNames: { '#pk': pk },
+          }));
+          items = r.Items || [];
+          if (items.length > 0) return items;
+        } catch (e) {
+          // ignore and try next key/value combination
+        }
+      }
+    }
+    // Fallback: permissive Scan to support legacy records where partition key differs (email/user/userId)
+    // Attempt scan with each value variant, stop on first hit to reduce cost
+    for (const val of valCandidates) {
+      try {
+        const r2 = await ddb.send(new ScanCommand({
+          TableName: tableName,
+          FilterExpression: '#uid = :u OR #email = :u OR #user = :u OR #userId = :u',
+          ExpressionAttributeValues: { ':u': val },
+          ExpressionAttributeNames: { '#uid': 'user_id', '#email': 'email', '#user': 'user', '#userId': 'userId' },
+          Limit: 1000,
+        }));
+        items = r2.Items || [];
+        if (items.length > 0) return items;
+      } catch (e) {
+        // continue to next value variant
+      }
+    }
     return [];
   }
+
+  // Query primary tasks table
+  const primary = await queryTable(TABLES.tasks);
+
+  // Optionally query fallback legacy tasks table and merge
+  let merged = Array.isArray(primary) ? [...primary] : [];
+  if (FALLBACK_PREFIX) {
+    const fallbackTable = `${FALLBACK_PREFIX}-tasks`;
+    const secondary = await queryTable(fallbackTable);
+    if (secondary && secondary.length) {
+      const map = new Map();
+      for (const it of merged) { if (it && it.id) map.set(String(it.id), it); }
+      for (const it of secondary) { if (it && it.id && !map.has(String(it.id))) map.set(String(it.id), it); }
+      merged = Array.from(map.values());
+    }
+  }
+
+  return merged;
 }
 export async function putTask(task){
   await ddb.send(new PutCommand({ TableName: TABLES.tasks, Item: task }));

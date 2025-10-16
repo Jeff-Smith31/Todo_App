@@ -153,10 +153,11 @@
           const emailVal = (emailEl.value || '').trim();
           await API.login(emailVal, passEl.value);
           currentUserEmail = emailVal;
+          // Mark authed immediately so initial sync runs and UI updates (Logout visible)
+          updateAuthUi(true);
           // Persist timezone for backend scheduler (benefits users without push subscription)
           try { await API.setTimezone(-new Date().getTimezoneOffset()); } catch {}
           await syncFromBackend();
-          updateAuthUi(true);
           await loadIrene();
           if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); await maybeTestPush('login'); } catch {} }
           location.hash = '#/tasks';
@@ -170,10 +171,11 @@
           const emailVal = (emailEl.value || '').trim();
           await API.register(emailVal, passEl.value);
           currentUserEmail = emailVal;
+          // Mark authed immediately so initial sync runs and UI updates (Logout visible)
+          updateAuthUi(true);
           // Persist timezone for backend scheduler (benefits users without push subscription)
           try { await API.setTimezone(-new Date().getTimezoneOffset()); } catch {}
           await syncFromBackend();
-          updateAuthUi(true);
           if (Notification.permission === 'granted') { try { await ensurePushSubscribed(); await maybeTestPush('register'); } catch {} }
           location.hash = '#/tasks';
           route();
@@ -342,6 +344,7 @@
     // isn't proxying /api/* but an api.<domain> host exists. If detected, persist and reload.
     async function detectBackendBaseIfNeeded(){
       if (BACKEND_URL) return false;
+      // First, check if same-origin /api is available (works with CloudFront routing)
       try {
         const r = await fetch('/api/auth/me', { credentials: 'include' });
         const ct = (r.headers && r.headers.get('content-type')) || '';
@@ -350,20 +353,25 @@
       } catch (e) {
         // ignore and try next
       }
+      // Only probe api.<apex> on non-HTTPS pages to avoid noisy connection-refused errors
+      // when the api subdomain is not listening on 443. On HTTPS origins the browser would
+      // show a failing network request even though we handle it; skip to keep console clean.
       try {
-        const host = location.hostname || '';
-        const parts = host.split('.');
-        if (parts.length >= 2){
-          const apex = parts.slice(-2).join('.');
-          const candidate = (location.protocol || 'https:') + '//' + ('api.' + apex);
-          const r2 = await fetch(candidate + '/api/auth/me', { credentials: 'include' });
-          const ct2 = (r2.headers && r2.headers.get('content-type')) || '';
-          // Accept JSON content-type or typical auth statuses as signal the backend is reachable
-          if (ct2.includes('application/json') || r2.status === 401 || r2.status === 403){
-            try { localStorage.setItem('tt_backend_url', candidate); } catch {}
-            // Reload to reinitialize API client with new base URL
-            location.reload();
-            return true;
+        if ((location.protocol || 'https:') !== 'https:') {
+          const host = location.hostname || '';
+          const parts = host.split('.');
+          if (parts.length >= 2){
+            const apex = parts.slice(-2).join('.');
+            const candidate = (location.protocol || 'http:') + '//' + ('api.' + apex);
+            const r2 = await fetch(candidate + '/api/auth/me', { credentials: 'include' });
+            const ct2 = (r2.headers && r2.headers.get('content-type')) || '';
+            // Accept JSON content-type or typical auth statuses as signal the backend is reachable
+            if (ct2.includes('application/json') || r2.status === 401 || r2.status === 403){
+              try { localStorage.setItem('tt_backend_url', candidate); } catch {}
+              // Reload to reinitialize API client with new base URL
+              location.reload();
+              return true;
+            }
           }
         }
       } catch (e) {
@@ -1435,6 +1443,33 @@
       if (authToken) h['Authorization'] = 'Bearer ' + authToken;
       return h;
     };
+    // Network-resilient fetch: try configured baseUrl first; on network failure, try same-origin
+    async function apiFetch(path, init){
+      const primaryUrl = (baseUrl ? (baseUrl + path) : path);
+      try {
+        return await fetch(primaryUrl, init);
+      } catch (e) {
+        const isTypeErr = e && (e.name === 'TypeError' || String(e).includes('Failed to fetch'));
+        const crossOrigin = !!baseUrl && (function(){ try { return new URL(baseUrl).origin !== location.origin; } catch { return true; } })();
+        if (isTypeErr && crossOrigin) {
+          try {
+            const r2 = await fetch(path, init);
+            // If fallback succeeds (typical 200/401 JSON), persist switch to relative API and reload
+            const okish = r2 && (r2.ok || r2.status === 401 || r2.status === 403);
+            if (okish) {
+              try { localStorage.setItem('tt_backend_url', ''); } catch {}
+              // Allow the current response to be consumed by callers before reload
+              setTimeout(() => { try { location.reload(); } catch {} }, 0);
+              return r2;
+            }
+            return r2;
+          } catch (e2) {
+            throw e;
+          }
+        }
+        throw e;
+      }
+    }
     async function handle(res){
       const ct = res.headers.get('content-type') || '';
       const data = ct.includes('application/json') ? await res.json().catch(()=>null) : await res.text();
@@ -1444,29 +1479,29 @@
     return {
       async setTimezone(tzOffsetMinutes){
         const payload = { tzOffsetMinutes };
-        const res = await fetch(baseUrl + '/api/user/timezone', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(payload) });
+        const res = await apiFetch('/api/user/timezone', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(payload) });
         // ignore errors silently
         try { await handle(res); } catch {}
         return { ok: res.ok };
       },
       async register(email, password){
-        const data = await handle(await fetch(baseUrl + '/api/auth/register', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ email, password }) }));
+        const data = await handle(await apiFetch('/api/auth/register', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ email, password }) }));
         if (data && data.token) { authToken = data.token; localStorage.setItem('tt_auth_token', authToken); }
         return data;
       },
       async login(email, password){
-        const data = await handle(await fetch(baseUrl + '/api/auth/login', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ email, password }) }));
+        const data = await handle(await apiFetch('/api/auth/login', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify({ email, password }) }));
         if (data && data.token) { authToken = data.token; localStorage.setItem('tt_auth_token', authToken); }
         return data;
       },
       async logout(){
-        try { await handle(await fetch(baseUrl + '/api/auth/logout', { method: 'POST', ...common, headers: buildHeaders() })); } finally {
+        try { await handle(await apiFetch('/api/auth/logout', { method: 'POST', ...common, headers: buildHeaders() })); } finally {
           authToken = ''; localStorage.removeItem('tt_auth_token');
         }
         return { ok: true };
       },
-      async me(){ try { const r = await fetch(baseUrl + '/api/auth/me', { ...common, headers: buildHeaders() }); if (!r.ok) return null; const j = await r.json(); return j.user; } catch { return null; } },
-      async getTasks(){ const j = await handle(await fetch(baseUrl + '/api/tasks', { ...common, headers: buildHeaders() })); return j.tasks; },
+      async me(){ try { const r = await apiFetch('/api/auth/me', { ...common, headers: buildHeaders() }); if (!r.ok) return null; const j = await r.json(); return j.user; } catch { return null; } },
+      async getTasks(){ const j = await handle(await apiFetch('/api/tasks', { ...common, headers: buildHeaders() })); return j.tasks; },
       async createTask(t){
         try {
           return await handle(await fetch(baseUrl + '/api/tasks', { method: 'POST', ...common, headers: buildHeaders(), body: JSON.stringify(t) }));
