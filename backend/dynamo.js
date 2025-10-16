@@ -171,34 +171,45 @@ export async function listTasks(user_id){
   async function queryTable(tableName){
     let items = [];
     // Try common partition key names with Query to avoid needing Scan permissions
-    const candidateKeys = ['user_id', 'email', 'user', 'userId'];
+    const candidateKeys = ['user_id', 'email', 'user', 'userId', 'owner', 'pk', 'partitionKey'];
+    // Try value variants to mitigate case/whitespace mismatches (emails are case-sensitive in DynamoDB)
+    const u = String(user_id || '');
+    const valCandidates = Array.from(new Set([u, u.trim(), u.toLowerCase()]));
+
     for (const pk of candidateKeys) {
-      try {
-        const r = await ddb.send(new QueryCommand({
-          TableName: tableName,
-          KeyConditionExpression: `#pk = :u`,
-          ExpressionAttributeValues: { ':u': user_id },
-          ExpressionAttributeNames: { '#pk': pk },
-        }));
-        items = r.Items || [];
-        if (items.length > 0) return items;
-      } catch (e) {
-        // ignore and try next key name
+      for (const val of valCandidates) {
+        try {
+          const r = await ddb.send(new QueryCommand({
+            TableName: tableName,
+            KeyConditionExpression: `#pk = :u`,
+            ExpressionAttributeValues: { ':u': val },
+            ExpressionAttributeNames: { '#pk': pk },
+          }));
+          items = r.Items || [];
+          if (items.length > 0) return items;
+        } catch (e) {
+          // ignore and try next key/value combination
+        }
       }
     }
     // Fallback: permissive Scan to support legacy records where partition key differs (email/user/userId)
-    try {
-      const r2 = await ddb.send(new ScanCommand({
-        TableName: tableName,
-        FilterExpression: '#uid = :u OR #email = :u OR #user = :u OR #userId = :u',
-        ExpressionAttributeValues: { ':u': user_id },
-        ExpressionAttributeNames: { '#uid': 'user_id', '#email': 'email', '#user': 'user', '#userId': 'userId' },
-        Limit: 1000,
-      }));
-      return r2.Items || [];
-    } catch (e) {
-      return [];
+    // Attempt scan with each value variant, stop on first hit to reduce cost
+    for (const val of valCandidates) {
+      try {
+        const r2 = await ddb.send(new ScanCommand({
+          TableName: tableName,
+          FilterExpression: '#uid = :u OR #email = :u OR #user = :u OR #userId = :u',
+          ExpressionAttributeValues: { ':u': val },
+          ExpressionAttributeNames: { '#uid': 'user_id', '#email': 'email', '#user': 'user', '#userId': 'userId' },
+          Limit: 1000,
+        }));
+        items = r2.Items || [];
+        if (items.length > 0) return items;
+      } catch (e) {
+        // continue to next value variant
+      }
     }
+    return [];
   }
 
   // Query primary tasks table
