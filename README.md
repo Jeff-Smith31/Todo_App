@@ -98,7 +98,5 @@ CloudFront + S3 frontend (optional advanced setup)
 Offline behavior
 - A dedicated offline page (offline.html) is shown when there’s no internet connection. It uses the same CSS to preserve the app’s look and feel. The service worker precaches required assets and falls back to offline.html on navigations when offline.
 
-No-op change to new deployment.
-
 License
 This project is licensed under the MIT License. See LICENSE for details.

@@ -1282,7 +1282,8 @@ app.use((err, req, res, next) => {
 // Start servers (HTTPS preferred)
 (function startServers(){
   const hasHttps = HTTPS_CERT_PATH && HTTPS_KEY_PATH && fs.existsSync(HTTPS_CERT_PATH) && fs.existsSync(HTTPS_KEY_PATH);
-  const redirectHttp = String(process.env.REDIRECT_HTTP_TO_HTTPS ?? 'false').toLowerCase() !== 'false';
+  // Only redirect HTTP->HTTPS when explicitly requested with REDIRECT_HTTP_TO_HTTPS=true
+  const redirectHttp = String(process.env.REDIRECT_HTTP_TO_HTTPS || '').toLowerCase() === 'true';
   if (hasHttps) {
     try {
       const key = fs.readFileSync(HTTPS_KEY_PATH);
