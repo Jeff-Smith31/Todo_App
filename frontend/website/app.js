@@ -344,6 +344,7 @@
     // isn't proxying /api/* but an api.<domain> host exists. If detected, persist and reload.
     async function detectBackendBaseIfNeeded(){
       if (BACKEND_URL) return false;
+      // First, check if same-origin /api is available (works with CloudFront routing)
       try {
         const r = await fetch('/api/auth/me', { credentials: 'include' });
         const ct = (r.headers && r.headers.get('content-type')) || '';
@@ -352,20 +353,25 @@
       } catch (e) {
         // ignore and try next
       }
+      // Only probe api.<apex> on non-HTTPS pages to avoid noisy connection-refused errors
+      // when the api subdomain is not listening on 443. On HTTPS origins the browser would
+      // show a failing network request even though we handle it; skip to keep console clean.
       try {
-        const host = location.hostname || '';
-        const parts = host.split('.');
-        if (parts.length >= 2){
-          const apex = parts.slice(-2).join('.');
-          const candidate = (location.protocol || 'https:') + '//' + ('api.' + apex);
-          const r2 = await fetch(candidate + '/api/auth/me', { credentials: 'include' });
-          const ct2 = (r2.headers && r2.headers.get('content-type')) || '';
-          // Accept JSON content-type or typical auth statuses as signal the backend is reachable
-          if (ct2.includes('application/json') || r2.status === 401 || r2.status === 403){
-            try { localStorage.setItem('tt_backend_url', candidate); } catch {}
-            // Reload to reinitialize API client with new base URL
-            location.reload();
-            return true;
+        if ((location.protocol || 'https:') !== 'https:') {
+          const host = location.hostname || '';
+          const parts = host.split('.');
+          if (parts.length >= 2){
+            const apex = parts.slice(-2).join('.');
+            const candidate = (location.protocol || 'http:') + '//' + ('api.' + apex);
+            const r2 = await fetch(candidate + '/api/auth/me', { credentials: 'include' });
+            const ct2 = (r2.headers && r2.headers.get('content-type')) || '';
+            // Accept JSON content-type or typical auth statuses as signal the backend is reachable
+            if (ct2.includes('application/json') || r2.status === 401 || r2.status === 403){
+              try { localStorage.setItem('tt_backend_url', candidate); } catch {}
+              // Reload to reinitialize API client with new base URL
+              location.reload();
+              return true;
+            }
           }
         }
       } catch (e) {
