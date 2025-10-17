@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ticktock-cache-v8';
+const CACHE_NAME = 'ticktock-cache-v9';
 const ASSETS = [
   '/',
   '/index.html',
@@ -49,6 +49,25 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   // Intercept only same-origin requests
   if (url.origin !== location.origin) return;
+
+  // Special-case PWA icons: if origin serves wrong content-type or fails, return a tiny valid PNG
+  const pathname = url.pathname || '';
+  if (req.method === 'GET' && (pathname === '/icons/icon-192.png' || pathname === '/icons/icon-512.png')) {
+    e.respondWith((async () => {
+      const fromCache = await caches.match(req).catch(() => null);
+      if (fromCache) return fromCache;
+      try {
+        const resp = await fetch(req);
+        const ct = (resp.headers && resp.headers.get('content-type')) || '';
+        if (resp.ok && ct.startsWith('image/')) return resp;
+      } catch (_) {}
+      // Fallback 1x1 transparent PNG
+      const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/ajQ3e8AAAAASUVORK5CYII=';
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+      return new Response(bytes, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=31536000' } });
+    })());
+    return;
+  }
 
   // Navigation requests: try network first, fall back to cached offline page (keeps app styling)
   if (req.mode === 'navigate') {
