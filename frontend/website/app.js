@@ -360,6 +360,9 @@
         const parts = host.split('.');
         if (parts.length >= 2){
           const apex = parts.slice(-2).join('.');
+          // Skip auto-switching on Brave to avoid cross-site cookie issues
+          const __isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') ? await navigator.brave.isBrave() : false;
+          if (__isBrave) { return false; }
           if ((location.protocol || 'https:') === 'https:') {
             const candidate = 'https://' + ('api.' + apex);
             try {
@@ -398,6 +401,26 @@
 
     // Show auth UI state immediately on load based on stored token to avoid flicker on mobile refresh
     try { updateAuthUi(!!authToken); } catch {}
+
+    // Brave compatibility: prefer same-origin /api to avoid cross-site cookie blocking by Shields
+    try {
+      const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') ? await navigator.brave.isBrave() : false;
+      if (isBrave) {
+        // If a cross-origin backend URL is set, clear it to force same-origin via CloudFront
+        const be = localStorage.getItem('tt_backend_url') || '';
+        if (be) {
+          try {
+            const u = new URL(be);
+            if (u.host !== location.host) {
+              localStorage.setItem('tt_backend_url', '');
+              // Reload to reinitialize API client with same-origin base
+              location.reload();
+              return; // abort further init; next load will continue
+            }
+          } catch {}
+        }
+      }
+    } catch {}
 
     await detectBackendBaseIfNeeded();
 
