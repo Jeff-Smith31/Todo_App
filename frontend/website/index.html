@@ -6,7 +6,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>TickTock Tasks</title>
   <meta name="description" content="TickTock Tasks - smart recurring to-do app with reminders and local storage.">
-  <link rel="manifest" href="manifest.webmanifest">
+  <!-- Manifest will be injected after Service Worker takes control to avoid icon fetch errors before SW fallback is active -->
+  <script>
+    (function(){
+      try {
+        function addManifest(){
+          if (document.getElementById('app-manifest-link')) return;
+          var link = document.createElement('link');
+          link.rel = 'manifest';
+          link.href = 'manifest.webmanifest';
+          link.id = 'app-manifest-link';
+          document.head.appendChild(link);
+        }
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.register('sw.js').then(function(reg){
+            if (reg && reg.active) { addManifest(); return; }
+            // When the SW takes control, add the manifest so icon requests go through SW fallback
+            navigator.serviceWorker.addEventListener('controllerchange', function(){ addManifest(); });
+            // Fallback in case controllerchange doesn’t fire quickly
+            setTimeout(addManifest, 1500);
+          }).catch(function(){ setTimeout(addManifest, 0); });
+        } else {
+          setTimeout(addManifest, 0);
+        }
+      } catch (e) {}
+    })();
+  </script>
   <meta name="theme-color" content="#4f46e5">
   <link rel="icon" href="icons/logo.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/logo.svg">
