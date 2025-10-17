@@ -11,9 +11,9 @@
   const runtimeBE = hasRuntimeBE ? runtimeCfg.BACKEND_URL : undefined; // allow empty string intentionally
   const lsBE = (typeof localStorage !== 'undefined') ? (localStorage.getItem('tt_backend_url') || '') : '';
   // Resolve backend URL in priority order:
-  // 1) Explicit runtime config if provided; 2) localStorage override (tt_backend_url);
+  // 1) Explicit runtime config if provided and non-empty; 2) localStorage override (tt_backend_url);
   // 3) window.BACKEND_URL; otherwise empty (local-only mode)
-  const BACKEND_URL = (hasRuntimeBE ? (runtimeBE || '') : (lsBE || window.BACKEND_URL || ''));
+  const BACKEND_URL = (hasRuntimeBE ? (runtimeBE || lsBE || '') : (lsBE || window.BACKEND_URL || ''));
   let authToken = localStorage.getItem('tt_auth_token') || '';
   let currentUserEmail = '';
   const API = createApiClient(BACKEND_URL);
@@ -362,19 +362,31 @@
           const apex = parts.slice(-2).join('.');
           if ((location.protocol || 'https:') === 'https:') {
             const candidate = 'https://' + ('api.' + apex);
-            try { localStorage.setItem('tt_backend_url', candidate); } catch {}
-            location.reload();
-            return true;
+            try {
+              const current = localStorage.getItem('tt_backend_url') || '';
+              if (current !== candidate) {
+                localStorage.setItem('tt_backend_url', candidate);
+                location.reload();
+                return true;
+              }
+            } catch {}
+            return false;
           } else {
             const candidate = (location.protocol || 'http:') + '//' + ('api.' + apex);
             const r2 = await fetch(candidate + '/api/auth/me', { credentials: 'include' });
             const ct2 = (r2.headers && r2.headers.get('content-type')) || '';
             // Accept JSON content-type or typical auth statuses as signal the backend is reachable
             if (ct2.includes('application/json') || r2.status === 401 || r2.status === 403){
-              try { localStorage.setItem('tt_backend_url', candidate); } catch {}
-              // Reload to reinitialize API client with new base URL
-              location.reload();
-              return true;
+              try {
+                const current = localStorage.getItem('tt_backend_url') || '';
+                if (current !== candidate) {
+                  localStorage.setItem('tt_backend_url', candidate);
+                  // Reload to reinitialize API client with new base URL
+                  location.reload();
+                  return true;
+                }
+              } catch {}
+              return false;
             }
           }
         }
