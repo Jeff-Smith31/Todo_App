@@ -383,6 +383,7 @@ app.post('/api/user/timezone', authMiddleware, async (req, res) => {
 
 // Task routes (authenticated)
 app.get('/api/tasks', authMiddleware, async (req, res) => {
+  try { console.log(`[tasks] list request for user_id=${String(req.user.id)} email=${String(req.user.email)}`); } catch {}
   const rows = await ddbListTasks(String(req.user.id));
   const tasks = rows.map(r => ({
     id: r.id,

@@ -24,6 +24,12 @@ services:
       - "8443:8443"
     labels:
       - "autoheal=true"
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-us-east-1}
+        awslogs-group: /TickTock/Backend-${DOMAIN_NAME:-ticktocktasks.com}
+        awslogs-create-group: "true"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/healthz || curl -skf https://localhost:8443/healthz || exit 1"]
       interval: 30s
