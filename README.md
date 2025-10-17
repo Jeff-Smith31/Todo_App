@@ -93,7 +93,6 @@ DNS and routing checks
   - EC2 security group allows inbound TCP 80 from 0.0.0.0/0 (and ::/0)
   - docker compose ps shows nginx up and listening on 0.0.0.0:80
 
-
 CloudFront + S3 frontend (optional advanced setup)
 - The infra/frontend/template.yaml now supports proxying the API through CloudFront when you set the parameter BackendAlbDnsName (the DNS name of your backend ALB).
 - When BackendAlbDnsName is set, CloudFront routes /api/* to the backend origin with no caching and forwards Authorization headers, cookies, and query strings.
