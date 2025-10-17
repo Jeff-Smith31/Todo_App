@@ -183,7 +183,8 @@ Resources:
             - Id: backend-origin
               DomainName: !Ref BackendAlbDnsName
               CustomOriginConfig:
-                OriginProtocolPolicy: https-only
+                OriginProtocolPolicy: match-viewer
+                HTTPPort: 80
                 HTTPSPort: 443
                 OriginSSLProtocols: [TLSv1.2]
             - !Ref 'AWS::NoValue'

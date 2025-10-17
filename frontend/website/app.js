@@ -380,6 +380,9 @@
       return false;
     }
 
+    // Show auth UI state immediately on load based on stored token to avoid flicker on mobile refresh
+    try { updateAuthUi(!!authToken); } catch {}
+
     await detectBackendBaseIfNeeded();
 
     // If we have a stored token, attempt to authenticate regardless of BACKEND_URL being set.
