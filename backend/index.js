@@ -403,6 +403,7 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
       console.warn(`[tasks] No tasks found for user=${String(req.user.id)} in table=${TABLES.tasks} region=${AWS_REGION || 'default'}`);
     } catch {}
   }
+  try { res.set('Cache-Control', 'no-store'); } catch {}
   res.json({ tasks });
 });
 

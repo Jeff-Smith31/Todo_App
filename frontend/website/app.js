@@ -354,14 +354,18 @@
         // ignore and try next
       }
       // Only probe api.<apex> on non-HTTPS pages to avoid noisy connection-refused errors
-      // when the api subdomain is not listening on 443. On HTTPS origins the browser would
-      // show a failing network request even though we handle it; skip to keep console clean.
+      // When on HTTPS, directly assume api.<apex> is the backend and set it without probing
       try {
-        if ((location.protocol || 'https:') !== 'https:') {
-          const host = location.hostname || '';
-          const parts = host.split('.');
-          if (parts.length >= 2){
-            const apex = parts.slice(-2).join('.');
+        const host = location.hostname || '';
+        const parts = host.split('.');
+        if (parts.length >= 2){
+          const apex = parts.slice(-2).join('.');
+          if ((location.protocol || 'https:') === 'https:') {
+            const candidate = 'https://' + ('api.' + apex);
+            try { localStorage.setItem('tt_backend_url', candidate); } catch {}
+            location.reload();
+            return true;
+          } else {
             const candidate = (location.protocol || 'http:') + '//' + ('api.' + apex);
             const r2 = await fetch(candidate + '/api/auth/me', { credentials: 'include' });
             const ct2 = (r2.headers && r2.headers.get('content-type')) || '';
