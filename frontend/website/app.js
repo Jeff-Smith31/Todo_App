@@ -403,19 +403,31 @@
     try { updateAuthUi(!!authToken); } catch {}
 
     // Brave compatibility: prefer same-origin /api to avoid cross-site cookie blocking by Shields
+    // Only switch to same-origin if the API is actually available at /api/* (responds with JSON)
     try {
       const isBrave = (navigator.brave && typeof navigator.brave.isBrave === 'function') ? await navigator.brave.isBrave() : false;
       if (isBrave) {
-        // If a cross-origin backend URL is set, clear it to force same-origin via CloudFront
         const be = localStorage.getItem('tt_backend_url') || '';
         if (be) {
           try {
             const u = new URL(be);
-            if (u.host !== location.host) {
-              localStorage.setItem('tt_backend_url', '');
-              // Reload to reinitialize API client with same-origin base
-              location.reload();
-              return; // abort further init; next load will continue
+            const isCrossOrigin = (u.host !== location.host);
+            if (isCrossOrigin) {
+              let sameOriginLooksValid = false;
+              try {
+                const probe = await fetch('/api/auth/me', { credentials: 'include' });
+                const ct = (probe.headers && probe.headers.get('content-type')) || '';
+                // Accept JSON content-type or typical auth statuses as signal the backend is reachable
+                if (ct.includes('application/json') || probe.status === 401 || probe.status === 403) {
+                  sameOriginLooksValid = true;
+                }
+              } catch {}
+              if (sameOriginLooksValid) {
+                localStorage.setItem('tt_backend_url', '');
+                // Reload to reinitialize API client with same-origin base
+                location.reload();
+                return; // abort further init; next load will continue
+              }
             }
           } catch {}
         }
