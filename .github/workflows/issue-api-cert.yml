@@ -72,6 +72,12 @@ jobs:
           aws ssm wait command-executed --region "$REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID"
           STATUS=$(aws ssm list-command-invocations --region "$REGION" --command-id "$CMD_ID" --details --query "CommandInvocations[0].Status" --output text)
           echo "SSM command status: $STATUS" >> $GITHUB_STEP_SUMMARY
+          # Fetch and print SSM command output for debugging
+          OUT=$(aws ssm get-command-invocation --region "$REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --plugin-name aws:runShellScript || true)
+          SO=$(echo "$OUT" | jq -r '.StandardOutputContent' 2>/dev/null || echo "")
+          SE=$(echo "$OUT" | jq -r '.StandardErrorContent' 2>/dev/null || echo "")
+          echo "\n--- SSM StandardOutput ---\n$SO\n" >> $GITHUB_STEP_SUMMARY
+          echo "\n--- SSM StandardError ---\n$SE\n" >> $GITHUB_STEP_SUMMARY
           if [ "$STATUS" != "Success" ]; then
             echo "SSM command did not complete successfully (status=$STATUS)" >&2
             exit 3
