@@ -78,16 +78,17 @@ The frontend is deployed to S3 and served globally via CloudFront (ACM in us-eas
   - Windows PowerShell: powershell -ExecutionPolicy Bypass -File .\scripts\deploy-frontend.ps1 -BucketName <S3_BUCKET_NAME> -DistributionId <DISTRIBUTION_ID> [-Path frontend\website]
 - Backend updates: run backend/backend-up.sh on the EC2 host to rebuild (no cache) and force-recreate the backend container so new code is active.
 
-TLS for API (login failures: "Failed to fetch")
-- If the app at https://<DomainName> shows "Failed to fetch" on login, ensure the API (https://api.<DomainName>) has a valid TLS cert.
+TLS for API (login failures: "Failed to fetch" or ERR_CONNECTION_REFUSED)
+- If the app at https://<DomainName> shows "Failed to fetch" or the browser reports net::ERR_CONNECTION_REFUSED when calling https://api.<DomainName>, ensure the API has a valid TLS cert and is listening on port 443.
 - Use the GitHub Action "Issue/Renew API TLS Cert (Let’s Encrypt)" (workflow_dispatch) with your backend stack name and domain to issue/renew certs on the EC2 host via SSM, then retry login.
 - Alternatively SSH to the EC2 host and run: scripts/issue-certs.sh <DomainName> --include-api; then reload Nginx: docker compose exec nginx nginx -s reload.
+- Ensure the EC2 Security Group allows inbound TCP 443 (and 80) from 0.0.0.0/0 (and ::/0). If 443 is blocked or Nginx is not bound, HTTPS calls from the frontend will fail.
 
 DNS and routing checks
 - Use the provided scripts to validate DNS and Nginx reachability from outside and from EC2:
   - Linux/macOS: ./scripts/check-dns-and-http.sh your-domain.com [EC2_PUBLIC_IP]
   - Windows PowerShell: powershell -ExecutionPolicy Bypass -File .\scripts\check-dns-and-http.ps1 -Domain your-domain.com [-Ec2Ip EC2_PUBLIC_IP]
-- The script verifies A/AAAA records, checks that the A record matches your EC2 IP (if provided), and confirms HTTP and /nginx-healthz are reachable.
+- The script verifies A/AAAA records, checks that the A record matches your EC2 IP (if provided), confirms HTTP and /nginx-healthz are reachable, and now also checks HTTPS https://api.<DomainName>/healthz on port 443 with guidance if it fails.
 - If checks fail, ensure:
   - Route53 (or your DNS) A record points to the EC2 public or Elastic IP
   - EC2 security group allows inbound TCP 80 from 0.0.0.0/0 (and ::/0)

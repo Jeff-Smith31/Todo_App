@@ -94,15 +94,36 @@ catch {
   }
 }
 
+Header "HTTPS API health (443)"
+$apiHost = "api.$Domain"
+try {
+  $respHttps = Invoke-WebRequest -Uri "https://$apiHost/healthz" -UseBasicParsing -Method GET -TimeoutSec 10 -ErrorAction Stop
+  if ([int]$respHttps.StatusCode -eq 200) { Ok "HTTPS /healthz on $apiHost returned 200"; $pass++ }
+  else { Err "HTTPS /healthz on $apiHost returned HTTP $([int]$respHttps.StatusCode)"; $fail++ }
+}
+catch {
+  $msg = $_.Exception.Message
+  if ($_.Exception.Response) {
+    Err "HTTPS /healthz on $apiHost returned HTTP $([int]$_.Exception.Response.StatusCode)"; $fail++
+  } else {
+    Err "HTTPS request to $apiHost failed: $msg"; $fail++
+    Write-Host "`nCommon causes and fixes:" -ForegroundColor Yellow
+    Write-Host "- No listener on 443 (Nginx not bound to 443): ensure docker compose maps 443:443 and nginx.conf has a tls server block." -ForegroundColor Yellow
+    Write-Host "- TLS cert missing: run GitHub Action 'Issue/Renew API TLS Cert (Let’s Encrypt)' for $Domain, or on EC2 run scripts/issue-certs.sh $Domain --include-api and restart nginx." -ForegroundColor Yellow
+    Write-Host "- Security Group blocks 443: allow inbound TCP 443 from 0.0.0.0/0 (and ::/0)." -ForegroundColor Yellow
+  }
+}
+
 Header "Summary"
 Write-Host "Pass: $pass  Fail: $fail"
 if ($fail -gt 0) {
   Write-Host "`nGuidance:"
-  Write-Host "- Ensure EC2 security group allows inbound TCP 80 from 0.0.0.0/0 (and ::/0)."
+  Write-Host "- Ensure EC2 security group allows inbound TCP 80 and 443 from 0.0.0.0/0 (and ::/0)."
   Write-Host "- Create/verify A record for $Domain pointing to your EC2 public or Elastic IP."
-  Write-Host "- On EC2: docker compose ps; docker compose logs nginx; ensure port 80 is bound."
-  Write-Host "- Verify nginx.conf listens on 80 and serves the SPA root (already in this repo)."
+  Write-Host "- On EC2: docker compose ps; docker compose logs nginx; ensure ports 80 and 443 are bound."
+  Write-Host "- If HTTPS failed: run the 'Issue/Renew API TLS Cert' workflow or scripts/issue-certs.sh, then docker compose exec nginx nginx -s reload."
+  Write-Host "- Verify nginx.conf listens on 80 and 443 and proxies to the backend container." 
   exit 1
 } else {
-  Write-Host "All checks passed. DNS and HTTP routing appear functional."
+  Write-Host "All checks passed. DNS/HTTP/HTTPS routing appear functional."
 }
