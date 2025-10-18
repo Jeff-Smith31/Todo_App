@@ -59,13 +59,13 @@ jobs:
           DOMAIN: ${{ inputs.domain_name }}
         run: |
           set -e
-          DOC='{\n  "schemaVersion": "2.2",\n  "description": "Issue/renew Let\'s Encrypt certs for TickTock Tasks",\n  "mainSteps": [\n    {\n      "action": "aws:runShellScript",\n      "name": "IssueCerts",\n      "inputs": {\n        "timeoutSeconds": "1800",\n        "runCommand": [\n          "cd /opt/ticktock || cd /home/ec2-user/Todo_App || exit 1",\n          "echo Running scripts/issue-certs.sh $DOMAIN --include-api",\n          "chmod +x scripts/issue-certs.sh || true",\n          "DOMAIN=$DOMAIN ./scripts/issue-certs.sh $DOMAIN --include-api",\n          "docker compose exec -T nginx nginx -s reload || docker compose restart nginx || true"\n        ]\n      }\n    }\n  ]\n}'
+          # Use AWS-RunShellScript directly to avoid complex JSON escaping
           CMD_ID=$(aws ssm send-command \
             --region "$REGION" \
             --instance-ids "$INSTANCE_ID" \
-            --document-name "AWS-RunDocument" \
+            --document-name "AWS-RunShellScript" \
             --comment "TickTock Tasks: issue/renew API TLS certs" \
-            --parameters document="$DOC" \
+            --parameters "{\"commands\":[\"cd /opt/ticktock || cd /home/ec2-user/Todo_App || exit 1\",\"echo Running scripts/issue-certs.sh $DOMAIN --include-api\",\"chmod +x scripts/issue-certs.sh || true\",\"DOMAIN=$DOMAIN ./scripts/issue-certs.sh $DOMAIN --include-api\",\"docker compose exec -T nginx nginx -s reload || docker compose restart nginx || true\"]}" \
             --query "Command.CommandId" \
             --output text)
           echo "CommandId=$CMD_ID" >> $GITHUB_STEP_SUMMARY
