@@ -46,7 +46,8 @@ let VAPID_PRIVATE_KEY = ACTIVE_PRIVATE_KEY;
 // This creates a dedicated log group/stream and ships push-related logs to CloudWatch Logs,
 // in addition to stdout (which also goes to CloudWatch via the container log driver).
 const PUSH_LOG_GROUP = process.env.PUSH_LOG_GROUP || 'tttBackendNotificationLogs';
-const PUSH_LOG_STREAM = process.env.PUSH_LOG_STREAM || `${os.hostname?.() || 'backend'}-${Date.now()}`;
+// Use a stable default stream name per host to avoid creating a new stream on every restart.
+const PUSH_LOG_STREAM = process.env.PUSH_LOG_STREAM || `${os.hostname?.() || 'backend'}`;
 const AWS_REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || process.env.AMAZON_REGION || process.env.AWS_SDK_REGION;
 let cwClient = null;
 let cwSeqToken = null;
@@ -105,6 +106,26 @@ async function cwPut(message){
         return;
       } catch (e2) {
         console.warn('[push-log] retry failed:', e2?.message || e2);
+      }
+    }
+    // Handle missing stream (eventual consistency or rotation): recreate and retry once
+    if (/ResourceNotFoundException/i.test(msg) || /The specified log stream does not exist/i.test(msg)) {
+      try {
+        await ensureCwSetup();
+        const ds2 = await cwClient.send(new DescribeLogStreamsCommand({ logGroupName: PUSH_LOG_GROUP, logStreamNamePrefix: PUSH_LOG_STREAM }));
+        const s2 = (ds2.logStreams || []).find(x => x.logStreamName === PUSH_LOG_STREAM);
+        cwSeqToken = s2?.uploadSequenceToken || null;
+        const retryParams2 = {
+          logGroupName: PUSH_LOG_GROUP,
+          logStreamName: PUSH_LOG_STREAM,
+          logEvents: [{ timestamp: Date.now(), message }],
+          sequenceToken: cwSeqToken || undefined,
+        };
+        const r3 = await cwClient.send(new PutLogEventsCommand(retryParams2));
+        cwSeqToken = r3?.nextSequenceToken || cwSeqToken;
+        return;
+      } catch (e3) {
+        console.warn('[push-log] recreate+retry failed:', e3?.message || e3);
       }
     }
     // Non-fatal: just warn
