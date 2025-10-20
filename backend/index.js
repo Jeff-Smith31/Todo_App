@@ -210,13 +210,23 @@ app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser());
 // Build allowed origins list: env-provided plus safe defaults for our production domains
 const ENV_ORIGINS = (process.env.CORS_ORIGIN || ORIGIN).split(',').map(s => s.trim()).filter(Boolean);
-const SAFE_DEFAULTS = ['https://ticktocktasks.com', 'https://www.ticktocktasks.com'];
+// Safe defaults include production domains and common localhost origins for development
+const SAFE_DEFAULTS = [
+  'https://ticktocktasks.com',
+  'https://www.ticktocktasks.com',
+  'http://localhost:8000',
+  'http://127.0.0.1:8000',
+  'http://localhost',
+  'http://127.0.0.1',
+];
 const ORIGINS = Array.from(new Set([...ENV_ORIGINS, ...SAFE_DEFAULTS]));
+const ALLOW_ALL = ORIGINS.includes('*');
 // Unified CORS options (ensure preflight is properly handled across environments)
 const corsOptions = {
   origin: function(origin, callback) {
     // Allow requests with no origin like mobile apps or curl
     if (!origin) return callback(null, true);
+    if (ALLOW_ALL) return callback(null, true);
     if (ORIGINS.includes(origin)) return callback(null, true);
     return callback(new Error('Not allowed by CORS'));
   },
