@@ -36,6 +36,34 @@ fi
 echo "Bringing up nginx to serve ACME challenges ..."
 "${COMPOSE_CMD[@]}" up -d nginx
 
+# Preflight: verify ACME webroot is being served by nginx
+PROBE_FILE="/var/www/certbot/.well-known/acme-challenge/_ttt_probe_$(date +%s)"
+echo "Performing ACME webroot preflight checks ..."
+# Create probe file inside nginx container and verify local reachability
+"${COMPOSE_CMD[@]}" exec -T nginx sh -lc "mkdir -p \"$(dirname \"$PROBE_FILE\")\" && echo ok > \"$PROBE_FILE\"" || {
+  echo "Preflight failed: could not create probe file in nginx webroot" >&2
+  exit 20
+}
+"${COMPOSE_CMD[@]}" exec -T nginx sh -lc "wget -qO- http://127.0.0.1/.well-known/acme-challenge/$(basename \"$PROBE_FILE\")" >/dev/null || {
+  echo "Preflight failed: nginx did not serve probe file locally. Check nginx container health and nginx.conf location for /.well-known" >&2
+  exit 21
+}
+# Public reachability (DNS + Security Group): test from the EC2 host to api.<domain>
+if curl -fsS --max-time 10 "http://api.${DOMAIN}/.well-known/acme-challenge/$(basename \"$PROBE_FILE\")" >/dev/null; then
+  echo "Preflight OK: api.${DOMAIN} serves ACME challenges"
+else
+  echo "WARNING: Public reachability preflight failed for http://api.${DOMAIN}/.well-known/acme-challenge/$(basename \"$PROBE_FILE\")." >&2
+  echo "This usually indicates DNS is not pointing to this EC2 host, or TCP/80 is blocked by Security Group/Firewall." >&2
+  echo "Proceeding anyway so certbot can emit detailed errors..." >&2
+fi
+
+# Build optional certbot flags
+CERTBOT_OPTS=(--keep-until-expiring --expand)
+if [ "${CERT_STAGING:-0}" = "1" ]; then
+  echo "Using Let's Encrypt staging environment (CERT_STAGING=1)"
+  CERTBOT_OPTS+=(--staging)
+fi
+
 # Run certbot (webroot)
 "${COMPOSE_CMD[@]}" run --rm -T --no-deps \
   --entrypoint certbot \
@@ -45,10 +73,19 @@ echo "Bringing up nginx to serve ACME challenges ..."
   -w /var/www/certbot \
   --email "${EMAIL}" \
   --agree-tos -n \
+  "${CERTBOT_OPTS[@]}" \
   "${DOMS[@]}"
 
-# Reload Nginx to pick up new/renewed certs
+# Show resulting cert directories for visibility
+"${COMPOSE_CMD[@]}" run --rm --no-deps --entrypoint sh certbot -lc 'ls -l /etc/letsencrypt/live || true; ls -l /etc/letsencrypt/archive || true' || true
+
+# Validate nginx config and reload to pick up new/renewed certs
 set +e
+"${COMPOSE_CMD[@]}" exec -T nginx nginx -t
+NGINX_TEST=$?
+if [ "$NGINX_TEST" -ne 0 ]; then
+  echo "Nginx config test failed; attempting restart to apply any changes anyway" >&2
+fi
 "${COMPOSE_CMD[@]}" exec -T nginx nginx -s reload || "${COMPOSE_CMD[@]}" restart nginx
 set -e
 

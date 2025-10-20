@@ -15,6 +15,10 @@ on:
         description: "Base domain (e.g., ticktocktasks.com)"
         required: true
         default: "ticktocktasks.com"
+      staging:
+        description: "Use Let's Encrypt staging (set true while debugging to avoid rate limits)"
+        required: false
+        default: "false"
 
 permissions:
   id-token: write
@@ -57,6 +61,7 @@ jobs:
           REGION: ${{ inputs.backend_region || vars.BACKEND_REGION || 'us-east-1' }}
           INSTANCE_ID: ${{ steps.res.outputs.instance_id }}
           DOMAIN: ${{ inputs.domain_name }}
+          STAGING: ${{ inputs.staging || 'false' }}
         run: |
           set -e
           # Use AWS-RunShellScript directly to avoid complex JSON escaping
@@ -65,7 +70,7 @@ jobs:
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "TickTock Tasks: issue/renew API TLS certs" \
-            --parameters "{\"commands\":[\"cd /opt/ticktock || cd /home/ec2-user/Todo_App || exit 1\",\"echo Running scripts/issue-certs.sh $DOMAIN --include-api\",\"chmod +x scripts/issue-certs.sh || true\",\"timeout 1800 ./scripts/issue-certs.sh $DOMAIN --include-api\"]}" \
+            --parameters "{\"commands\":[\"cd /opt/ticktock || cd /home/ec2-user/Todo_App || exit 1\",\"echo Running scripts/issue-certs.sh $DOMAIN --include-api (staging=$STAGING)\",\"chmod +x scripts/issue-certs.sh || true\",\"export CERT_STAGING=$([ \"$STAGING\" = \"true\" ] && echo 1 || echo 0)\",\"timeout 1800 ./scripts/issue-certs.sh $DOMAIN --include-api\"]}" \
             --query "Command.CommandId" \
             --output text)
           echo "CommandId=$CMD_ID" >> $GITHUB_STEP_SUMMARY
