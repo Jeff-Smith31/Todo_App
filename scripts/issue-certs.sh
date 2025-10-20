@@ -38,8 +38,10 @@ echo "Bringing up nginx to serve ACME challenges ..."
 
 # Run certbot (webroot)
 "${COMPOSE_CMD[@]}" run --rm \
+  --entrypoint certbot \
   -e CERTBOT_EMAIL="${EMAIL}" \
-  certbot certonly --webroot \
+  certbot \
+  certonly --webroot \
   -w /var/www/certbot \
   --email "${EMAIL}" \
   --agree-tos -n \
