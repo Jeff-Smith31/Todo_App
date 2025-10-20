@@ -16,20 +16,28 @@ DOMAIN=${1:?'Domain required, e.g., ticktocktasks.com'}
 INCLUDE_API=${2:-}
 EMAIL=${EMAIL:-"admin@${DOMAIN}"}
 
+# Detect compose command: prefer Docker Compose v2 (docker compose), fallback to v1 (docker-compose)
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker-compose)
+else
+  echo "Error: Neither 'docker compose' nor 'docker-compose' is available on this host." >&2
+  exit 1
+fi
+
 # Build domain args
 DOMS=("-d" "${DOMAIN}" "-d" "www.${DOMAIN}")
 if [ "${INCLUDE_API}" = "--include-api" ]; then
   DOMS+=("-d" "api.${DOMAIN}")
 fi
 
-# Ensure nginx is up to answer HTTP challenges
-if ! docker compose ps nginx >/dev/null 2>&1; then
-  echo "Bringing up nginx to serve ACME challenges ..."
-  docker compose up -d nginx
-fi
+# Ensure nginx is up to answer HTTP challenges (idempotent)
+echo "Bringing up nginx to serve ACME challenges ..."
+"${COMPOSE_CMD[@]}" up -d nginx
 
 # Run certbot (webroot)
-docker compose run --rm \
+"${COMPOSE_CMD[@]}" run --rm \
   -e CERTBOT_EMAIL="${EMAIL}" \
   certbot certonly --webroot \
   -w /var/www/certbot \
@@ -39,7 +47,7 @@ docker compose run --rm \
 
 # Reload Nginx to pick up new/renewed certs
 set +e
-docker compose exec -T nginx nginx -s reload || docker compose restart nginx
+"${COMPOSE_CMD[@]}" exec -T nginx nginx -s reload || "${COMPOSE_CMD[@]}" restart nginx
 set -e
 
 echo "Certificates issued/renewed for: ${DOMAIN}, www.${DOMAIN}${INCLUDE_API:+, api.${DOMAIN}}"

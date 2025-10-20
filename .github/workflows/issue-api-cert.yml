@@ -65,7 +65,7 @@ jobs:
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "TickTock Tasks: issue/renew API TLS certs" \
-            --parameters "{\"commands\":[\"cd /opt/ticktock || cd /home/ec2-user/Todo_App || exit 1\",\"echo Running scripts/issue-certs.sh $DOMAIN --include-api\",\"chmod +x scripts/issue-certs.sh || true\",\"DOMAIN=$DOMAIN ./scripts/issue-certs.sh $DOMAIN --include-api\",\"docker compose exec -T nginx nginx -s reload || docker compose restart nginx || true\"]}" \
+            --parameters "{\"commands\":[\"cd /opt/ticktock || cd /home/ec2-user/Todo_App || exit 1\",\"echo Running scripts/issue-certs.sh $DOMAIN --include-api\",\"chmod +x scripts/issue-certs.sh || true\",\"DOMAIN=$DOMAIN ./scripts/issue-certs.sh $DOMAIN --include-api\"]}" \
             --query "Command.CommandId" \
             --output text)
           echo "CommandId=$CMD_ID" >> $GITHUB_STEP_SUMMARY
