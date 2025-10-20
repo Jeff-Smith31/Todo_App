@@ -37,7 +37,7 @@ echo "Bringing up nginx to serve ACME challenges ..."
 "${COMPOSE_CMD[@]}" up -d nginx
 
 # Run certbot (webroot)
-"${COMPOSE_CMD[@]}" run --rm \
+"${COMPOSE_CMD[@]}" run --rm -T --no-deps \
   --entrypoint certbot \
   -e CERTBOT_EMAIL="${EMAIL}" \
   certbot \
