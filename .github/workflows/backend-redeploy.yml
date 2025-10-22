@@ -1,0 +1,58 @@
+name: Backend EC2 Redeploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack_name:
+        description: 'CloudFormation stack name for backend'
+        required: true
+        default: ttt-backend
+      region:
+        description: 'AWS region'
+        required: true
+        default: us-east-1
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.region }}
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Get backend instance ID via stack outputs
+        id: get
+        run: |
+          STACK_OUT=$(aws cloudformation describe-stacks --region "${{ inputs.region }}" --stack-name "${{ inputs.stack_name }}" --query 'Stacks[0].Outputs' --output json)
+          API_DNS=$(echo "$STACK_OUT" | jq -r '.[] | select(.OutputKey=="ApiDomainName").OutputValue // empty')
+          INSTANCE_ID=$(echo "$STACK_OUT" | jq -r '.[] | select(.OutputKey=="InstanceId").OutputValue // empty')
+          echo "api=$API_DNS" >> $GITHUB_OUTPUT
+          echo "instance=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
+      - name: Restart backend container via SSM
+        if: steps.get.outputs.instance != ''
+        run: |
+          aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "${{ steps.get.outputs.instance }}" \
+            --comment "Pull latest and restart backend" \
+            --parameters commands='["cd /opt/ticktock && git pull --rebase || true","cd backend && docker compose pull && docker compose build --no-cache && docker compose up -d --force-recreate"]' \
+            --output text >/dev/null
+
+      - name: Echo API endpoint
+        run: |
+          echo "API is at https://${{ steps.get.outputs.api }}"
