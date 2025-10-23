@@ -1,0 +1,70 @@
+name: Backend Deploy to EC2 (free tier)
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: 'Root Domain (e.g., example.com)'
+        required: true
+      stack_name:
+        description: 'CloudFormation stack name for backend'
+        required: true
+        default: 'ttt-backend'
+      api_subdomain:
+        description: 'API subdomain prefix'
+        required: true
+        default: 'api'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      HOSTED_ZONE_ID: Z08471201NA2PN7ERBIB7
+      VPC_ID: vpc-0fbbe4d79713c387a
+      REPO_URL: https://github.com/${{ github.repository }}.git
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Find a public subnet in the VPC
+        id: subnet
+        run: |
+          SUBNET_ID=$(aws ec2 describe-subnets \
+            --region "$AWS_REGION" \
+            --filters Name=vpc-id,Values=$VPC_ID Name=map-public-ip-on-launch,Values=true \
+            --query 'Subnets[0].SubnetId' --output text)
+          if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = "None" ]; then
+            echo "No public subnet with MapPublicIpOnLaunch=true found in $VPC_ID" >&2
+            exit 1
+          fi
+          echo "subnet_id=$SUBNET_ID" >> $GITHUB_OUTPUT
+
+      - name: Ensure script perms
+        run: |
+          chmod +x infrastructure/scripts/deploy-backend.sh
+
+      - name: Deploy backend stack
+        env:
+          SUBNET_ID: ${{ steps.subnet.outputs.subnet_id }}
+        run: |
+          infrastructure/scripts/deploy-backend.sh \
+            "${{ github.event.inputs.stack_name }}" \
+            "${{ github.event.inputs.domain }}" \
+            "$HOSTED_ZONE_ID" \
+            "$VPC_ID" \
+            "$SUBNET_ID" \
+            "https://${{ github.event.inputs.domain }},https://www.${{ github.event.inputs.domain }}" \
+            "${{ github.event.inputs.api_subdomain }}" \
+            "$REPO_URL" \
+            "$AWS_REGION"

@@ -145,6 +145,7 @@ env.bak/
 venv.bak/
 node_modules/
 mobile/node_modules
+Outdated
 
 # Spyder project settings
 .spyderproject

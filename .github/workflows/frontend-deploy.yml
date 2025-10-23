@@ -3,20 +3,13 @@ name: Frontend Deploy to S3 + CloudFront
 on:
   workflow_dispatch:
     inputs:
+      domain:
+        description: 'Root Domain (e.g., example.com)'
+        required: true
       stack_name:
         description: 'CloudFormation stack name for frontend'
         required: true
-        default: ttt-frontend
-      region:
-        description: 'AWS region (must be us-east-1 for this stack)'
-        required: true
-        default: us-east-1
-      domain:
-        description: 'Domain name (e.g., example.com). Leave empty to use state file.'
-        required: false
-      hosted_zone_id:
-        description: 'Hosted Zone ID. Leave empty to use state file.'
-        required: false
+        default: 'ttt-frontend'
 
 permissions:
   id-token: write
@@ -25,6 +18,9 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      HOSTED_ZONE_ID: Z08471201NA2PN7ERBIB7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,46 +28,17 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ inputs.region }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Install dependencies
+      - name: Ensure script perms
         run: |
-          sudo apt-get update
-          sudo apt-get install -y jq curl
+          chmod +x infrastructure/scripts/deploy-frontend.sh
 
-      - name: Discover or create AWS baseline (HostedZone/VPC/Subnets/ACM)
-        env:
-          DOMAIN_NAME: ${{ inputs.domain }}
+      - name: Deploy frontend stack and upload site
         run: |
-          DOMAIN_ARG="${DOMAIN_NAME:-}"
-          if [ -z "$DOMAIN_ARG" ]; then
-            # Try to read from existing state; if missing, fail fast
-            if [ ! -f infra/state/state.json ]; then
-              echo "No domain passed and no state found. Provide inputs.domain or run the discover script manually." >&2
-              exit 1
-            fi
-          else
-            bash infra/scripts/discover-or-create-aws.sh "$DOMAIN_ARG" "${{ inputs.region }}"
-          fi
-
-      - name: Deploy frontend stack (S3 + CloudFront)
-        env:
-          DOMAIN_NAME: ${{ inputs.domain }}
-          HOSTED_ZONE_ID: ${{ inputs.hosted_zone_id }}
-        run: |
-          bash infra/scripts/deploy-frontend.sh "${{ inputs.stack_name }}" "${{ inputs.region }}"
-
-      - name: Sync website to S3
-        run: |
-          BUCKET=$(jq -r '.Frontend.BucketName // empty' infra/state/state.json)
-          [ -n "$BUCKET" ] || { echo "Bucket not found in state" >&2; exit 2; }
-          aws s3 sync frontend/website "s3://$BUCKET" --delete --cache-control "public,max-age=31536000,immutable" --exclude "config.js" --exclude "index.html"
-          # Upload index.html with no-cache
-          aws s3 cp frontend/website/index.html "s3://$BUCKET/index.html" --content-type text/html --cache-control "no-cache"
-
-      - name: Link frontend to backend (write config.js and invalidate)
-        env:
-          EXTRA_INVALIDATE: "/index.html /app.js /styles.css /offline.html /sw.js /manifest.json /icons/*"
-        run: |
-          bash infra/scripts/link-frontend.sh "${{ inputs.stack_name }}" ttt-backend "${{ inputs.region }}" "${{ inputs.region }}"
+          infrastructure/scripts/deploy-frontend.sh \
+            "${{ github.event.inputs.stack_name }}" \
+            "${{ github.event.inputs.domain }}" \
+            "$HOSTED_ZONE_ID" \
+            "$AWS_REGION"
