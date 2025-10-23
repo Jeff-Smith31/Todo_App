@@ -1,32 +1,27 @@
-name: Backend Deploy to EC2 (free tier)
+name: Backend Deploy to EC2 (ticktocktasks.com)
 
 on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'backend/**'
+      - 'infrastructure/backend/**'
+      - '.github/workflows/backend-deploy.yml'
   workflow_dispatch:
-    inputs:
-      domain:
-        description: 'Root Domain (e.g., example.com)'
-        required: true
-      stack_name:
-        description: 'CloudFormation stack name for backend'
-        required: true
-        default: 'ttt-backend'
-      api_subdomain:
-        description: 'API subdomain prefix'
-        required: true
-        default: 'api'
 
 permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: tt-backend
+  DOMAIN_NAME: ticktocktasks.com
+  VPC_ID: vpc-0fbbe4d79713c387a
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: us-east-1
-      HOSTED_ZONE_ID: Z08471201NA2PN7ERBIB7
-      VPC_ID: vpc-0fbbe4d79713c387a
-      REPO_URL: https://github.com/${{ github.repository }}.git
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,37 +29,59 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-session-name: github-backend-deploy
 
-      - name: Find a public subnet in the VPC
-        id: subnet
+      - name: Validate Hosted Zone secret
         run: |
-          SUBNET_ID=$(aws ec2 describe-subnets \
-            --region "$AWS_REGION" \
-            --filters Name=vpc-id,Values=$VPC_ID Name=map-public-ip-on-launch,Values=true \
-            --query 'Subnets[0].SubnetId' --output text)
+          test -n "${{ secrets.HOSTED_ZONE_ID }}" || { echo 'HOSTED_ZONE_ID secret missing'; exit 1; }
+
+      - name: Install AWS CLI v2
+        uses: unfor19/install-aws-cli-action@v1
+        with:
+          version: 2
+
+      - name: Find a subnet in the VPC (prefer public)
+        id: subnet
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Try to pick the first subnet in the VPC; allow override via secret SUBNET_ID if provided
+          if [ -n "${{ secrets.SUBNET_ID }}" ]; then
+            echo "id=${{ secrets.SUBNET_ID }}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          SUBNET_ID=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC_ID --query 'Subnets[0].SubnetId' --output text)
           if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = "None" ]; then
-            echo "No public subnet with MapPublicIpOnLaunch=true found in $VPC_ID" >&2
+            echo "No subnet found in VPC $VPC_ID" >&2
             exit 1
           fi
-          echo "subnet_id=$SUBNET_ID" >> $GITHUB_OUTPUT
+          echo "id=$SUBNET_ID" >> $GITHUB_OUTPUT
 
-      - name: Ensure script perms
-        run: |
-          chmod +x infrastructure/scripts/deploy-backend.sh
-
-      - name: Deploy backend stack
+      - name: Deploy/Update backend CloudFormation stack
         env:
-          SUBNET_ID: ${{ steps.subnet.outputs.subnet_id }}
+          SUBNET_ID: ${{ steps.subnet.outputs.id }}
         run: |
-          infrastructure/scripts/deploy-backend.sh \
-            "${{ github.event.inputs.stack_name }}" \
-            "${{ github.event.inputs.domain }}" \
-            "$HOSTED_ZONE_ID" \
-            "$VPC_ID" \
-            "$SUBNET_ID" \
-            "https://${{ github.event.inputs.domain }},https://www.${{ github.event.inputs.domain }}" \
-            "${{ github.event.inputs.api_subdomain }}" \
-            "$REPO_URL" \
-            "$AWS_REGION"
+          set -euo pipefail
+          TPL=infrastructure/backend/template.yaml
+          REPO_URL="${{ github.server_url }}/${{ github.repository }}.git"
+          aws cloudformation deploy \
+            --region "$AWS_REGION" \
+            --stack-name "$STACK_NAME" \
+            --template-file "$TPL" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              DomainName="$DOMAIN_NAME" \
+              HostedZoneId="${{ secrets.HOSTED_ZONE_ID }}" \
+              VpcId="$VPC_ID" \
+              SubnetId="$SUBNET_ID" \
+              AllowedOrigins="https://$DOMAIN_NAME,https://www.$DOMAIN_NAME" \
+              RepoUrl="$REPO_URL" \
+              CreateApiDnsRecord="true"
+
+      - name: Show backend outputs
+        run: |
+          aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' --output table

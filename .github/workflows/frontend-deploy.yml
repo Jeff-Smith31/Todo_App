@@ -1,26 +1,27 @@
-name: Frontend Deploy to S3 + CloudFront
+name: Frontend Deploy to S3 + CloudFront (ticktocktasks.com)
 
 on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'frontend/**'
+      - 'infrastructure/frontend/**'
+      - 'infrastructure/scripts/deploy-frontend.sh'
+      - '.github/workflows/frontend-deploy.yml'
   workflow_dispatch:
-    inputs:
-      domain:
-        description: 'Root Domain (e.g., example.com)'
-        required: true
-      stack_name:
-        description: 'CloudFormation stack name for frontend'
-        required: true
-        default: 'ttt-frontend'
 
 permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: tt-frontend
+  DOMAIN_NAME: ticktocktasks.com
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      AWS_REGION: us-east-1
-      HOSTED_ZONE_ID: Z08471201NA2PN7ERBIB7
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,17 +29,19 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-session-name: github-frontend-deploy
 
-      - name: Ensure script perms
+      - name: Validate Hosted Zone secret
         run: |
-          chmod +x infrastructure/scripts/deploy-frontend.sh
+          test -n "${{ secrets.HOSTED_ZONE_ID }}" || { echo 'HOSTED_ZONE_ID secret missing'; exit 1; }
 
-      - name: Deploy frontend stack and upload site
+      - name: Install AWS CLI v2
+        uses: unfor19/install-aws-cli-action@v1
+        with:
+          version: 2
+
+      - name: Deploy frontend stack and sync site
         run: |
-          infrastructure/scripts/deploy-frontend.sh \
-            "${{ github.event.inputs.stack_name }}" \
-            "${{ github.event.inputs.domain }}" \
-            "$HOSTED_ZONE_ID" \
-            "$AWS_REGION"
+          bash infrastructure/scripts/deploy-frontend.sh "$STACK_NAME" "$DOMAIN_NAME" "${{ secrets.HOSTED_ZONE_ID }}" "$AWS_REGION"
