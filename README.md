@@ -1,11 +1,5 @@
 # TickTock Tasks
 
-Note: This repo is configured to auto-deploy to AWS on push to the main branch using the domain ticktocktasks.com.
-- Frontend: S3 + CloudFront at https://ticktocktasks.com (and www), via GitHub Actions workflow.
-- Backend: EC2 (free tier) API at https://api.ticktocktasks.com, via GitHub Actions workflow.
-
-Ensure repository secrets are set: AWS_ROLE_TO_ASSUME (or access keys), HOSTED_ZONE_ID (for ticktocktasks.com), and optionally SUBNET_ID. Region is us-east-1 and VPC defaults to vpc-0fbbe4d79713c387a.
-
 A lightweight recurring to‑do app that works offline (PWA) and optionally syncs across devices via a small backend. This guide explains what you get, how it’s deployed, step‑by‑step deployment, and the license.
 
 What you get

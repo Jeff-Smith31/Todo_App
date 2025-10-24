@@ -20,7 +20,7 @@ REGION=${4:-us-east-1}
 
 TPL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TPL_FILE="$TPL_DIR/frontend/template.yaml"
-SITE_DIR="$(cd "$TPL_DIR/../.." && pwd)/frontend/website"
+SITE_DIR="$(cd "$TPL_DIR/.." && pwd)/frontend/website"
 
 if [ ! -f "$TPL_FILE" ]; then
   echo "Template not found: $TPL_FILE" >&2
