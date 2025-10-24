@@ -67,7 +67,6 @@ Resources:
   OriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
-      Name: !Sub ${AWS::StackName}-oac
       OriginAccessControlConfig:
         Name: !Sub ${AWS::StackName}-oac
         OriginAccessControlOriginType: s3
