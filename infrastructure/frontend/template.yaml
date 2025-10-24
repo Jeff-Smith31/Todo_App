@@ -62,7 +62,6 @@ Resources:
           HostedZoneId: !Ref HostedZoneId
         - DomainName: !Sub www.${DomainName}
           HostedZoneId: !Ref HostedZoneId
-      Region: us-east-1
 
   OriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
