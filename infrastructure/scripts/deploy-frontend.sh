@@ -80,7 +80,15 @@ EOF
 echo "Syncing site to s3://$BUCKET ..."
 aws s3 sync "$SITE_DIR" "s3://$BUCKET" --delete
 
-echo "Creating CloudFront invalidation..."
-aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/*" >/dev/null
+# Ensure config.js is not cached by browsers/CloudFront so BACKEND_URL updates take effect immediately
+if [ -f "$SITE_DIR/config.js" ]; then
+  echo "Uploading config.js with no-store Cache-Control headers..."
+  aws s3 cp "$SITE_DIR/config.js" "s3://$BUCKET/config.js" \
+    --cache-control "no-store, no-cache, must-revalidate, max-age=0" \
+    --content-type "application/javascript; charset=utf-8"
+fi
+
+echo "Creating CloudFront invalidation for config.js and assets..."
+aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/config.js" "/*" >/dev/null
 
 echo "Frontend deployed: https://$DOMAIN (CloudFront)"
