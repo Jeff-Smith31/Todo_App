@@ -32,14 +32,33 @@ if [ ! -d "$SITE_DIR" ]; then
   exit 2
 fi
 
+# Detect existing bucket to reuse
+EXISTING_BUCKET=""
+CANDIDATE_BUCKET="${DOMAIN}-site"
+if aws s3api head-bucket --bucket "$CANDIDATE_BUCKET" 2>/dev/null; then
+  EXISTING_BUCKET="$CANDIDATE_BUCKET"
+  echo "Found existing bucket: $EXISTING_BUCKET — will reuse"
+else
+  echo "No existing bucket named $CANDIDATE_BUCKET — stack may create a new one"
+fi
+
 echo "Deploying frontend stack: $STACK_NAME in $REGION for $DOMAIN using HostedZoneId=$HZ_ID"
 set -x
-aws cloudformation deploy \
-  --region "$REGION" \
-  --stack-name "$STACK_NAME" \
-  --template-file "$TPL_FILE" \
-  --no-fail-on-empty-changeset \
-  --parameter-overrides DomainName="$DOMAIN" HostedZoneId="$HZ_ID"
+if [ -n "$EXISTING_BUCKET" ]; then
+  aws cloudformation deploy \
+    --region "$REGION" \
+    --stack-name "$STACK_NAME" \
+    --template-file "$TPL_FILE" \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides DomainName="$DOMAIN" HostedZoneId="$HZ_ID" ExistingBucketName="$EXISTING_BUCKET"
+else
+  aws cloudformation deploy \
+    --region "$REGION" \
+    --stack-name "$STACK_NAME" \
+    --template-file "$TPL_FILE" \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides DomainName="$DOMAIN" HostedZoneId="$HZ_ID"
+fi
 set +x
 
 # Fetch outputs

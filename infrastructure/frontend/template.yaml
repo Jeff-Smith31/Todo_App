@@ -12,12 +12,19 @@ Parameters:
     Type: String
     Description: Optional ACM certificate ARN in us-east-1. If empty, one will be created.
     Default: ''
+  ExistingBucketName:
+    Type: String
+    Description: If provided, use this existing S3 bucket instead of creating one
+    Default: ''
 
 Conditions:
   CreateCert: !Equals [!Ref AcmCertificateArn, '']
+  UseExistingBucket: !Not [!Equals [!Ref ExistingBucketName, '']]
+  CreateBucket: !Equals [!Ref ExistingBucketName, '']
 
 Resources:
   SiteBucket:
+    Condition: CreateBucket
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub ${DomainName}-site
@@ -35,7 +42,7 @@ Resources:
   BucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !Ref SiteBucket
+      Bucket: !If [CreateBucket, !Ref SiteBucket, !Ref ExistingBucketName]
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -44,7 +51,10 @@ Resources:
             Principal:
               Service: cloudfront.amazonaws.com
             Action: s3:GetObject
-            Resource: !Sub ${SiteBucket.Arn}/*
+            Resource: !If
+              - CreateBucket
+              - !Sub ${SiteBucket.Arn}/*
+              - !Sub arn:aws:s3:::${ExistingBucketName}/*
             Condition:
               StringEquals:
                 AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDist}
@@ -91,7 +101,10 @@ Resources:
             QueryString: false
         Origins:
           - Id: siteOrigin
-            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            DomainName: !If
+              - CreateBucket
+              - !GetAtt SiteBucket.RegionalDomainName
+              - !Sub ${ExistingBucketName}.s3.${AWS::Region}.amazonaws.com
             S3OriginConfig: {}
             OriginAccessControlId: !GetAtt OriginAccessControl.Id
         ViewerCertificate:
@@ -121,7 +134,7 @@ Resources:
 
 Outputs:
   BucketName:
-    Value: !Ref SiteBucket
+    Value: !If [CreateBucket, !Ref SiteBucket, !Ref ExistingBucketName]
   DistributionId:
     Value: !Ref CloudFrontDist
   DomainName:
