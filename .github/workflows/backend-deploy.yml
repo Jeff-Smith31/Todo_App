@@ -33,9 +33,6 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           role-session-name: github-backend-deploy
 
-      - name: Validate Hosted Zone secret
-        run: |
-          test -n "${{ secrets.HOSTED_ZONE_ID }}" || { echo 'HOSTED_ZONE_ID secret missing'; exit 1; }
 
       - name: Install AWS CLI v2
         uses: unfor19/install-aws-cli-action@v1
@@ -74,7 +71,7 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               DomainName="$DOMAIN_NAME" \
-              HostedZoneId="${{ secrets.HOSTED_ZONE_ID }}" \
+              HostedZoneId="Z08471201NA2PN7ERBIB7" \
               VpcId="$VPC_ID" \
               SubnetId="$SUBNET_ID" \
               AllowedOrigins="https://$DOMAIN_NAME,https://www.$DOMAIN_NAME" \

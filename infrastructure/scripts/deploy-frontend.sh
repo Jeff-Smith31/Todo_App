@@ -4,17 +4,18 @@ set -euo pipefail
 # Deploy the S3 + CloudFront frontend and upload site content
 #
 # Usage:
-#   infrastructure/scripts/deploy-frontend.sh <STACK_NAME> <DOMAIN_NAME> <HOSTED_ZONE_ID> [AWS_REGION]
+#   infrastructure/scripts/deploy-frontend.sh <STACK_NAME> <DOMAIN_NAME> [HOSTED_ZONE_ID] [AWS_REGION]
 #
 # Notes:
 # - Runs in us-east-1 by default (required for CloudFront certs)
+# - If HOSTED_ZONE_ID is omitted, defaults to the TickTock Tasks zone ID.
 # - After stack exists, syncs ./frontend/website to the bucket
 # - Writes config.js with BACKEND_URL=https://api.<DomainName>
 # - Invalidates CloudFront
 
 STACK_NAME=${1:?'STACK_NAME required'}
 DOMAIN=${2:?'DOMAIN_NAME required'}
-HZ_ID=${3:?'HOSTED_ZONE_ID required'}
+HZ_ID=${3:-Z08471201NA2PN7ERBIB7}
 REGION=${4:-us-east-1}
 
 TPL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,7 +32,7 @@ if [ ! -d "$SITE_DIR" ]; then
   exit 2
 fi
 
-echo "Deploying frontend stack: $STACK_NAME in $REGION for $DOMAIN"
+echo "Deploying frontend stack: $STACK_NAME in $REGION for $DOMAIN using HostedZoneId=$HZ_ID"
 set -x
 aws cloudformation deploy \
   --region "$REGION" \
