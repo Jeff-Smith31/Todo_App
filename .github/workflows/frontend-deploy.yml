@@ -3,11 +3,6 @@ name: Frontend Deploy to S3 + CloudFront (ticktocktasks.com)
 on:
   push:
     branches: [ "main" ]
-    paths:
-      - 'frontend/**'
-      - 'infrastructure/frontend/**'
-      - 'infrastructure/scripts/deploy-frontend.sh'
-      - '.github/workflows/frontend-deploy.yml'
   workflow_dispatch:
 
 permissions:

@@ -3,10 +3,6 @@ name: Backend Deploy to EC2 (ticktocktasks.com)
 on:
   push:
     branches: [ "main" ]
-    paths:
-      - 'backend/**'
-      - 'infrastructure/backend/**'
-      - '.github/workflows/backend-deploy.yml'
   workflow_dispatch:
 
 permissions:
@@ -82,3 +78,60 @@ jobs:
         run: |
           aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" \
             --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' --output table
+
+      - name: Redeploy backend on EC2 via SSM (git pull, restart containers)
+        id: ssm
+        env:
+          REPO_URL: "${{ github.server_url }}/${{ github.repository }}.git"
+        run: |
+          set -euo pipefail
+          echo "Fetching EC2 InstanceId from stack outputs..."
+          INSTANCE_ID=$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "Could not find InstanceId output for stack $STACK_NAME" >&2
+            exit 1
+          fi
+          echo "InstanceId: $INSTANCE_ID"
+
+          # Create a small script payload to execute remotely via SSM
+          cat > /tmp/redeploy.sh <<'EOS'
+          set -euo pipefail
+          echo "[SSM] Starting backend redeploy at $(date -Is)"
+          if [ -d /opt/app/.git ]; then
+            cd /opt/app
+            echo "[SSM] Git remote: $(git remote -v | head -n1 || true)"
+            git fetch --all --prune
+            git reset --hard origin/main
+          else
+            rm -rf /opt/app.tmp && mkdir -p /opt/app.tmp
+            git clone REPO_URL_PLACEHOLDER /opt/app.tmp
+            rm -rf /opt/app
+            mv /opt/app.tmp /opt/app
+          fi
+          if [ -f /opt/app/backend/docker-compose.yml ]; then CDIR=/opt/app/backend; elif [ -f /opt/app/docker-compose.yml ]; then CDIR=/opt/app; else echo "[SSM] No docker-compose.yml found" >&2; exit 3; fi
+          cd "$CDIR"
+          if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
+          $DC down || true
+          $DC pull || true
+          $DC build --pull || true
+          $DC up -d
+          $DC ps
+          echo "[SSM] Completed backend redeploy at $(date -Is)"
+          EOS
+          sed -i "s|REPO_URL_PLACEHOLDER|${REPO_URL}|g" /tmp/redeploy.sh
+          chmod +x /tmp/redeploy.sh
+          SCRIPT_CONTENT=$(cat /tmp/redeploy.sh | sed 's/\"/\\\"/g' | tr -d '\n')
+
+          CMD_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "TickTockTasks backend redeploy from GitHub" \
+            --parameters commands=["bash -lc \"$SCRIPT_CONTENT\""] \
+            --query 'Command.CommandId' --output text)
+          echo "command_id=$CMD_ID" >> $GITHUB_OUTPUT
+          echo "Sent SSM command: $CMD_ID; waiting for completion..."
+          aws ssm wait command-executed --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID"
+          echo "SSM command completed. Fetching output (last 100 lines)..."
+          aws ssm list-command-invocations --region "$AWS_REGION" --command-id "$CMD_ID" --details \
+            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -n 100
