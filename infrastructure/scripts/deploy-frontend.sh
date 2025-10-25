@@ -70,10 +70,10 @@ if [ -z "$BUCKET" ] || [ -z "$DISTRIBUTION_ID" ]; then
   exit 3
 fi
 
-echo "Writing runtime config for backend URL..."
+echo "Writing runtime config for backend URL (same-origin via CloudFront /api)..."
 cat > "$SITE_DIR/config.js" <<EOF
 window.RUNTIME_CONFIG = {
-  BACKEND_URL: 'https://api.${DOMAIN}'
+  BACKEND_URL: ''
 };
 EOF
 

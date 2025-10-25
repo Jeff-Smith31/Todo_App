@@ -114,7 +114,7 @@ Resources:
           cd /opt/app
           # Configure environment
           echo "CORS_ORIGIN=https://${DomainName},https://www.${DomainName}" > .env
-          echo "REDIRECT_HTTP_TO_HTTPS=true" >> .env
+          echo "REDIRECT_HTTP_TO_HTTPS=false" >> .env
           # Start backend via docker-compose
           cd backend
           /usr/local/bin/docker-compose pull || true

@@ -118,8 +118,10 @@ Resources:
             OriginAccessControlId: !GetAtt OriginAccessControl.Id
           - Id: apiOrigin
             DomainName: !Sub api.${DomainName}
+            ConnectionAttempts: 3
+            ConnectionTimeout: 30
             CustomOriginConfig:
-              OriginProtocolPolicy: https-only
+              OriginProtocolPolicy: http-only
         ViewerCertificate:
           AcmCertificateArn: !If [CreateCert, !Ref Certificate, !Ref AcmCertificateArn]
           SslSupportMethod: sni-only
