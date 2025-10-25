@@ -80,6 +80,20 @@ EOF
 echo "Syncing site to s3://$BUCKET ..."
 aws s3 sync "$SITE_DIR" "s3://$BUCKET" --delete
 
+# Generate version metadata and ensure runtime files are uploaded with no-store headers
+GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TS=$(date +%s)
+APP_VERSION="${GIT_SHA}-${BUILD_TS}"
+
+# Create app-version.js and version.json in a temp dir
+TMP_DIR=$(mktemp -d)
+cat > "$TMP_DIR/app-version.js" <<EOV
+window.APP_VERSION = '${APP_VERSION}';
+EOV
+cat > "$TMP_DIR/version.json" <<EOVJ
+{ "version": "${APP_VERSION}", "ts": ${BUILD_TS} }
+EOVJ
+
 # Ensure config.js is not cached by browsers/CloudFront so BACKEND_URL updates take effect immediately
 if [ -f "$SITE_DIR/config.js" ]; then
   echo "Uploading config.js with no-store Cache-Control headers..."
@@ -88,7 +102,18 @@ if [ -f "$SITE_DIR/config.js" ]; then
     --content-type "application/javascript; charset=utf-8"
 fi
 
-echo "Creating CloudFront invalidation for config.js and assets..."
-aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/config.js" "/*" >/dev/null
+# Upload version files with no-store headers to avoid stale SW/version caching
+aws s3 cp "$TMP_DIR/app-version.js" "s3://$BUCKET/app-version.js" \
+  --cache-control "no-store, no-cache, must-revalidate, max-age=0" \
+  --content-type "application/javascript; charset=utf-8"
+aws s3 cp "$TMP_DIR/version.json" "s3://$BUCKET/version.json" \
+  --cache-control "no-store, no-cache, must-revalidate, max-age=0" \
+  --content-type "application/json; charset=utf-8"
+
+# Clean up temp dir
+rm -rf "$TMP_DIR"
+
+echo "Creating CloudFront invalidation for config.js, version files, and assets..."
+aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths "/config.js" "/app-version.js" "/version.json" "/*" >/dev/null
 
 echo "Frontend deployed: https://$DOMAIN (CloudFront)"

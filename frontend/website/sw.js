@@ -1,11 +1,10 @@
-const CACHE_NAME = 'ticktock-cache-v9';
+const CACHE_NAME = 'ticktock-cache-v10';
 const ASSETS = [
   '/',
   '/index.html',
   '/offline.html',
   '/styles.css',
   '/app.js',
-  '/app-version.js',
   '/icons/logo.svg',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
@@ -15,7 +14,8 @@ const ASSETS = [
 // Optional assets that may not always exist locally (exist in production). Cache best-effort.
 const OPTIONAL_ASSETS = [
   '/config.js',
-  '/version.json'
+  '/version.json',
+  '/app-version.js'
 ];
 
 self.addEventListener('install', (e) => {
