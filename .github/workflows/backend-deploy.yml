@@ -77,13 +77,9 @@ jobs:
             exit 0
           fi
 
-          echo "WARNING: No public subnet with IGW route found. Falling back to first subnet in VPC (may be unreachable from Internet)." >&2
-          SUBNET_ID=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC_ID --query 'Subnets[0].SubnetId' --output text)
-          if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = "None" ]; then
-            echo "No subnet found in VPC $VPC_ID" >&2
-            exit 1
-          fi
-          echo "id=$SUBNET_ID" >> $GITHUB_OUTPUT
+          echo "ERROR: No public subnet with an Internet Gateway route found in VPC $VPC_ID." >&2
+          echo "Please ensure there is at least one public subnet (MapPublicIpOnLaunch=true) with a route to an Internet Gateway, or set secrets.SUBNET_ID to an appropriate subnet." >&2
+          exit 1
 
       - name: Deploy/Update backend CloudFormation stack
         env:
