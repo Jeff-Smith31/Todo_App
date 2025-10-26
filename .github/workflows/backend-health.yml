@@ -1,0 +1,111 @@
+name: Backend Health Check (ticktocktasks.com)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - 'frontend/**'
+      - 'infrastructure/frontend/**'
+      - '.github/workflows/frontend-deploy.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: tt-backend
+  DOMAIN_NAME: ticktocktasks.com
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-session-name: github-backend-health
+
+      - name: Install AWS CLI v2
+        uses: unfor19/install-aws-cli-action@v1
+        with:
+          version: 2
+
+      - name: Resolve API IP and echo DNS
+        run: |
+          set -euo pipefail
+          echo "Apex DNS:"; nslookup ${DOMAIN_NAME} || true
+          echo "API DNS:"; nslookup api.${DOMAIN_NAME} || true
+          API_IP=$(dig +short A api.${DOMAIN_NAME} | head -n1)
+          echo "API_IP=$API_IP" >> $GITHUB_ENV
+
+      - name: Public health checks (CloudFront / API)
+        run: |
+          set -euo pipefail
+          set +e
+          for i in {1..5}; do
+            echo "Attempt $i: https://${DOMAIN_NAME}/api/healthz";
+            curl -v -fsS -H 'Cache-Control: no-cache' "https://${DOMAIN_NAME}/api/healthz" && OK1=1 && break || sleep 2;
+          done
+          for i in {1..5}; do
+            echo "Attempt $i: https://api.${DOMAIN_NAME}/healthz";
+            curl -v -fsS -H 'Cache-Control: no-cache' "https://api.${DOMAIN_NAME}/healthz" && OK2=1 && break || sleep 2;
+          done
+          for i in {1..5}; do
+            echo "Attempt $i: http://api.${DOMAIN_NAME}/healthz";
+            curl -v -fsS -H 'Cache-Control: no-cache' "http://api.${DOMAIN_NAME}/healthz" && OK3=1 && break || sleep 2;
+          done
+          set -e
+          if [ -z "${OK1:-}" ] && [ -z "${OK2:-}" ] && [ -z "${OK3:-}" ]; then
+            echo "All public health checks failed" >&2
+            # do not fail here; continue to internal checks for diagnostics
+          fi
+
+      - name: Direct IP checks (HTTP)
+        run: |
+          set -euo pipefail
+          if [ -n "${API_IP:-}" ]; then
+            echo "Trying http://${API_IP}/nginx-healthz" || true
+            curl -v -fsS -m 5 "http://${API_IP}/nginx-healthz" || true
+            echo "Trying http://${API_IP}/healthz" || true
+            curl -v -fsS -m 5 "http://${API_IP}/healthz" || true
+          else
+            echo "No API_IP resolved; skipping direct IP checks"
+          fi
+
+      - name: Internal health check via SSM
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "Could not resolve InstanceId from stack outputs" >&2
+            exit 1
+          fi
+          cat > /tmp/health.sh <<'EOS'
+          set -euo pipefail
+          echo "[SSM] uname -a:"; uname -a || true
+          echo "[SSM] df -h:"; df -h || true
+          echo "[SSM] docker version:"; (docker version || true)
+          echo "[SSM] docker compose ps:"; (cd /opt/app/backend 2>/dev/null && (docker compose ps || docker-compose ps || true)) || true
+          echo "[SSM] curl localhost:8080/healthz:"; (curl -sfS http://127.0.0.1:8080/healthz || true)
+          echo "[SSM] curl nginx /nginx-healthz:"; (curl -sfS http://127.0.0.1/nginx-healthz || true)
+          echo "[SSM] backend logs (last 200 lines):"; (docker logs --tail=200 ttt-backend || true)
+          echo "[SSM] nginx logs (last 200 lines):"; (docker logs --tail=200 ttt-nginx || true)
+          EOS
+          SCRIPT_CONTENT=$(cat /tmp/health.sh | sed 's/"/\\"/g' | tr -d '\n')
+          CMD_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "TickTockTasks backend health check" \
+            --parameters commands=["bash -lc \"$SCRIPT_CONTENT\""] \
+            --query 'Command.CommandId' --output text)
+          aws ssm wait command-executed --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID"
+          aws ssm list-command-invocations --region "$AWS_REGION" --command-id "$CMD_ID" --details \
+            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -n 400
