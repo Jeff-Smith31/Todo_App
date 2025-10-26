@@ -122,48 +122,53 @@ jobs:
           fi
           echo "InstanceId: $INSTANCE_ID"
 
-          # Create a small script payload to execute remotely via SSM
-          cat > /tmp/redeploy.sh <<'EOS'
-          set -euo pipefail
-          echo "[SSM] Starting backend redeploy at $(date -Is)"
-          if [ -d /opt/app/.git ]; then
-            cd /opt/app
-            echo "[SSM] Git remote: $(git remote -v | head -n1 || true)"
-            git fetch --all --prune
-            git reset --hard origin/main
-          else
-            rm -rf /opt/app.tmp && mkdir -p /opt/app.tmp
-            git clone REPO_URL_PLACEHOLDER /opt/app.tmp
-            rm -rf /opt/app
-            mv /opt/app.tmp /opt/app
-          fi
-          if [ -f /opt/app/backend/docker-compose.yml ]; then CDIR=/opt/app/backend; elif [ -f /opt/app/docker-compose.yml ]; then CDIR=/opt/app; else echo "[SSM] No docker-compose.yml found" >&2; exit 3; fi
-          cd "$CDIR"
-          if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
-          $DC down || true
-          $DC pull || true
-          $DC build --pull || true
-          $DC up -d
-          $DC ps
-          echo "[SSM] Completed backend redeploy at $(date -Is)"
-          EOS
-          sed -i "s|REPO_URL_PLACEHOLDER|${REPO_URL}|g" /tmp/redeploy.sh
-          chmod +x /tmp/redeploy.sh
-          SCRIPT_CONTENT=$(cat /tmp/redeploy.sh | sed 's/\"/\\\"/g' | tr -d '\n')
+          # Compose robust SSM commands as JSON (avoids brittle quoting)
+          cat > /tmp/redeploy-send.json <<JSON
+          {
+            "DocumentName": "AWS-RunShellScript",
+            "Comment": "TickTockTasks backend redeploy from GitHub",
+            "InstanceIds": ["$INSTANCE_ID"],
+            "Parameters": {
+              "commands": [
+                "set -euo pipefail",
+                "echo [SSM] Starting backend redeploy at $(date -Is)",
+                "if [ -d /opt/app/.git ]; then cd /opt/app; git fetch --all --prune; git reset --hard origin/main; else rm -rf /opt/app.tmp; mkdir -p /opt/app.tmp; git clone ${REPO_URL} /opt/app.tmp; rm -rf /opt/app; mv /opt/app.tmp /opt/app; fi",
+                "if [ -f /opt/app/backend/docker-compose.yml ]; then CDIR=/opt/app/backend; elif [ -f /opt/app/docker-compose.yml ]; then CDIR=/opt/app; else echo '[SSM] No docker-compose.yml found' >&2; exit 3; fi",
+                "cd $CDIR",
+                "if docker compose version >/dev/null 2>&1; then DC='docker compose'; else DC='docker-compose'; fi",
+                "$DC down || true",
+                "$DC pull || true",
+                "$DC build --pull || true",
+                "$DC up -d",
+                "$DC ps",
+                "echo [SSM] Completed backend redeploy at $(date -Is)"
+              ]
+            }
+          }
+          JSON
 
           CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --comment "TickTockTasks backend redeploy from GitHub" \
-            --parameters commands=["bash -lc \"$SCRIPT_CONTENT\""] \
+            --cli-input-json file:///tmp/redeploy-send.json \
             --query 'Command.CommandId' --output text)
           echo "command_id=$CMD_ID" >> $GITHUB_OUTPUT
           echo "Sent SSM command: $CMD_ID; waiting for completion..."
+
+          set +e
           aws ssm wait command-executed --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID"
-          echo "SSM command completed. Fetching output (last 100 lines)..."
+          WAITER_RC=$?
+          set -e
+
+          STATUS=$(aws ssm list-commands --region "$AWS_REGION" --command-id "$CMD_ID" --query 'Commands[0].Status' --output text)
+          echo "SSM command status: $STATUS (wait rc=$WAITER_RC)"
+          echo "Fetching SSM output (last 200 lines)..."
           aws ssm list-command-invocations --region "$AWS_REGION" --command-id "$CMD_ID" --details \
-            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -n 100
+            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -n 200 || true
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "SSM redeploy failed with status: $STATUS" >&2
+            exit 1
+          fi
 
       - name: Public health checks (CloudFront / API)
         run: |
@@ -191,21 +196,42 @@ jobs:
         run: |
           set -euo pipefail
           INSTANCE_ID=$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)
-          cat > /tmp/health.sh <<'EOS'
-          set -euo pipefail
-          echo "[SSM] docker compose ps:"; (cd /opt/app/backend 2>/dev/null && (docker compose ps || docker-compose ps || true)) || true
-          echo "[SSM] curl localhost:8080/healthz:"; curl -sfS http://127.0.0.1:8080/healthz || true
-          echo "[SSM] curl nginx /healthz:"; curl -sfS http://127.0.0.1/healthz || true
-          echo "[SSM] backend logs (last 100 lines):"; docker logs --tail=100 ttt-backend || true
-          EOS
-          SCRIPT_CONTENT=$(cat /tmp/health.sh | sed 's/\"/\\\"/g' | tr -d '\n')
+
+          cat > /tmp/health-commands.json <<JSON
+          {
+            "commands": [
+              "set -euo pipefail",
+              "echo [SSM] docker compose ps:",
+              "(cd /opt/app/backend 2>/dev/null && (docker compose ps || docker-compose ps || true)) || true",
+              "echo [SSM] curl localhost:8080/healthz:",
+              "curl -sfS http://127.0.0.1:8080/healthz || true",
+              "echo [SSM] curl nginx /healthz:",
+              "curl -sfS http://127.0.0.1/healthz || true",
+              "echo [SSM] backend logs (last 200 lines):",
+              "docker logs --tail=200 ttt-backend || true"
+            ]
+          }
+          JSON
+
           CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "TickTockTasks backend health check" \
-            --parameters commands=["bash -lc \"$SCRIPT_CONTENT\""] \
+            --parameters file:///tmp/health-commands.json \
             --query 'Command.CommandId' --output text)
+
+          set +e
           aws ssm wait command-executed --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID"
+          WAITER_RC=$?
+          set -e
+
+          STATUS=$(aws ssm list-commands --region "$AWS_REGION" --command-id "$CMD_ID" --query 'Commands[0].Status' --output text)
+          echo "SSM health check status: $STATUS (wait rc=$WAITER_RC)"
           aws ssm list-command-invocations --region "$AWS_REGION" --command-id "$CMD_ID" --details \
-            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -n 200
+            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -n 400 || true
+
+          if [ "$STATUS" != "Success" ] && [ "$STATUS" != "SuccessAndCommandExpectedOutputNotAvailable" ]; then
+            echo "SSM health check failed with status: $STATUS" >&2
+            exit 1
+          fi
