@@ -87,24 +87,33 @@ jobs:
             echo "Could not resolve InstanceId from stack outputs" >&2
             exit 1
           fi
-          cat > /tmp/health.sh <<'EOS'
-          set -euo pipefail;
-          echo "[SSM] uname -a:"; uname -a || true
-          echo "[SSM] df -h:"; df -h || true
-          echo "[SSM] docker version:"; (docker version || true)
-          echo "[SSM] docker compose ps:"; (cd /opt/app/backend 2>/dev/null && (docker compose ps || docker-compose ps || true)) || true
-          echo "[SSM] curl localhost:8080/healthz:"; (curl -sfS http://127.0.0.1:8080/healthz || true)
-          echo "[SSM] curl nginx /nginx-healthz:"; (curl -sfS http://127.0.0.1/nginx-healthz || true)
-          echo "[SSM] backend logs (last 200 lines):"; (docker logs --tail=200 ttt-backend || true)
-          echo "[SSM] nginx logs (last 200 lines):"; (docker logs --tail=200 ttt-nginx || true)
-          EOS
-          SCRIPT_CONTENT=$(cat /tmp/health.sh | sed 's/\"/\\\"/g' | sed "s/'/'\\''/g" | tr -d '\n')
+          PARAM='{
+            "commands": [
+              "echo [SSM] uname -a:",
+              "uname -a || true",
+              "echo [SSM] df -h:",
+              "df -h || true",
+              "echo [SSM] docker version:",
+              "docker version || true",
+              "echo [SSM] docker compose ps:",
+              "cd /opt/app/backend 2>/dev/null && (docker compose ps || docker-compose ps || true) || true",
+              "echo [SSM] curl localhost:8080/healthz:",
+              "curl -sfS http://127.0.0.1:8080/healthz || true",
+              "echo [SSM] curl nginx /nginx-healthz:",
+              "curl -sfS http://127.0.0.1/nginx-healthz || true",
+              "echo [SSM] backend logs (last 200 lines):",
+              "docker logs --tail=200 ttt-backend || true",
+              "echo [SSM] nginx logs (last 200 lines):",
+              "docker logs --tail=200 ttt-nginx || true"
+            ]
+          }'
           CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "TickTockTasks backend health check" \
-            --parameters commands=["bash -lc \"$SCRIPT_CONTENT\""] \
+            --cli-binary-format raw-in-base64-out \
+            --parameters "$PARAM" \
             --query 'Command.CommandId' --output text)
           aws ssm wait command-executed --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID"
           aws ssm list-command-invocations --region "$AWS_REGION" --command-id "$CMD_ID" --details \
