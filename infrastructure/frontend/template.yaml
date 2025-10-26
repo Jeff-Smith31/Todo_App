@@ -119,7 +119,7 @@ Resources:
           - Id: apiOrigin
             DomainName: !Sub api.${DomainName}
             ConnectionAttempts: 3
-            ConnectionTimeout: 30
+            ConnectionTimeout: 10
             CustomOriginConfig:
               OriginProtocolPolicy: http-only
         ViewerCertificate:
