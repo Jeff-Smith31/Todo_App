@@ -112,11 +112,10 @@ Resources:
             git clone ${RepoUrl} /opt/app
           fi
           cd /opt/app
-          # Configure environment
+          # Start backend via docker-compose (write .env in backend dir)
+          cd backend
           echo "CORS_ORIGIN=https://${DomainName},https://www.${DomainName}" > .env
           echo "REDIRECT_HTTP_TO_HTTPS=false" >> .env
-          # Start backend via docker-compose
-          cd backend
           /usr/local/bin/docker-compose pull || true
           /usr/local/bin/docker-compose up -d
           # Simple nginx health reload if present
