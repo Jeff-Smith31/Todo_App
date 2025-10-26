@@ -123,7 +123,7 @@ jobs:
           echo "InstanceId: $INSTANCE_ID"
 
           # Compose robust SSM commands as JSON (avoids brittle quoting)
-          cat > /tmp/redeploy-send.json <<JSON
+          cat > /tmp/redeploy-send.json <<'JSON'
           {
             "DocumentName": "AWS-RunShellScript",
             "Comment": "TickTockTasks backend redeploy from GitHub",
@@ -131,17 +131,17 @@ jobs:
             "Parameters": {
               "commands": [
                 "set -euo pipefail",
-                "echo [SSM] Starting backend redeploy at $(date -Is)",
+                "echo [SSM] Starting backend redeploy at \$(date -Is)",
                 "if [ -d /opt/app/.git ]; then cd /opt/app; git fetch --all --prune; git reset --hard origin/main; else rm -rf /opt/app.tmp; mkdir -p /opt/app.tmp; git clone ${REPO_URL} /opt/app.tmp; rm -rf /opt/app; mv /opt/app.tmp /opt/app; fi",
                 "if [ -f /opt/app/backend/docker-compose.yml ]; then CDIR=/opt/app/backend; elif [ -f /opt/app/docker-compose.yml ]; then CDIR=/opt/app; else echo '[SSM] No docker-compose.yml found' >&2; exit 3; fi",
-                "cd $CDIR",
+                "cd \$CDIR",
                 "if docker compose version >/dev/null 2>&1; then DC='docker compose'; else DC='docker-compose'; fi",
-                "$DC down || true",
-                "$DC pull || true",
-                "$DC build --pull || true",
-                "$DC up -d",
-                "$DC ps",
-                "echo [SSM] Completed backend redeploy at $(date -Is)"
+                "\$DC down || true",
+                "\$DC pull || true",
+                "\$DC build --pull || true",
+                "\$DC up -d",
+                "\$DC ps",
+                "echo [SSM] Completed backend redeploy at \$(date -Is)"
               ]
             }
           }
@@ -196,9 +196,12 @@ jobs:
         run: |
           set -euo pipefail
           INSTANCE_ID=$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "Could not resolve InstanceId from stack outputs" >&2
+            exit 1
+          fi
 
-          cat > /tmp/health-commands.json <<JSON
-          {
+          PARAM='{
             "commands": [
               "set -euo pipefail",
               "echo [SSM] docker compose ps:",
@@ -210,15 +213,15 @@ jobs:
               "echo [SSM] backend logs (last 200 lines):",
               "docker logs --tail=200 ttt-backend || true"
             ]
-          }
-          JSON
+          }'
 
           CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "TickTockTasks backend health check" \
-            --parameters file:///tmp/health-commands.json \
+            --cli-binary-format raw-in-base64-out \
+            --parameters "$PARAM" \
             --query 'Command.CommandId' --output text)
 
           set +e
