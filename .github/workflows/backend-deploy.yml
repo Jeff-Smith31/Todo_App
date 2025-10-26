@@ -35,16 +35,49 @@ jobs:
         with:
           version: 2
 
-      - name: Find a subnet in the VPC (prefer public)
+      - name: Find a subnet in the VPC (prefer public with IGW route)
         id: subnet
         shell: bash
         run: |
           set -euo pipefail
-          # Try to pick the first subnet in the VPC; allow override via secret SUBNET_ID if provided
+          # Allow explicit override via secret
           if [ -n "${{ secrets.SUBNET_ID }}" ]; then
+            echo "Using SUBNET_ID from secret"
             echo "id=${{ secrets.SUBNET_ID }}" >> $GITHUB_OUTPUT
             exit 0
           fi
+
+          echo "Looking for public subnets in VPC $VPC_ID (MapPublicIpOnLaunch=true and route to Internet Gateway)..."
+          PUB_SUBNETS=$(aws ec2 describe-subnets \
+            --filters Name=vpc-id,Values=$VPC_ID \
+            --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' \
+            --output text | tr '\n' ' ')
+
+          pick_subnet=""
+          for sn in $PUB_SUBNETS; do
+            # Find the route table associated with this subnet
+            RT_ID=$(aws ec2 describe-route-tables \
+              --filters Name=association.subnet-id,Values=$sn \
+              --query 'RouteTables[0].RouteTableId' --output text || true)
+            if [ -z "$RT_ID" ] || [ "$RT_ID" = "None" ]; then
+              continue
+            fi
+            # Check for a route to an Internet Gateway
+            HAS_IGW=$(aws ec2 describe-route-tables --route-table-ids "$RT_ID" \
+              --query 'RouteTables[0].Routes[?contains(GatewayId, `igw-`)] | length(@)' --output text || echo 0)
+            if [ "$HAS_IGW" != "0" ]; then
+              pick_subnet="$sn"
+              break
+            fi
+          done
+
+          if [ -n "$pick_subnet" ]; then
+            echo "Selected public subnet: $pick_subnet"
+            echo "id=$pick_subnet" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "WARNING: No public subnet with IGW route found. Falling back to first subnet in VPC (may be unreachable from Internet)." >&2
           SUBNET_ID=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC_ID --query 'Subnets[0].SubnetId' --output text)
           if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = "None" ]; then
             echo "No subnet found in VPC $VPC_ID" >&2
