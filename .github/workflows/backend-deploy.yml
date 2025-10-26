@@ -135,3 +135,48 @@ jobs:
           echo "SSM command completed. Fetching output (last 100 lines)..."
           aws ssm list-command-invocations --region "$AWS_REGION" --command-id "$CMD_ID" --details \
             --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -n 100
+
+      - name: Public health checks (CloudFront / API)
+        run: |
+          set -euo pipefail
+          set +e
+          for i in {1..10}; do
+            echo "Attempt $i: https://${DOMAIN_NAME}/api/healthz";
+            curl -fsS -H 'Cache-Control: no-cache' "https://${DOMAIN_NAME}/api/healthz" && OK1=1 && break || sleep 3;
+          done
+          for i in {1..10}; do
+            echo "Attempt $i: https://api.${DOMAIN_NAME}/healthz";
+            curl -fsS -H 'Cache-Control: no-cache' "https://api.${DOMAIN_NAME}/healthz" && OK2=1 && break || sleep 3;
+          done
+          for i in {1..10}; do
+            echo "Attempt $i: http://api.${DOMAIN_NAME}/healthz";
+            curl -fsS -H 'Cache-Control: no-cache' "http://api.${DOMAIN_NAME}/healthz" && OK3=1 && break || sleep 3;
+          done
+          set -e
+          if [ -z "${OK1:-}" ] && [ -z "${OK2:-}" ] && [ -z "${OK3:-}" ]; then
+            echo "All public health checks failed" >&2
+            exit 1
+          fi
+
+      - name: Internal health check via SSM
+        run: |
+          set -euo pipefail
+          INSTANCE_ID=$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)
+          cat > /tmp/health.sh <<'EOS'
+          set -euo pipefail
+          echo "[SSM] docker compose ps:"; (cd /opt/app/backend 2>/dev/null && (docker compose ps || docker-compose ps || true)) || true
+          echo "[SSM] curl localhost:8080/healthz:"; curl -sfS http://127.0.0.1:8080/healthz || true
+          echo "[SSM] curl nginx /healthz:"; curl -sfS http://127.0.0.1/healthz || true
+          echo "[SSM] backend logs (last 100 lines):"; docker logs --tail=100 ttt-backend || true
+          EOS
+          SCRIPT_CONTENT=$(cat /tmp/health.sh | sed 's/\"/\\\"/g' | tr -d '\n')
+          CMD_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "TickTockTasks backend health check" \
+            --parameters commands=["bash -lc \"$SCRIPT_CONTENT\""] \
+            --query 'Command.CommandId' --output text)
+          aws ssm wait command-executed --region "$AWS_REGION" --command-id "$CMD_ID" --instance-id "$INSTANCE_ID"
+          aws ssm list-command-invocations --region "$AWS_REGION" --command-id "$CMD_ID" --details \
+            --query 'CommandInvocations[0].CommandPlugins[0].Output' --output text | tail -n 200
