@@ -192,6 +192,7 @@ jobs:
             "commands": [
               "set -euo pipefail",
               "echo [SSM] Starting backend redeploy at $(date -Is)",
+              "mkdir -p /opt", 
               "if [ -d /opt/app/.git ]; then echo '[SSM] /opt/app repo exists'; else echo '[SSM] Cloning repo to /opt/app'; rm -rf /opt/app; git clone ${REPO_URL} /opt/app; fi",
               "cd /opt/app",
               "git fetch --all --prune || true",
@@ -264,7 +265,7 @@ jobs:
             "commands": [
               "set -euo pipefail",
               "echo [SSM] docker compose ps:",
-              "(cd /opt/app/backend 2>/dev/null && (docker compose ps || docker-compose ps || true)) || true",
+              "(cd /opt/app 2>/dev/null && (docker compose ps || docker-compose ps || true)) || true",
               "echo [SSM] curl localhost:8080/healthz:",
               "curl -sfS http://127.0.0.1:8080/healthz || true",
               "echo [SSM] curl nginx /healthz:",
