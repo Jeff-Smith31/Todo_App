@@ -187,34 +187,31 @@ jobs:
           fi
           echo "InstanceId: $INSTANCE_ID"
 
-          # Compose robust SSM commands as JSON (avoids brittle quoting)
-          cat > /tmp/redeploy-send.json <<'JSON'
-          {
-            "DocumentName": "AWS-RunShellScript",
-            "Comment": "TickTockTasks backend redeploy from GitHub",
-            "InstanceIds": ["$INSTANCE_ID"],
-            "Parameters": {
-              "commands": [
-                "set -euo pipefail",
-                "echo [SSM] Starting backend redeploy at \$(date -Is)",
-                "if [ -d /opt/app/.git ]; then cd /opt/app; git fetch --all --prune; git reset --hard origin/main; else rm -rf /opt/app.tmp; mkdir -p /opt/app.tmp; git clone ${REPO_URL} /opt/app.tmp; rm -rf /opt/app; mv /opt/app.tmp /opt/app; fi",
-                "if [ -f /opt/app/backend/docker-compose.yml ]; then CDIR=/opt/app/backend; elif [ -f /opt/app/docker-compose.yml ]; then CDIR=/opt/app; else echo '[SSM] No docker-compose.yml found' >&2; exit 3; fi",
-                "cd \$CDIR",
-                "if docker compose version >/dev/null 2>&1; then DC='docker compose'; else DC='docker-compose'; fi",
-                "\$DC down || true",
-                "\$DC pull || true",
-                "\$DC build --pull || true",
-                "\$DC up -d",
-                "\$DC ps",
-                "echo [SSM] Completed backend redeploy at \$(date -Is)"
-              ]
-            }
-          }
-          JSON
+          # Build SSM parameters JSON safely and send command (avoid cli-input-json file parsing issues)
+          PARAM='{
+            "commands": [
+              "set -euo pipefail",
+              "echo [SSM] Starting backend redeploy at $(date -Is)",
+              "if [ -d /opt/app/.git ]; then cd /opt/app; git fetch --all --prune; git reset --hard origin/main; else echo '[SSM] /opt/app is not a git repo; aborting redeploy' >&2; exit 3; fi",
+              "if [ -f /opt/app/docker-compose.yml ]; then CDIR=/opt/app; elif [ -f /opt/app/backend/docker-compose.yml ]; then CDIR=/opt/app/backend; else echo '[SSM] No docker-compose.yml found' >&2; exit 4; fi",
+              "cd $CDIR",
+              "if docker compose version >/dev/null 2>&1; then DC='docker compose'; else DC='docker-compose'; fi",
+              "$DC down || true",
+              "$DC pull || true",
+              "$DC build --pull || true",
+              "$DC up -d",
+              "$DC ps",
+              "echo [SSM] Completed backend redeploy at $(date -Is)"
+            ]
+          }'
 
           CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
-            --cli-input-json file:///tmp/redeploy-send.json \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "TickTockTasks backend redeploy from GitHub" \
+            --cli-binary-format raw-in-base64-out \
+            --parameters "$PARAM" \
             --query 'Command.CommandId' --output text)
           echo "command_id=$CMD_ID" >> $GITHUB_OUTPUT
           echo "Sent SSM command: $CMD_ID; waiting for completion..."
