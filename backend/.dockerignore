@@ -1,0 +1,33 @@
+# Keep backend Docker build context tight and reliable
+# Only exclude typical noise; do NOT exclude source files needed by the image.
+
+# VCS and CI
+.git
+.github/
+.gitignore
+
+# Node dependencies and caches
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Env and local configs
+.env
+.env.*
+*.local
+
+# Build artifacts, logs, and temp
+**/.cache/
+**/dist/
+**/build/
+*.log
+logs/
+/tmp/
