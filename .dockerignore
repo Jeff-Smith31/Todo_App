@@ -1,0 +1,36 @@
+# Keep this file minimal and safe. Do NOT exclude backend/ or frontend/.
+# The previous instance had an over-broad .dockerignore that excluded everything,
+# causing Docker COPY to fail in CI. This file ensures required sources are included.
+
+# VCS and CI metadata
+.git
+.gitignore
+.github/
+
+# Node.js deps and caches
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# Editor/OS cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local env and secrets (Compose passes env vars; don’t bake into images)
+.env
+.env.*
+*.local
+
+# Build artifacts
+**/.cache/
+**/dist/
+**/build/
+
+# Logs and temp files
+*.log
+logs/
+/tmp/
