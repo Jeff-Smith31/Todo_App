@@ -192,7 +192,7 @@ jobs:
             "commands": [
               "set -euo pipefail",
               "echo [SSM] Starting backend redeploy at $(date -Is)",
-              "mkdir -p /opt", 
+              "mkdir -p /opt/app", 
               "if [ -d /opt/app/.git ]; then echo '[SSM] /opt/app repo exists'; else echo '[SSM] Cloning repo to /opt/app'; rm -rf /opt/app; git clone ${REPO_URL} /opt/app; fi",
               "cd /opt/app",
               "git fetch --all --prune || true",
