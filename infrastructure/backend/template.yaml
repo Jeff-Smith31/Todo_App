@@ -116,13 +116,17 @@ Resources:
           systemctl start docker
           curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
           chmod +x /usr/local/bin/docker-compose
-          # Fetch app
-          if [ ! -d "/opt/app" ]; then
+          # Fetch app (ensure target dir exists and clone idempotently)
+          mkdir -p /opt/app || true
+          if [ -d "/opt/app/.git" ]; then
+            echo "Repo already present at /opt/app"
+          else
+            echo "Cloning repo to /opt/app"
+            rm -rf /opt/app
             git clone ${RepoUrl} /opt/app
           fi
           cd /opt/app
           # Start stack via docker-compose from repo root; write .env for Compose
-          cd /opt/app
           echo "CORS_ORIGIN=http://www.${DomainName},https://www.${DomainName}" > .env
           echo "DOMAIN_NAME=${DomainName}" >> .env
           echo "REDIRECT_HTTP_TO_HTTPS=false" >> .env
