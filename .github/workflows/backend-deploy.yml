@@ -35,7 +35,7 @@ jobs:
         with:
           version: 2
 
-      - name: Find a subnet in the VPC (prefer public with IGW route)
+      - name: Ensure or discover a public subnet with IGW route
         id: subnet
         shell: bash
         run: |
@@ -55,16 +55,21 @@ jobs:
 
           pick_subnet=""
           for sn in $PUB_SUBNETS; do
-            # Find the route table associated with this subnet
+            # Find the route table associated with this subnet (explicit or main)
             RT_ID=$(aws ec2 describe-route-tables \
-              --filters Name=association.subnet-id,Values=$sn \
+              --filters Name=association.subnet-id,Values=$sn Name=vpc-id,Values=$VPC_ID \
               --query 'RouteTables[0].RouteTableId' --output text || true)
+            if [ -z "$RT_ID" ] || [ "$RT_ID" = "None" ]; then
+              # fall back to main RT for the VPC
+              RT_ID=$(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$VPC_ID Name=association.main,Values=true \
+                --query 'RouteTables[0].RouteTableId' --output text || true)
+            fi
             if [ -z "$RT_ID" ] || [ "$RT_ID" = "None" ]; then
               continue
             fi
             # Check for a route to an Internet Gateway
             HAS_IGW=$(aws ec2 describe-route-tables --route-table-ids "$RT_ID" \
-              --query 'RouteTables[0].Routes[?contains(GatewayId, `igw-`)] | length(@)' --output text || echo 0)
+              --query 'RouteTables[0].Routes[?contains(GatewayId, `igw-`) && DestinationCidrBlock==`0.0.0.0/0` ] | length(@)' --output text || echo 0)
             if [ "$HAS_IGW" != "0" ]; then
               pick_subnet="$sn"
               break
@@ -72,14 +77,74 @@ jobs:
           done
 
           if [ -n "$pick_subnet" ]; then
-            echo "Selected public subnet: $pick_subnet"
+            echo "Selected existing public subnet: $pick_subnet"
             echo "id=$pick_subnet" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          echo "ERROR: No public subnet with an Internet Gateway route found in VPC $VPC_ID." >&2
-          echo "Please ensure there is at least one public subnet (MapPublicIpOnLaunch=true) with a route to an Internet Gateway, or set secrets.SUBNET_ID to an appropriate subnet." >&2
-          exit 1
+          echo "No suitable public subnet found. Ensuring required resources in VPC $VPC_ID..."
+          # 1) Ensure an Internet Gateway is attached to the VPC
+          IGW_ID=$(aws ec2 describe-internet-gateways --filters Name=attachment.vpc-id,Values=$VPC_ID \
+            --query 'InternetGateways[0].InternetGatewayId' --output text || true)
+          if [ -z "$IGW_ID" ] || [ "$IGW_ID" = "None" ]; then
+            echo "Creating and attaching Internet Gateway..."
+            IGW_ID=$(aws ec2 create-internet-gateway --query 'InternetGateway.InternetGatewayId' --output text)
+            aws ec2 attach-internet-gateway --internet-gateway-id "$IGW_ID" --vpc-id "$VPC_ID"
+          else
+            echo "Found existing IGW: $IGW_ID"
+          fi
+
+          # 2) Choose a subnet in the VPC (prefer one already public, else first available)
+          ALL_SUBNETS=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC_ID --query 'Subnets[].SubnetId' --output text | tr '\n' ' ')
+          if [ -z "$ALL_SUBNETS" ]; then
+            echo "ERROR: VPC $VPC_ID has no subnets. Please create at least one subnet or provide secrets.SUBNET_ID." >&2
+            exit 1
+          fi
+          # Prefer a MapPublicIpOnLaunch=true subnet if any
+          pick_subnet=$(aws ec2 describe-subnets --filters Name=vpc-id,Values=$VPC_ID Name=map-public-ip-on-launch,Values=true \
+            --query 'Subnets[0].SubnetId' --output text || true)
+          if [ -z "$pick_subnet" ] || [ "$pick_subnet" = "None" ]; then
+            # fall back to the first subnet in the VPC
+            pick_subnet=$(echo $ALL_SUBNETS | awk '{print $1}')
+          fi
+          echo "Using subnet: $pick_subnet"
+
+          # 3) Ensure MapPublicIpOnLaunch=true for the picked subnet
+          MPL=$(aws ec2 describe-subnets --subnet-ids "$pick_subnet" --query 'Subnets[0].MapPublicIpOnLaunch' --output text)
+          if [ "$MPL" != "True" ]; then
+            echo "Enabling MapPublicIpOnLaunch on $pick_subnet"
+            aws ec2 modify-subnet-attribute --subnet-id "$pick_subnet" --map-public-ip-on-launch
+          fi
+
+          # 4) Ensure the subnet has a route to the IGW
+          RT_ID=$(aws ec2 describe-route-tables --filters Name=association.subnet-id,Values=$pick_subnet \
+            --query 'RouteTables[0].RouteTableId' --output text || true)
+          if [ -z "$RT_ID" ] || [ "$RT_ID" = "None" ]; then
+            # Try main RT
+            RT_ID=$(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$VPC_ID Name=association.main,Values=true \
+              --query 'RouteTables[0].RouteTableId' --output text || true)
+          fi
+          if [ -z "$RT_ID" ] || [ "$RT_ID" = "None" ]; then
+            echo "Creating a new route table in the VPC and associating it with the subnet"
+            RT_ID=$(aws ec2 create-route-table --vpc-id "$VPC_ID" --query 'RouteTable.RouteTableId' --output text)
+            aws ec2 associate-route-table --route-table-id "$RT_ID" --subnet-id "$pick_subnet" >/dev/null
+          else
+            echo "Using route table $RT_ID for subnet $pick_subnet"
+          fi
+
+          # Ensure default route to the IGW exists (idempotent)
+          set +e
+          aws ec2 create-route --route-table-id "$RT_ID" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW_ID" >/dev/null 2>&1
+          RC=$?
+          set -e
+          if [ $RC -eq 0 ]; then
+            echo "Added default route to IGW $IGW_ID in RT $RT_ID"
+          else
+            echo "Default route may already exist in RT $RT_ID; continuing"
+          fi
+
+          echo "Selected/Prepared public subnet: $pick_subnet"
+          echo "id=$pick_subnet" >> $GITHUB_OUTPUT
 
       - name: Deploy/Update backend CloudFormation stack
         env:
