@@ -5,6 +5,7 @@
 (function(){
   var cfg = window.RUNTIME_CONFIG || {};
   var existing = (cfg && typeof cfg.BACKEND_URL === 'string') ? cfg.BACKEND_URL : '';
-  // Keep empty by default so same-origin (/api) is used when proxied through CloudFront
-  window.RUNTIME_CONFIG = Object.assign({}, cfg, { BACKEND_URL: existing || '' });
+  // In the new architecture the API lives at http://www.api.ticktocktasks.com (no CloudFront/edge TLS)
+  // Default to that endpoint unless overridden via a preloaded config or localStorage
+  window.RUNTIME_CONFIG = Object.assign({}, cfg, { BACKEND_URL: existing || 'http://www.api.ticktocktasks.com' });
 })();

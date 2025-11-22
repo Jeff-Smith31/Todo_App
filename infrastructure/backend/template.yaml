@@ -15,7 +15,7 @@ Parameters:
     Default: ''
   ApiSubdomain:
     Type: String
-    Default: api
+    Default: www.api
   RepoUrl:
     Type: String
     Default: https://github.com/example/Todo_App.git
@@ -121,9 +121,10 @@ Resources:
             git clone ${RepoUrl} /opt/app
           fi
           cd /opt/app
-          # Start backend via docker-compose (write .env in backend dir)
-          cd backend
-          echo "CORS_ORIGIN=https://${DomainName},https://www.${DomainName}" > .env
+          # Start stack via docker-compose from repo root; write .env for Compose
+          cd /opt/app
+          echo "CORS_ORIGIN=http://www.${DomainName},https://www.${DomainName}" > .env
+          echo "DOMAIN_NAME=${DomainName}" >> .env
           echo "REDIRECT_HTTP_TO_HTTPS=false" >> .env
           /usr/local/bin/docker-compose pull || true
           /usr/local/bin/docker-compose up -d
@@ -149,6 +150,17 @@ Resources:
       ResourceRecords:
         - !Ref ElasticIP
 
+  WwwRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDns
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub www.${DomainName}
+      Type: A
+      TTL: 60
+      ResourceRecords:
+        - !Ref ElasticIP
+
 Conditions:
   CreateDns: !Equals [!Ref CreateApiDnsRecord, 'true']
 
@@ -160,4 +172,4 @@ Outputs:
   PublicIp:
     Value: !Ref ElasticIP
   BackendEndpoint:
-    Value: !Sub https://${ApiSubdomain}.${DomainName}
+    Value: !Sub http://${ApiSubdomain}.${DomainName}

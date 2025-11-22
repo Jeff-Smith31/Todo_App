@@ -1,106 +1,121 @@
-# TickTock Tasks
+# TickTock Tasks — Deployment and Operations Guide (EC2 two‑container)
 
-A lightweight recurring to‑do app that works offline (PWA) and optionally syncs across devices via a small backend. This guide explains what you get, how it’s deployed, step‑by‑step deployment, and the license.
+High‑level summary
+- Frontend: Static PWA served from a dedicated Docker container (nginx) on the same EC2 instance as the backend. Public host: http://www.<DomainName> (or with TLS if enabled at Nginx).
+- API backend: Node.js/Express app in a Docker container on the same EC2 instance. Public host: http://www.api.<DomainName>.
+- Reverse proxy: An edge Nginx container listens on ports 80/443 on the EC2 host and routes requests by Host header to either the frontend container (www) or the backend container (www.api). Certbot volumes are present to enable optional TLS.
+- Data store: Amazon DynamoDB (on‑demand) tables created/used directly by the backend.
+- Logging/observability: Containers ship logs to Amazon CloudWatch Logs using the awslogs Docker logging driver; health endpoints and a diagnostics script are provided.
 
-What you get
-- Recurring tasks: daily, weekly, monthly (approx), or custom every N days
-- Reminder time per task; missed reminders roll to the next day and mark PRIORITY
-- Offline‑first PWA: install to Home Screen; data stored locally if no backend
-- Optional backend: accounts (email/password), sync across devices, Web Push
-- Minimal UI: dedicated login page, task list page, and a separate task form page
+Repository map (deployment‑relevant)
+- docker-compose.yml — Defines three containers on EC2: backend, frontend (static site), and edge Nginx (reverse proxy), plus Certbot volumes.
+- nginx.conf — Reverse proxy config for host‑based routing (www → frontend, www.api → backend) and ACME challenges.
+- backend/ — Backend Dockerfile, Node app, DynamoDB access layer, TLS dev entrypoint.
+- frontend/website/ — Static PWA site (index.html, app.js, manifest.json, service worker, etc.).
+- infrastructure/backend/template.yaml — CloudFormation template for the EC2 instance, SG, EIP, and Route 53 A records for www.api.<DomainName> and www.<DomainName>.
+- scripts/check-backend.sh — External connectivity diagnostics for the new hostnames.
 
-Architecture
-- Frontend: Deployed to Amazon S3 and served globally via Amazon CloudFront (ACM certificate in us-east-1 and Route53 aliases for apex and www).
-- Backend: Single EC2 instance running the Node.js/Express API (Docker). Public HTTPS is exposed at api.<DomainName> with DNS via Route53.
-- CORS: The backend allows origins for https://<DomainName>, https://www.<DomainName>, and the CloudFront domain by default (configurable).
-- Frontend config: window.RUNTIME_CONFIG.BACKEND_URL in frontend/website/config.js can be set by CI to point to the API hostname; otherwise the app can be served relative if proxied.
+Architecture overview
 
-Quick start (frontend only)
-- From the frontend/website directory, serve the site locally:
-  - cd frontend/website && python3 -m http.server 8000
-  - Open http://localhost:8000
-- Click “Enable Notifications” if prompted, then create tasks. Data stays on this device (localStorage) until you connect a backend.
+Request flow
+1) End user visits http://www.<DomainName> (or https://www.<DomainName> if you enable TLS on the instance).
+   - Route 53 points the www A record to the EC2 Elastic IP.
+   - The edge Nginx receives the request and proxies to the frontend container.
+2) Frontend calls the API at http://www.api.<DomainName> (default configured in frontend/website/config.js; can be overridden at deploy time).
+   - Route 53 points www.api A record to the same EC2 Elastic IP.
+   - The edge Nginx receives the request and proxies to the backend container.
 
-Run the backend locally (Docker)
-- One‑liner start (pass your frontend origin for CORS):
-  - bash backend/backend-up.sh http://localhost:8000
-  - First run may need: chmod +x backend/backend-up.sh
-- The backend exposes HTTPS on 8443 (self‑signed dev cert) and optionally redirects 8080→8443.
-- Reverse proxy/TLS: Caddy is the supported option.
-  - Start Caddy locally (optional): cd backend && docker compose --profile proxy up -d caddy
-    - Or run: bash backend/caddy-up.sh
-  - If you previously had a directory named Caddyfile in this folder, remove it: rm -rf Caddyfile.
-  - Troubleshooting: If you see “no configuration file provided: not found”, you’re likely running docker compose outside the backend directory. Use cd backend … or pass -f backend/docker-compose.yml.
-- Trust the cert once by visiting https://localhost:8443 in your browser.
-- Connect the frontend (choose one):
-  - Easiest for dev: open your browser console on http://localhost:8000 and run:
-    localStorage.setItem('tt_backend_url','https://localhost:8443'); location.reload();
-  - Or create a config.js at the site root with:
-    window.RUNTIME_CONFIG = { BACKEND_URL: 'https://localhost:8443' };
-- Sign up or log in; your tasks will sync between devices that use the same backend URL and account.
+Containers on the EC2 host
+- nginx (edge, image: nginx:alpine)
+  - Listens on host ports 80 and 443 (HTTPS server blocks are not included by default; Certbot volumes are available to enable TLS later).
+  - Routes by Host header:
+    - www.<DomainName> → frontend container
+    - www.api.<DomainName> → backend container
+  - ACME challenges served from /var/www/certbot.
+  - Health endpoint: /nginx-healthz → 200 ok.
+  - Logs to CloudWatch Logs group /TickTock/Edge-<DOMAIN> via awslogs driver.
 
-Backend configuration (.env)
-- Created/updated by backend-up.sh on first run:
-  - CORS_ORIGIN: your frontend origin(s) (single or comma‑separated list)
-  - JWT_SECRET: strong random secret (auto‑generated if absent)
-  - WEB_PUSH_PUBLIC_KEY / WEB_PUSH_PRIVATE_KEY: VAPID keys for Web Push (auto‑generated when npx web-push is available)
-  - REDIRECT_HTTP_TO_HTTPS: true/false (default true inside container; set false when behind TLS proxy)
+- frontend (image: nginx:alpine)
+  - Serves the static site from ./frontend/website mounted read‑only at /usr/share/nginx/html.
+  - No host ports exposed; only accessible through the edge Nginx by Host routing.
+  - Logs to CloudWatch Logs group /TickTock/FrontendSite-<DOMAIN> via awslogs driver.
 
-Production deployment on AWS (CloudFront + S3 frontend, EC2 backend)
-The frontend is deployed to S3 and served globally via CloudFront (ACM in us-east-1, Route53 aliases for apex and www). The backend API runs on a single EC2 instance at api.<DomainName>.
+- backend (built from backend/Dockerfile)
+  - Node.js/Express app (index.js), HTTP on 8080, optional self‑signed HTTPS on 8443 for dev.
+  - CORS_ORIGIN defaults to http(s)://www.<DomainName>.
+  - Logs to CloudWatch Logs group /TickTock/Backend-<DOMAIN> via awslogs driver.
 
-0) One-time discovery/state
-- Save your AWS resource IDs (Hosted Zone, VPC, Subnets, ACM) to infra/state/state.json. The script will discover existing resources and create missing ones as needed:
-  - bash infra/scripts/discover-or-create-aws.sh <DomainName> [Region]
+Backend application details
+- Language/runtime: Node.js 20 (alpine image base).
+- Dev HTTPS: backend/entrypoint-https.sh generates a self‑signed cert and runs HTTPS on 8443; production uses HTTP 8080 behind the edge proxy.
+- Health endpoints:
+  - /healthz (app)
+  - /nginx-healthz (edge Nginx)
+- DynamoDB usage (backend/dynamo.js): same behavior as before (on‑demand, tables prefixed by DDB_TABLE_PREFIX, region DDB_REGION/AWS_REGION/AWS_DEFAULT_REGION).
 
-1) Provision stacks
-- Frontend (S3 + CloudFront):
-  - bash infra/scripts/deploy-frontend.sh <FRONT_STACK_NAME> us-east-1
-- Backend (EC2 API):
-  - bash infra/scripts/deploy-backend-from-state.sh <BACK_STACK_NAME> <Region> [api]
+Frontend application details
+- Offline‑first PWA.
+- Runtime backend URL: frontend/website/config.js now defaults to http://www.api.<DomainName>. You can override this via CI or a prebuilt config if you use another domain.
 
-2) Deploy frontend site content
-- Use GitHub Actions workflow: "Frontend Deploy to S3 + CloudFront" (workflow_dispatch). It will:
-  - Sync ./frontend/website to the S3 bucket
-  - Write config.js with BACKEND_URL pointing to the API endpoint (https://api.<DomainName>)
-  - Invalidate CloudFront so new assets are served
-- Alternatively, deploy manually:
-  - aws s3 sync frontend/website s3://<your-bucket>
-  - BACKEND_OVERRIDE_URL=https://api.<DomainName> infra/scripts/link-frontend.sh <FRONT_STACK> <BACK_STACK>
+AWS infrastructure (what gets created and how it’s wired)
 
-3) CORS and config
-- The backend AllowedOrigins includes https://<DomainName>, https://www.<DomainName> (and CloudFront domain). This is configurable via the backend stack parameter.
-- The app reads window.RUNTIME_CONFIG.BACKEND_URL from config.js set during deploy; with this, login and task syncing work from CloudFront.
+Backend stack (infrastructure/backend/template.yaml)
+- IAM: Instance role/profile with AmazonSSMManagedInstanceCore.
+- Security Group: Inbound 80/443/22 from 0.0.0.0/0 (adjust as needed); outbound open.
+- EC2 Instance: Amazon Linux 2, installs Docker + docker-compose in user data, clones this repo, and starts docker‑compose from the repo root (bringing up edge Nginx, frontend, backend).
+- Elastic IP: Allocated and associated with the instance.
+- Route 53 records (conditional via CreateApiDnsRecord):
+  - A record for www.api.<DomainName> → EIP
+  - A record for www.<DomainName> → EIP
+- User data bootstrapping highlights:
+  - Writes /opt/app/.env with CORS_ORIGIN=http://www.<DomainName>,https://www.<DomainName> and DOMAIN_NAME=<DomainName>.
+  - Runs docker‑compose up -d from the repository root.
 
-4) Verify
-- Browse https://<DomainName>/ → app loads
-- Log in → Network shows calls to https://api.<DomainName>/api/* succeeding
-- Family tab shows your group code and tasks
+Runtime configuration and environment variables
+- docker-compose.yml:
+  - backend service env:
+    - PORT=8080, HTTPS_PORT=8443 (dev), REDIRECT_HTTP_TO_HTTPS=false
+    - CORS_ORIGIN: Comma‑separated allowed origins; defaults include http://www.<DomainName>,https://www.<DomainName>
+    - JWT_SECRET, WEB_PUSH_PUBLIC_KEY/WEB_PUSH_PRIVATE_KEY
+    - DDB_REGION / AWS_REGION / AWS_DEFAULT_REGION
+  - logging: All containers use awslogs driver with region and log groups derived from DOMAIN_NAME.
+- nginx.conf: Two server blocks for HTTP 80 with server_name www.api.<DomainName> (backend) and www.<DomainName> (frontend). HTTPS blocks can be added once certs are present in /etc/letsencrypt.
 
-5) Updates
-- Re-run the GitHub workflow after pushing changes to frontend/website to publish updates globally via CloudFront.
-- Backend updates: use the GitHub Action "Backend EC2 Redeploy" to pull latest code and restart containers on the EC2 host via SSM.
+TLS considerations
+- By default, traffic uses HTTP on port 80. To enable HTTPS on the same instance, obtain certs via Certbot (using the provided volumes) and add HTTPS server blocks to nginx.conf referencing /etc/letsencrypt paths.
 
-TLS for API (login failures: "Failed to fetch")
-- If the app at https://<DomainName> shows "Failed to fetch" on login, ensure the API (https://api.<DomainName>) has a valid TLS cert. The backend bootstraps Let's Encrypt via Certbot.
-- If needed, SSH to the EC2 host and run: docker compose exec nginx nginx -s reload.
+Deploying and updating
+- Deploy/update the EC2 stack with .github/workflows/backend-deploy.yml (or via AWS Console/CLI) to provision/update the instance and DNS records.
+- Redeploy code: the backend-deploy workflow includes an SSM step that git pulls the repo on the instance and restarts the Docker stack (edge Nginx, frontend, backend).
 
-DNS and routing checks
-- Use the provided scripts to validate DNS and Nginx reachability from outside and from EC2:
-  - Linux/macOS: ./scripts/check-dns-and-http.sh your-domain.com [EC2_PUBLIC_IP]
-  - Windows PowerShell: powershell -ExecutionPolicy Bypass -File .\scripts\check-dns-and-http.ps1 -Domain your-domain.com [-Ec2Ip EC2_PUBLIC_IP]
-- The script verifies A/AAAA records, checks that the A record matches your EC2 IP (if provided), and confirms HTTP and /nginx-healthz are reachable.
-- If checks fail, ensure:
-  - Route53 (or your DNS) A record points to the EC2 public or Elastic IP
-  - EC2 security group allows inbound TCP 80 and 443 from 0.0.0.0/0 (and ::/0)
-  - docker compose ps shows nginx up and listening on 0.0.0.0:80
+Operations
+- Health checks:
+  - Edge Nginx: http://www.api.<DomainName>/nginx-healthz
+  - API: http://www.api.<DomainName>/healthz
+  - Frontend: http://www.<DomainName>/
+- Diagnostics script:
+  - ./scripts/check-backend.sh <DomainName> (defaults API_SUB=www.api)
+- Logs:
+  - CloudWatch Logs: /TickTock/Edge-<DOMAIN>, /TickTock/FrontendSite-<DOMAIN>, /TickTock/Backend-<DOMAIN>
+- DynamoDB: Tables created lazily by the backend on first access.
 
-CloudFront + S3 frontend (optional advanced setup)
-- The infra/frontend/template.yaml supports proxying the API through CloudFront when you set the parameter BackendAlbDnsName (the DNS name of your backend ALB). For EC2 direct, leave it empty.
-- The app reads BACKEND_URL from frontend/website/config.js. Leave it empty to use same-origin (recommended with CloudFront /api path), or set to a full https URL to talk to a separate API domain.
+Security notes and best practices
+- Lock down SSH (or use SSM Session Manager); restrict SG ingress.
+- Use strong JWT_SECRET; store secrets in SSM/Secrets Manager.
+- Consider ALB/NLB + TLS termination and auto‑scaling if you need HA.
 
-Offline behavior
-- A dedicated offline page (offline.html) is shown when there’s no internet connection. It uses the same CSS to preserve the app’s look and feel. The service worker precaches required assets and falls back to offline.html on navigations when offline.
+Troubleshooting
+- Frontend loads but API calls fail (CORS): ensure CORS_ORIGIN includes http(s)://www.<DomainName>.
+- www.api DNS resolves but /healthz fails: check edge Nginx container and backend container health; verify docker compose ps and logs.
+- 404s for www host: confirm nginx.conf server_name for www.<DomainName> and that ttt-frontend is running.
+
+Appendix: Key files
+- docker-compose.yml — defines backend, frontend, edge Nginx, certbot volumes
+- nginx.conf — host‑based routing to backend/frontend containers
+- backend/Dockerfile — Node backend build
+- infrastructure/backend/template.yaml — EC2 stack + Route53 A records (www, www.api)
+- .github/workflows/backend-deploy.yml — deploys/updates the EC2 stack and performs SSM redeploy
+- .github/workflows/backend-health.yml — basic public and internal health checks
 
 License
-This project is licensed under the MIT License. See LICENSE for details.
+- MIT (see LICENSE).

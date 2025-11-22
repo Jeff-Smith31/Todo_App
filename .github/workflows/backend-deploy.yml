@@ -99,7 +99,7 @@ jobs:
               HostedZoneId="Z08471201NA2PN7ERBIB7" \
               VpcId="$VPC_ID" \
               SubnetId="$SUBNET_ID" \
-              AllowedOrigins="https://$DOMAIN_NAME,https://www.$DOMAIN_NAME" \
+              AllowedOrigins="http://www.$DOMAIN_NAME,https://www.$DOMAIN_NAME" \
               RepoUrl="$REPO_URL" \
               CreateApiDnsRecord="true"
 
@@ -170,25 +170,21 @@ jobs:
             exit 1
           fi
 
-      - name: Public health checks (CloudFront / API)
+      - name: Public health checks (WWW + API)
         run: |
           set -euo pipefail
           set +e
           for i in {1..10}; do
-            echo "Attempt $i: https://${DOMAIN_NAME}/api/healthz";
-            curl -fsS -H 'Cache-Control: no-cache' "https://${DOMAIN_NAME}/api/healthz" && OK1=1 && break || sleep 3;
+            echo "Attempt $i: http://www.${DOMAIN_NAME}/";
+            curl -fsS -H 'Cache-Control: no-cache' "http://www.${DOMAIN_NAME}/" && OK1=1 && break || sleep 3;
           done
           for i in {1..10}; do
-            echo "Attempt $i: https://api.${DOMAIN_NAME}/healthz";
-            curl -fsS -H 'Cache-Control: no-cache' "https://api.${DOMAIN_NAME}/healthz" && OK2=1 && break || sleep 3;
-          done
-          for i in {1..10}; do
-            echo "Attempt $i: http://api.${DOMAIN_NAME}/healthz";
-            curl -fsS -H 'Cache-Control: no-cache' "http://api.${DOMAIN_NAME}/healthz" && OK3=1 && break || sleep 3;
+            echo "Attempt $i: http://www.api.${DOMAIN_NAME}/healthz";
+            curl -fsS -H 'Cache-Control: no-cache' "http://www.api.${DOMAIN_NAME}/healthz" && OK2=1 && break || sleep 3;
           done
           set -e
-          if [ -z "${OK1:-}" ] && [ -z "${OK2:-}" ] && [ -z "${OK3:-}" ]; then
-            echo "All public health checks failed" >&2
+          if [ -z "${OK1:-}" ] || [ -z "${OK2:-}" ]; then
+            echo "One or more public health checks failed" >&2
             exit 1
           fi
 

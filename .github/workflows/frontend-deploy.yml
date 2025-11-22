@@ -1,39 +1,15 @@
-name: Frontend Deploy to S3 + CloudFront (ticktocktasks.com)
+name: Frontend Deployment (deprecated)
 
 on:
+  workflow_dispatch:
   push:
     branches: [ "main" ]
-  workflow_dispatch:
-
-permissions:
-  id-token: write
-  contents: read
-
-env:
-  AWS_REGION: us-east-1
-  STACK_NAME: tt-frontend
-  DOMAIN_NAME: ticktocktasks.com
 
 jobs:
-  deploy:
+  noop:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          role-session-name: github-frontend-deploy
-
-
-      - name: Install AWS CLI v2
-        uses: unfor19/install-aws-cli-action@v1
-        with:
-          version: 2
-
-      - name: Deploy frontend stack and sync site
+      - name: Notice
         run: |
-          bash infrastructure/scripts/deploy-frontend.sh "$STACK_NAME" "$DOMAIN_NAME" "Z08471201NA2PN7ERBIB7" "$AWS_REGION"
+          echo "This workflow is deprecated. The frontend is now deployed as a Docker container on the same EC2 instance as the backend."
+          echo "No S3 or CloudFront actions are performed."

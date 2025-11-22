@@ -40,31 +40,26 @@ jobs:
       - name: Resolve API IP and echo DNS
         run: |
           set -euo pipefail
-          echo "Apex DNS:"; nslookup ${DOMAIN_NAME} || true
-          echo "API DNS:"; nslookup api.${DOMAIN_NAME} || true
-          API_IP=$(dig +short A api.${DOMAIN_NAME} | head -n1)
+          echo "WWW DNS:"; nslookup www.${DOMAIN_NAME} || true
+          echo "API DNS:"; nslookup www.api.${DOMAIN_NAME} || true
+          API_IP=$(dig +short A www.api.${DOMAIN_NAME} | head -n1)
           echo "API_IP=$API_IP" >> $GITHUB_ENV
 
-      - name: Public health checks (CloudFront / API)
+      - name: Public health checks (WWW + API)
         run: |
           set -euo pipefail
           set +e
           for i in {1..5}; do
-            echo "Attempt $i: https://${DOMAIN_NAME}/api/healthz";
-            curl -v -fsS -H 'Cache-Control: no-cache' "https://${DOMAIN_NAME}/api/healthz" && OK1=1 && break || sleep 2;
+            echo "Attempt $i: http://www.${DOMAIN_NAME}/";
+            curl -v -fsS -H 'Cache-Control: no-cache' "http://www.${DOMAIN_NAME}/" && OK1=1 && break || sleep 2;
           done
           for i in {1..5}; do
-            echo "Attempt $i: https://api.${DOMAIN_NAME}/healthz";
-            curl -v -fsS -H 'Cache-Control: no-cache' "https://api.${DOMAIN_NAME}/healthz" && OK2=1 && break || sleep 2;
-          done
-          for i in {1..5}; do
-            echo "Attempt $i: http://api.${DOMAIN_NAME}/healthz";
-            curl -v -fsS -H 'Cache-Control: no-cache' "http://api.${DOMAIN_NAME}/healthz" && OK3=1 && break || sleep 2;
+            echo "Attempt $i: http://www.api.${DOMAIN_NAME}/healthz";
+            curl -v -fsS -H 'Cache-Control: no-cache' "http://www.api.${DOMAIN_NAME}/healthz" && OK2=1 && break || sleep 2;
           done
           set -e
-          if [ -z "${OK1:-}" ] && [ -z "${OK2:-}" ] && [ -z "${OK3:-}" ]; then
-            echo "All public health checks failed" >&2
-            # do not fail here; continue to internal checks for diagnostics
+          if [ -z "${OK1:-}" ] || [ -z "${OK2:-}" ]; then
+            echo "One or more public health checks failed" >&2
           fi
 
       - name: Direct IP checks (HTTP)
@@ -96,7 +91,7 @@ jobs:
               "echo [SSM] docker version:",
               "docker version || true",
               "echo [SSM] docker compose ps:",
-              "cd /opt/app/backend 2>/dev/null && (docker compose ps || docker-compose ps || true) || true",
+              "cd /opt/app 2>/dev/null && (docker compose ps || docker-compose ps || true) || true",
               "echo [SSM] curl localhost:8080/healthz:",
               "curl -sfS http://127.0.0.1:8080/healthz || true",
               "echo [SSM] curl nginx /nginx-healthz:",

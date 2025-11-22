@@ -9,7 +9,7 @@ services:
     environment:
       - PORT=8080
       - HTTPS_PORT=8443
-      - CORS_ORIGIN=${CORS_ORIGIN:-https://ticktocktasks.com,https://www.ticktocktasks.com}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://www.ticktocktasks.com,https://www.ticktocktasks.com}
       - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
       - NODE_ENV=production
       - WEB_PUSH_PUBLIC_KEY=${WEB_PUSH_PUBLIC_KEY}
@@ -37,6 +37,19 @@ services:
       retries: 3
       start_period: 30s
 
+  frontend:
+    image: nginx:alpine
+    container_name: ttt-frontend
+    restart: unless-stopped
+    volumes:
+      - ./frontend/website:/usr/share/nginx/html:ro
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION:-us-east-1}
+        awslogs-group: /TickTock/FrontendSite-${DOMAIN_NAME:-ticktocktasks.com}
+        awslogs-create-group: "true"
+
   nginx:
     image: nginx:alpine
     container_name: ttt-nginx
@@ -58,7 +71,7 @@ services:
       driver: awslogs
       options:
         awslogs-region: ${AWS_REGION:-us-east-1}
-        awslogs-group: /TickTock/Frontend-${DOMAIN_NAME:-ticktocktasks.com}
+        awslogs-group: /TickTock/Edge-${DOMAIN_NAME:-ticktocktasks.com}
         awslogs-create-group: "true"
 
   certbot:
