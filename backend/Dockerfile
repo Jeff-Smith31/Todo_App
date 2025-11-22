@@ -11,8 +11,9 @@ RUN npm install --omit=dev
 # Copy app source and entrypoint
 COPY backend/index.js ./index.js
 COPY backend/dynamo.js ./dynamo.js
-# Bundle a copy of the frontend to serve as a standalone app from the backend at /app
-COPY frontend/website ./public
+# The frontend is served by a dedicated nginx container. Avoid coupling build to repo layout.
+# Create an empty public dir so backend can optionally serve static files at /app/public.
+RUN mkdir -p ./public
 COPY backend/entrypoint-https.sh ./entrypoint-https.sh
 RUN chmod +x ./entrypoint-https.sh
 
