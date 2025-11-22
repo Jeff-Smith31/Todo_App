@@ -219,11 +219,14 @@ jobs:
           echo "InstanceId: $INSTANCE_ID"
 
           # Build SSM parameters JSON safely and send command (avoid cli-input-json file parsing issues)
-          PARAM='{
+          # Build SSM parameters JSON with a placeholder for REPO_URL, then substitute safely
+          PARAM=$(cat <<'JSON'
+          {
             "commands": [
               "set -euo pipefail",
               "echo [SSM] Starting backend redeploy at $(date -Is)",
-              "mkdir -p /opt/app", 
+              "mkdir -p /opt/app",
+              "REPO_URL='__REPO_URL__'",
               "if [ -d /opt/app/.git ]; then echo '[SSM] /opt/app repo exists'; else echo '[SSM] Cloning repo to /opt/app'; rm -rf /opt/app; git clone ${REPO_URL} /opt/app; fi",
               "cd /opt/app",
               "git fetch --all --prune || true",
@@ -236,7 +239,11 @@ jobs:
               "$DC ps",
               "echo [SSM] Completed backend redeploy at $(date -Is)"
             ]
-          }'
+          }
+          JSON
+          )
+          # Substitute placeholder with the step env REPO_URL (literal), preserving JSON structure
+          PARAM="${PARAM//__REPO_URL__/$REPO_URL}"
 
           CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
