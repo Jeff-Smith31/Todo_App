@@ -179,12 +179,43 @@ jobs:
           REPO_URL: "${{ github.server_url }}/${{ github.repository }}.git"
         run: |
           set -euo pipefail
-          echo "Fetching EC2 InstanceId from stack outputs..."
-          INSTANCE_ID=$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text)
-          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-            echo "Could not find InstanceId output for stack $STACK_NAME" >&2
+          echo "Ensuring CloudFormation stack is ready and fetching EC2 InstanceId..."
+
+          # Wait up to ~3 minutes for stack to reach a good state and expose outputs
+          ATTEMPTS=30
+          SLEEP=6
+          for i in $(seq 1 $ATTEMPTS); do
+            STATUS=$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "Unknown")
+            INSTANCE_ID=$(aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" --output text 2>/dev/null || true)
+
+            echo "Attempt $i/$ATTEMPTS: StackStatus=$STATUS InstanceId=${INSTANCE_ID:-}"
+
+            case "$STATUS" in
+              CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_COMPLETE_CLEANUP_IN_PROGRESS)
+                if [ -n "${INSTANCE_ID:-}" ] && [ "$INSTANCE_ID" != "None" ]; then
+                  break
+                fi
+                ;;
+              ROLLBACK_COMPLETE|ROLLBACK_FAILED|UPDATE_ROLLBACK_COMPLETE|UPDATE_ROLLBACK_FAILED|CREATE_FAILED|UPDATE_FAILED)
+                echo "Stack is in a failed state: $STATUS" >&2
+                echo "Recent stack events:" >&2
+                aws cloudformation describe-stack-events --region "$AWS_REGION" --stack-name "$STACK_NAME" \
+                  --query 'StackEvents[0:20].[Timestamp,ResourceStatus,LogicalResourceId,ResourceType,ResourceStatusReason]' --output table || true
+                exit 1
+                ;;
+            esac
+
+            if [ $i -lt $ATTEMPTS ]; then sleep $SLEEP; fi
+          done
+
+          if [ -z "${INSTANCE_ID:-}" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "Timed out waiting for InstanceId in stack outputs for $STACK_NAME" >&2
+            echo "Final stack status: $STATUS" >&2
+            aws cloudformation describe-stacks --region "$AWS_REGION" --stack-name "$STACK_NAME" \
+              --query 'Stacks[0].[StackName,StackStatus,StackStatusReason]' --output table || true
             exit 1
           fi
+
           echo "InstanceId: $INSTANCE_ID"
 
           # Build SSM parameters JSON safely and send command (avoid cli-input-json file parsing issues)
