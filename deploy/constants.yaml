@@ -10,9 +10,9 @@ PublicSubnetIds:                     # Two public subnets for ALB and EC2
   - "subnet-0abcde11111111111"
   - "subnet-0abcde22222222222"
 InstanceType: "t3.micro"            # EC2 instance type
-ApiSubdomain: "www.api"             # Subdomain for backend API
-WwwSubdomain: "www"                 # Subdomain for frontend
+ApiSubdomain: "api"                 # Subdomain for backend API
+WwwSubdomain: ""                    # Not used (apex domain)
 RepoUrl: "https://github.com/example/Todo_App.git"  # Public read URL of this repo
-StackName: "ticktock-ec2-alb"
+StackName: "ticktock-ec2-eip"
 # Optional: Key pair name if you want SSH. Leave empty to disable 22 ingress entirely.
 KeyName: ""

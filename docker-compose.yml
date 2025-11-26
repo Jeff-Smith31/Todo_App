@@ -9,7 +9,7 @@ services:
     environment:
       - PORT=8080
       - HTTPS_PORT=8443
-      - CORS_ORIGIN=${CORS_ORIGIN:-http://www.ticktocktasks.com,https://www.ticktocktasks.com}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://ticktocktasks.com,https://ticktocktasks.com,http://www.ticktocktasks.com,https://www.ticktocktasks.com}
       - JWT_SECRET=${JWT_SECRET:-change-this-in-production}
       - NODE_ENV=production
       - WEB_PUSH_PUBLIC_KEY=${WEB_PUSH_PUBLIC_KEY}
