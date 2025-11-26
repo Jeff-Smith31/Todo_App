@@ -101,6 +101,8 @@ jobs:
           REPO_URL="${{ steps.const.outputs.repo }}"
           DOMAIN="${{ steps.const.outputs.domain }}"
           API_SUB="${{ steps.const.outputs.apisub }}"
+
+          # Build the command script with runtime variables injected at the top
           cat > commands.sh <<'EOS'
           #!/bin/bash
           set -euxo pipefail
@@ -134,12 +136,26 @@ jobs:
             --non-interactive --agree-tos -m admin@$DOMAIN || true
           /usr/local/bin/docker-compose up -d
           EOS
-          chmod +x commands.sh
+
+          # Prepend variable exports so the script has values when executed on the instance
+          {
+            echo "REPO_URL=$REPO_URL";
+            echo "REGION=$REGION";
+            echo "DOMAIN=$DOMAIN";
+            echo "API_SUB=$API_SUB";
+            cat commands.sh;
+          } > commands.withvars.sh
+
+          chmod +x commands.withvars.sh
+
+          # Convert the script into a JSON array of lines for AWS-RunShellScript
+          CMDS_JSON=$(jq -Rs 'split("\n") | map(select(length>0))' commands.withvars.sh)
+
           aws ssm send-command \
             --region "$REGION" \
             --instance-ids "$IID" \
             --document-name "AWS-RunShellScript" \
-            --parameters commands="$(sed 's/"/\\"/g' commands.sh)" \
+            --parameters commands="$CMDS_JSON" \
             --comment "TickTock bootstrap via SSM" \
             --timeout-seconds 1200 >/tmp/ssm_cmd.json
           CMD_ID=$(jq -r '.Command.CommandId' /tmp/ssm_cmd.json)
