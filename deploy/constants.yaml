@@ -1,0 +1,18 @@
+# Centralized deployment constants. Fill in with your environment values.
+# DO NOT COMMIT REAL SECRETS. This file is for non-secret infra constants only.
+
+AccountId: "123456789012"           # AWS Account ID
+Region: "us-east-1"                 # Workload region (ALB/EC2/Route53)
+DomainName: "ticktocktasks.com"     # Root domain
+HostedZoneId: "Z123EXAMPLE"         # Route53 public hosted zone ID for DomainName
+VpcId: "vpc-0123456789abcdef0"      # Existing VPC where EC2/ALB will be launched
+PublicSubnetIds:                     # Two public subnets for ALB and EC2
+  - "subnet-0abcde11111111111"
+  - "subnet-0abcde22222222222"
+InstanceType: "t3.micro"            # EC2 instance type
+ApiSubdomain: "www.api"             # Subdomain for backend API
+WwwSubdomain: "www"                 # Subdomain for frontend
+RepoUrl: "https://github.com/example/Todo_App.git"  # Public read URL of this repo
+StackName: "ticktock-ec2-alb"
+# Optional: Key pair name if you want SSH. Leave empty to disable 22 ingress entirely.
+KeyName: ""

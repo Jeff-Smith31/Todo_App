@@ -1,0 +1,248 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: TickTock Tasks — EC2 behind ALB with ACM (frontend+backend via Docker Compose). Creates ACM cert, ALB HTTPS, EC2 with user data, and Route53 records.
+
+Parameters:
+  AccountId:
+    Type: String
+  Region:
+    Type: String
+  DomainName:
+    Type: String
+  HostedZoneId:
+    Type: String
+  VpcId:
+    Type: String
+  PublicSubnetIdA:
+    Type: String
+  PublicSubnetIdB:
+    Type: String
+  InstanceType:
+    Type: String
+    Default: t3.micro
+  ApiSubdomain:
+    Type: String
+    Default: www.api
+  WwwSubdomain:
+    Type: String
+    Default: www
+  RepoUrl:
+    Type: String
+  KeyName:
+    Type: String
+    Default: ''
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      Ami: ami-0c02fb55956c7d316
+    us-east-2:
+      Ami: ami-024e6efaf93d85776
+    us-west-2:
+      Ami: ami-08970fb2e5767e3b8
+
+Resources:
+  # ACM certificate for ALB (in-region)
+  AppCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Sub '${WwwSubdomain}.${DomainName}'
+      SubjectAlternativeNames:
+        - !Sub '${ApiSubdomain}.${DomainName}'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub '${WwwSubdomain}.${DomainName}'
+          HostedZoneId: !Ref HostedZoneId
+        - DomainName: !Sub '${ApiSubdomain}.${DomainName}'
+          HostedZoneId: !Ref HostedZoneId
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB SG allowing 80/443 from world
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EC2 SG allowing HTTP from ALB only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: CloudWatchLogsAndECRPull
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource: '*'
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref InstanceProfile
+      ImageId: !FindInMap [RegionMap, !Ref AWS::Region, Ami]
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PublicSubnetIdA
+      SecurityGroupIds: [!Ref InstanceSecurityGroup]
+      KeyName: !If [HasKeyName, !Ref KeyName, !Ref AWS::NoValue]
+      Tags:
+        - Key: Name
+          Value: !Sub 'ttt-app-${DomainName}'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec >/var/log/ttt-userdata.log 2>&1
+          yum update -y
+          amazon-linux-extras install docker -y || true
+          yum install -y docker git curl jq
+          systemctl enable docker
+          systemctl start docker
+          curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          # App checkout
+          mkdir -p /opt/app
+          if [ ! -d /opt/app/.git ]; then
+            rm -rf /opt/app
+            git clone ${RepoUrl} /opt/app
+          fi
+          cd /opt/app
+          # Write compose env
+          cat > .env <<EOF
+          DOMAIN_NAME=${DomainName}
+          CORS_ORIGIN=http://$${WwwSubdomain}.${DomainName},https://$${WwwSubdomain}.${DomainName}
+          AWS_REGION=${Region}
+          DDB_REGION=${Region}
+          EOF
+          /usr/local/bin/docker-compose pull || true
+          /usr/local/bin/docker-compose up -d
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ttt-tg-${AWS::StackName}
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      HealthCheckPath: /nginx-healthz
+      Matcher:
+        HttpCode: 200
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ttt-alb-${AWS::StackName}
+      Scheme: internet-facing
+      Type: application
+      Subnets: [!Ref PublicSubnetIdA, !Ref PublicSubnetIdB]
+      SecurityGroups: [!Ref AlbSecurityGroup]
+
+  AlbListenerHttp:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: '443'
+            StatusCode: HTTP_301
+
+  AlbListenerHttps:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref AppCertificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  Attachment:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroupAttachment
+    Properties:
+      TargetGroupArn: !Ref TargetGroup
+      TargetId: !Ref Ec2Instance
+      Port: 80
+
+  DnsRecordWww:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${WwwSubdomain}.${DomainName}'
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Alb.DNSName
+        HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
+
+  DnsRecordApi:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${ApiSubdomain}.${DomainName}'
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Alb.DNSName
+        HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
+
+Conditions:
+  HasKeyName: !Not [!Equals [!Ref KeyName, ""]]
+
+Outputs:
+  AlbDNS:
+    Value: !GetAtt Alb.DNSName
+  WwwDomain:
+    Value: !Sub '${WwwSubdomain}.${DomainName}'
+  ApiDomain:
+    Value: !Sub '${ApiSubdomain}.${DomainName}'
+  InstanceId:
+    Value: !Ref Ec2Instance

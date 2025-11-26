@@ -1,0 +1,86 @@
+name: Deploy TickTock EC2 + ALB (from constants)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yq
+        uses: mikefarah/yq@v4.44.3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-east-1
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          role-session-name: github-ttt-deploy
+
+      - name: Parse deploy/constants.yaml
+        id: const
+        run: |
+          set -euo pipefail
+          C=deploy/constants.yaml
+          echo "Constants file:\n$(cat $C)"
+          echo "region=$(yq -r '.Region' $C)" >> $GITHUB_OUTPUT
+          echo "account=$(yq -r '.AccountId' $C)" >> $GITHUB_OUTPUT
+          echo "domain=$(yq -r '.DomainName' $C)" >> $GITHUB_OUTPUT
+          echo "hz=$(yq -r '.HostedZoneId' $C)" >> $GITHUB_OUTPUT
+          echo "vpc=$(yq -r '.VpcId' $C)" >> $GITHUB_OUTPUT
+          echo "subA=$(yq -r '.PublicSubnetIds[0]' $C)" >> $GITHUB_OUTPUT
+          echo "subB=$(yq -r '.PublicSubnetIds[1]' $C)" >> $GITHUB_OUTPUT
+          echo "itype=$(yq -r '.InstanceType' $C)" >> $GITHUB_OUTPUT
+          echo "apisub=$(yq -r '.ApiSubdomain' $C)" >> $GITHUB_OUTPUT
+          echo "wwwsub=$(yq -r '.WwwSubdomain' $C)" >> $GITHUB_OUTPUT
+          echo "repo=$(yq -r '.RepoUrl' $C)" >> $GITHUB_OUTPUT
+          echo "stack=$(yq -r '.StackName' $C)" >> $GITHUB_OUTPUT
+          echo "keyname=$(yq -r '.KeyName' $C)" >> $GITHUB_OUTPUT
+
+      - name: Set region
+        run: echo "AWS_REGION=${{ steps.const.outputs.region }}" >> $GITHUB_ENV
+
+      - name: Install AWS CLI v2
+        uses: unfor19/install-aws-cli-action@v1
+        with:
+          version: 2
+
+      - name: Deploy CloudFormation stack
+        run: |
+          set -euo pipefail
+          TEMPLATE=deploy/cfn/stack.yaml
+          aws cloudformation deploy \
+            --region "${{ steps.const.outputs.region }}" \
+            --stack-name "${{ steps.const.outputs.stack }}" \
+            --template-file "$TEMPLATE" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              AccountId="${{ steps.const.outputs.account }}" \
+              Region="${{ steps.const.outputs.region }}" \
+              DomainName="${{ steps.const.outputs.domain }}" \
+              HostedZoneId="${{ steps.const.outputs.hz }}" \
+              VpcId="${{ steps.const.outputs.vpc }}" \
+              PublicSubnetIdA="${{ steps.const.outputs.subA }}" \
+              PublicSubnetIdB="${{ steps.const.outputs.subB }}" \
+              InstanceType="${{ steps.const.outputs.itype }}" \
+              ApiSubdomain="${{ steps.const.outputs.apisub }}" \
+              WwwSubdomain="${{ steps.const.outputs.wwwsub }}" \
+              RepoUrl="${{ steps.const.outputs.repo }}" \
+              KeyName="${{ steps.const.outputs.keyname }}"
+
+      - name: Show outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --region "${{ steps.const.outputs.region }}" \
+            --stack-name "${{ steps.const.outputs.stack }}" \
+            --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' --output table

@@ -12,7 +12,7 @@ Repository map (deployment‑relevant)
 - nginx.conf — Reverse proxy config for host‑based routing (www → frontend, www.api → backend) and ACME challenges.
 - backend/ — Backend Dockerfile, Node app, DynamoDB access layer, TLS dev entrypoint.
 - frontend/website/ — Static PWA site (index.html, app.js, manifest.json, service worker, etc.).
-- infrastructure/backend/template.yaml — CloudFormation template for the EC2 instance, SG, EIP, and Route 53 A records for www.api.<DomainName> and www.<DomainName>.
+- deploy/cfn/stack.yaml — New CloudFormation template that provisions ACM, ALB (HTTPS), EC2, Security Groups, and Route 53 alias records for www.api.<DomainName> and www.<DomainName>.
 - scripts/check-backend.sh — External connectivity diagnostics for the new hostnames.
 
 Architecture overview
@@ -82,11 +82,12 @@ Runtime configuration and environment variables
 - nginx.conf: Two server blocks for HTTP 80 with server_name www.api.<DomainName> (backend) and www.<DomainName> (frontend). HTTPS blocks can be added once certs are present in /etc/letsencrypt.
 
 TLS considerations
-- By default, traffic uses HTTP on port 80. To enable HTTPS on the same instance, obtain certs via Certbot (using the provided volumes) and add HTTPS server blocks to nginx.conf referencing /etc/letsencrypt paths.
+- HTTPS is terminated at the AWS Application Load Balancer using an ACM certificate provisioned by deploy/cfn/stack.yaml. The instance serves HTTP only; no Certbot is required.
 
 Deploying and updating
-- Deploy/update the EC2 stack with .github/workflows/backend-deploy.yml (or via AWS Console/CLI) to provision/update the instance and DNS records.
-- Redeploy code: the backend-deploy workflow includes an SSM step that git pulls the repo on the instance and restarts the Docker stack (edge Nginx, frontend, backend).
+- Update deploy/constants.yaml with your values (DomainName, HostedZoneId, VpcId, PublicSubnetIds, etc.).
+- Deploy/update the stack with .github/workflows/deploy.yml (or via AWS Console/CLI) to provision/update ACM, ALB, EC2, and DNS records.
+- Redeploy code: re-run the deploy workflow; the instance will git pull and restart the Docker stack as needed.
 
 Operations
 - Health checks:
@@ -110,12 +111,12 @@ Troubleshooting
 - 404s for www host: confirm nginx.conf server_name for www.<DomainName> and that ttt-frontend is running.
 
 Appendix: Key files
-- docker-compose.yml — defines backend, frontend, edge Nginx, certbot volumes
+- docker-compose.yml — defines backend, frontend, edge Nginx containers
 - nginx.conf — host‑based routing to backend/frontend containers
 - backend/Dockerfile — Node backend build
-- infrastructure/backend/template.yaml — EC2 stack + Route53 A records (www, www.api)
-- .github/workflows/backend-deploy.yml — deploys/updates the EC2 stack and performs SSM redeploy
-- .github/workflows/backend-health.yml — basic public and internal health checks
+- deploy/constants.yaml — central non-secret deployment constants (Hosted Zone ID, VPC, Subnets, Domain)
+- deploy/cfn/stack.yaml — CloudFormation stack (ACM cert, ALB HTTPS, EC2, Route53 records)
+- .github/workflows/deploy.yml — CI workflow that reads constants and deploys/updates the stack
 
 License
 - MIT (see LICENSE).
