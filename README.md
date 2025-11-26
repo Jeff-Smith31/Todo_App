@@ -1,9 +1,9 @@
 # TickTock Tasks — Deployment and Operations Guide (EC2 two‑container)
 
 High‑level summary
-- Frontend: Static PWA served from a dedicated Docker container (nginx) on the same EC2 instance as the backend. Public host: http://<DomainName> (or with TLS if enabled at Nginx).
-- API backend: Node.js/Express app in a Docker container on the same EC2 instance. Public host: http://api.<DomainName>.
-- Reverse proxy: An edge Nginx container listens on ports 80/443 on the EC2 host and routes requests by Host header to either the frontend container (apex) or the backend container (api). Certbot volumes are present to enable optional TLS.
+- Frontend: Static PWA served from a dedicated Docker container (nginx) on the same EC2 instance as the backend. Public host: https://<DomainName> (HTTP 80 redirects to HTTPS).
+- API backend: Node.js/Express app in a Docker container on the same EC2 instance. Public host: https://api.<DomainName> (HTTP 80 redirects to HTTPS; /healthz also available on HTTP for checks).
+- Reverse proxy: An edge Nginx container listens on ports 80/443 on the EC2 host and routes requests by Host header to either the frontend container (apex) or the backend container (api). Automated TLS is enabled using Let’s Encrypt via DNS validation (Route53); certificates are auto-issued at first boot and auto-renewed.
 - Data store: Amazon DynamoDB (on‑demand) tables created/used directly by the backend.
 - Logging/observability: Containers ship logs to Amazon CloudWatch Logs using the awslogs Docker logging driver; health endpoints and a diagnostics script are provided.
 
@@ -121,3 +121,33 @@ Appendix: Key files
 
 License
 - MIT (see LICENSE).
+
+
+## TLS and reachability
+
+- TLS is automatically provisioned on first boot using Let’s Encrypt via Route53 DNS validation. Certificates include:
+  - <DomainName>, www.<DomainName>
+  - api.<DomainName>, www.api.<DomainName>
+- HTTP requests on port 80 are redirected to HTTPS 443, except for ACME challenges and the /nginx-healthz and /healthz endpoints which remain reachable for checks.
+- Certificates auto-renew via cron; on renewal, Nginx is reloaded automatically.
+
+### Why not ACM directly?
+- AWS Certificate Manager (ACM) does not install certificates on EC2 instances or Nginx directly. ACM is designed to terminate TLS at AWS-managed endpoints such as ALB/NLB or CloudFront. To keep costs minimal and avoid a load balancer, this stack uses Let’s Encrypt with DNS validation on Route53 instead.
+
+### Health checks and verification
+
+Run the diagnostic script (from repo root):
+
+- ./scripts/check-backend.sh ticktocktasks.com
+
+It verifies:
+- DNS records for apex, api, and www variants
+- HTTP 80 redirects to HTTPS for apex and api
+- HTTPS 200 for apex root
+- HTTPS 200 for api /healthz (also reachable via HTTP for convenience)
+
+You can also manually check:
+- curl -I http://ticktocktasks.com/
+- curl -I http://api.ticktocktasks.com/
+- curl -f https://ticktocktasks.com/
+- curl -f https://api.ticktocktasks.com/healthz

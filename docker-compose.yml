@@ -59,8 +59,8 @@ services:
       - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - letsencrypt:/etc/letsencrypt
-      - certbot_challenges:/var/www/certbot
+      - ./letsencrypt:/etc/letsencrypt
+      - ./certbot_challenges:/var/www/certbot
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/nginx-healthz >/dev/null || exit 1"]
       interval: 30s
@@ -79,8 +79,8 @@ services:
     container_name: ttt-certbot
     restart: "no"
     volumes:
-      - letsencrypt:/etc/letsencrypt
-      - certbot_challenges:/var/www/certbot
+      - ./letsencrypt:/etc/letsencrypt
+      - ./certbot_challenges:/var/www/certbot
     entrypoint: ["sh", "-c", "sleep infinity"]
 
 volumes:

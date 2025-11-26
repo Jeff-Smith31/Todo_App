@@ -139,6 +139,13 @@ Resources:
                   - s3:GetObject
                   - s3:ListBucket
                 Resource: '*'
+              - Effect: Allow
+                Action:
+                  - route53:ListHostedZones
+                  - route53:ListResourceRecordSets
+                  - route53:ChangeResourceRecordSets
+                  - route53:GetChange
+                Resource: '*'
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -163,7 +170,7 @@ Resources:
           exec >/var/log/ttt-userdata.log 2>&1
           yum update -y
           amazon-linux-extras install docker -y || true
-          yum install -y docker git curl jq
+          yum install -y docker git curl jq cronie
           systemctl enable docker
           systemctl start docker
           curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
@@ -175,6 +182,8 @@ Resources:
             git clone ${RepoUrl} /opt/app
           fi
           cd /opt/app
+          # Prepare cert and ACME folders for bind mounts
+          mkdir -p /opt/app/letsencrypt /opt/app/certbot_challenges
           # Write compose env
           cat > .env <<EOF
           DOMAIN_NAME=${DomainName}
@@ -182,8 +191,29 @@ Resources:
           AWS_REGION=${Region}
           DDB_REGION=${Region}
           EOF
+          # Pull images
           /usr/local/bin/docker-compose pull || true
+          # Issue/renew certificates via Certbot (Route53 DNS validation)
+          # Use the official Certbot image with dns-route53 plugin
+          CERTBOT_DOCKER="docker run --rm -e AWS_REGION=${Region} -e AWS_DEFAULT_REGION=${Region} -v /opt/app/letsencrypt:/etc/letsencrypt -v /opt/app/certbot_challenges:/var/www/certbot certbot/dns-route53"
+          $CERTBOT_DOCKER certonly --dns-route53 \
+            -d ${DomainName} \
+            -d www.${DomainName} \
+            -d ${ApiSubdomain}.${DomainName} \
+            -d www.${ApiSubdomain}.${DomainName} \
+            --non-interactive --agree-tos -m admin@${DomainName} || true
+          # Start the stack
           /usr/local/bin/docker-compose up -d
+          # Install renewal cron to run twice daily and reload nginx if changed
+          cat >/etc/cron.d/ttt-cert-renew <<CRON
+          SHELL=/bin/bash
+          PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+          MAILTO=""
+          17 3,15 * * * root ${CERTBOT_DOCKER} renew --quiet --deploy-hook 'docker exec ttt-nginx nginx -s reload' >>/var/log/ttt-certbot-renew.log 2>&1
+          CRON
+          chmod 644 /etc/cron.d/ttt-cert-renew
+          systemctl enable crond || systemctl enable cronie || true
+          systemctl start crond || systemctl start cronie || true
 
   Eip:
     Type: AWS::EC2::EIP
