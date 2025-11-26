@@ -5,7 +5,7 @@
 (function(){
   var cfg = window.RUNTIME_CONFIG || {};
   var existing = (cfg && typeof cfg.BACKEND_URL === 'string') ? cfg.BACKEND_URL : '';
-  // In the new architecture the API lives at http://www.api.ticktocktasks.com (no CloudFront/edge TLS)
-  // Default to that endpoint unless overridden via a preloaded config or localStorage
-  window.RUNTIME_CONFIG = Object.assign({}, cfg, { BACKEND_URL: existing || 'http://www.api.ticktocktasks.com' });
+  // In production the API is served over HTTPS at api.ticktocktasks.com.
+  // Default to that endpoint unless overridden via a preloaded config or localStorage.
+  window.RUNTIME_CONFIG = Object.assign({}, cfg, { BACKEND_URL: existing || 'https://api.ticktocktasks.com' });
 })();
