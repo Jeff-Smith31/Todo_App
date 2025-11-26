@@ -45,7 +45,8 @@ jobs:
           echo "itype=$(yq -r '.InstanceType' $C)" >> $GITHUB_OUTPUT
           echo "apisub=$(yq -r '.ApiSubdomain' $C)" >> $GITHUB_OUTPUT
           echo "wwwsub=$(yq -r '.WwwSubdomain' $C)" >> $GITHUB_OUTPUT
-          echo "repo=$(yq -r '.RepoUrl' $C)" >> $GITHUB_OUTPUT
+          # Derive the actual repo URL from the current GitHub context to ensure EC2 clones the right code
+          echo "repo=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" >> $GITHUB_OUTPUT
           echo "stack=$(yq -r '.StackName' $C)" >> $GITHUB_OUTPUT
           echo "keyname=$(yq -r '.KeyName' $C)" >> $GITHUB_OUTPUT
 
@@ -79,8 +80,68 @@ jobs:
               KeyName="${{ steps.const.outputs.keyname }}"
 
       - name: Show outputs
+        id: show
         run: |
           aws cloudformation describe-stacks \
             --region "${{ steps.const.outputs.region }}" \
             --stack-name "${{ steps.const.outputs.stack }}" \
             --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' --output table
+          IID=$(aws cloudformation describe-stacks \
+            --region "${{ steps.const.outputs.region }}" \
+            --stack-name "${{ steps.const.outputs.stack }}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' --output text)
+          echo "instance_id=$IID" >> $GITHUB_OUTPUT
+
+      - name: Bootstrap instance via SSM (ensure docker stack is running)
+        if: steps.show.outputs.instance_id != ''
+        run: |
+          set -euo pipefail
+          IID="${{ steps.show.outputs.instance_id }}"
+          REGION="${{ steps.const.outputs.region }}"
+          REPO_URL="${{ steps.const.outputs.repo }}"
+          DOMAIN="${{ steps.const.outputs.domain }}"
+          API_SUB="${{ steps.const.outputs.apisub }}"
+          cat > commands.sh <<'EOS'
+          #!/bin/bash
+          set -euxo pipefail
+          exec >/var/log/ttt-ssm-bootstrap.log 2>&1
+          yum update -y || true
+          command -v docker >/dev/null 2>&1 || amazon-linux-extras install docker -y || yum install -y docker || true
+          systemctl enable docker || true
+          systemctl start docker || true
+          if ! command -v docker-compose >/dev/null 2>&1; then
+            curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            chmod +x /usr/local/bin/docker-compose
+          fi
+          mkdir -p /opt/app
+          if [ ! -d /opt/app/.git ]; then
+            rm -rf /opt/app
+            git clone "$REPO_URL" /opt/app
+          fi
+          cd /opt/app
+          mkdir -p /opt/app/letsencrypt /opt/app/certbot_challenges
+          cat > .env <<EOF
+          DOMAIN_NAME=$DOMAIN
+          CORS_ORIGIN=http://$DOMAIN,https://$DOMAIN,http://www.$DOMAIN,https://www.$DOMAIN
+          AWS_REGION=$REGION
+          DDB_REGION=$REGION
+          EOF
+          /usr/local/bin/docker-compose pull || true
+          docker run --rm -e AWS_REGION=$REGION -e AWS_DEFAULT_REGION=$REGION \
+            -v /opt/app/letsencrypt:/etc/letsencrypt -v /opt/app/certbot_challenges:/var/www/certbot \
+            certbot/dns-route53 certonly --dns-route53 \
+            -d $DOMAIN -d www.$DOMAIN -d $API_SUB.$DOMAIN -d www.$API_SUB.$DOMAIN \
+            --non-interactive --agree-tos -m admin@$DOMAIN || true
+          /usr/local/bin/docker-compose up -d
+          EOS
+          chmod +x commands.sh
+          aws ssm send-command \
+            --region "$REGION" \
+            --instance-ids "$IID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="$(sed 's/"/\\"/g' commands.sh)" \
+            --comment "TickTock bootstrap via SSM" \
+            --timeout-seconds 1200 >/tmp/ssm_cmd.json
+          CMD_ID=$(jq -r '.Command.CommandId' /tmp/ssm_cmd.json)
+          echo "SSM Command ID: $CMD_ID"
+          aws ssm wait command-executed --region "$REGION" --command-id "$CMD_ID" --instance-id "$IID"
