@@ -1,14 +1,14 @@
 # Centralized deployment constants. Fill in with your environment values.
 # DO NOT COMMIT REAL SECRETS. This file is for non-secret infra constants only.
 
-AccountId: "123456789012"           # AWS Account ID
+AccountId: "820242946379"           # AWS Account ID
 Region: "us-east-1"                 # Workload region (EC2/Route53)
 DomainName: "ticktocktasks.com"     # Root domain
-HostedZoneId: "Z123EXAMPLE"         # Route53 public hosted zone ID for DomainName
+HostedZoneId: "Z08471201NA2PN7ERBIB7"         # Route53 public hosted zone ID for DomainName
 InstanceType: "t3.micro"            # EC2 instance type
 ApiSubdomain: "api"                 # Subdomain for backend API
 WwwSubdomain: ""                    # Not used (apex domain)
 RepoUrl: "https://github.com/example/Todo_App.git"  # Public read URL of this repo
-StackName: "ticktock-ec2-eip"
+StackName: "ticktock-ec2"
 # Optional: Key pair name if you want SSH. Leave empty to disable 22 ingress entirely.
 KeyName: ""
