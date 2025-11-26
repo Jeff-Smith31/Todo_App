@@ -86,8 +86,8 @@ TLS considerations
 - HTTPS can be enabled on the instance using Certbot (Let’s Encrypt) with the provided ACME webroot. By default the stack runs HTTP only to minimize cost and complexity.
 
 Deploying and updating
-- Update deploy/constants.yaml with your values (DomainName, HostedZoneId, VpcId, PublicSubnetIds, etc.).
-- Deploy/update the stack with .github/workflows/deploy.yml (or via AWS Console/CLI) to provision/update EC2, EIP, Security Groups, and Route53 records.
+- Update deploy/constants.yaml with your values (DomainName, HostedZoneId, Region, etc.). The stack now creates its own minimal VPC and a public subnet automatically.
+- Deploy/update the stack with .github/workflows/deploy.yml (or via AWS Console/CLI) to provision/update the VPC, subnet, EC2, EIP, Security Groups, and Route53 records.
 - Redeploy code: re-run the deploy workflow; the instance will git pull and restart the Docker stack as needed.
 
 Operations

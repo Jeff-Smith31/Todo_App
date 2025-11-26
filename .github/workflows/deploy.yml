@@ -42,9 +42,6 @@ jobs:
           echo "account=$(yq -r '.AccountId' $C)" >> $GITHUB_OUTPUT
           echo "domain=$(yq -r '.DomainName' $C)" >> $GITHUB_OUTPUT
           echo "hz=$(yq -r '.HostedZoneId' $C)" >> $GITHUB_OUTPUT
-          echo "vpc=$(yq -r '.VpcId' $C)" >> $GITHUB_OUTPUT
-          echo "subA=$(yq -r '.PublicSubnetIds[0]' $C)" >> $GITHUB_OUTPUT
-          echo "subB=$(yq -r '.PublicSubnetIds[1]' $C)" >> $GITHUB_OUTPUT
           echo "itype=$(yq -r '.InstanceType' $C)" >> $GITHUB_OUTPUT
           echo "apisub=$(yq -r '.ApiSubdomain' $C)" >> $GITHUB_OUTPUT
           echo "wwwsub=$(yq -r '.WwwSubdomain' $C)" >> $GITHUB_OUTPUT
@@ -75,9 +72,6 @@ jobs:
               Region="${{ steps.const.outputs.region }}" \
               DomainName="${{ steps.const.outputs.domain }}" \
               HostedZoneId="${{ steps.const.outputs.hz }}" \
-              VpcId="${{ steps.const.outputs.vpc }}" \
-              PublicSubnetIdA="${{ steps.const.outputs.subA }}" \
-              PublicSubnetIdB="${{ steps.const.outputs.subB }}" \
               InstanceType="${{ steps.const.outputs.itype }}" \
               ApiSubdomain="${{ steps.const.outputs.apisub }}" \
               WwwSubdomain="${{ steps.const.outputs.wwwsub }}" \

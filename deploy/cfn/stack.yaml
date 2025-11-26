@@ -10,12 +10,6 @@ Parameters:
     Type: String
   HostedZoneId:
     Type: String
-  VpcId:
-    Type: String
-  PublicSubnetIdA:
-    Type: String
-  PublicSubnetIdB:
-    Type: String
   InstanceType:
     Type: String
     Default: t3.micro
@@ -41,11 +35,59 @@ Mappings:
       Ami: ami-08970fb2e5767e3b8
 
 Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'ttt-vpc-${DomainName}'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub 'ttt-public-${DomainName}'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  DefaultRouteToInternet:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
   InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: EC2 SG allowing HTTP/HTTPS (SSH only if KeyName provided)
-      VpcId: !Ref VpcId
+      VpcId: !Ref Vpc
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
@@ -108,7 +150,7 @@ Resources:
       IamInstanceProfile: !Ref InstanceProfile
       ImageId: !FindInMap [RegionMap, !Ref AWS::Region, Ami]
       InstanceType: !Ref InstanceType
-      SubnetId: !Ref PublicSubnetIdA
+      SubnetId: !Ref PublicSubnet
       SecurityGroupIds: [!Ref InstanceSecurityGroup]
       KeyName: !If [HasKeyName, !Ref KeyName, !Ref AWS::NoValue]
       Tags:
