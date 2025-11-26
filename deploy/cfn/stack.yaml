@@ -209,7 +209,7 @@ Resources:
           SHELL=/bin/bash
           PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
           MAILTO=""
-          17 3,15 * * * root ${CERTBOT_DOCKER} renew --quiet --deploy-hook 'docker exec ttt-nginx nginx -s reload' >>/var/log/ttt-certbot-renew.log 2>&1
+          17 3,15 * * * root docker run --rm -e AWS_REGION=${Region} -e AWS_DEFAULT_REGION=${Region} -v /opt/app/letsencrypt:/etc/letsencrypt -v /opt/app/certbot_challenges:/var/www/certbot certbot/dns-route53 renew --quiet --deploy-hook 'docker exec ttt-nginx nginx -s reload' >>/var/log/ttt-certbot-renew.log 2>&1
           CRON
           chmod 644 /etc/cron.d/ttt-cert-renew
           systemctl enable crond || systemctl enable cronie || true
