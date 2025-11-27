@@ -121,6 +121,15 @@ jobs:
             git clone "$REPO_URL" /opt/app
           fi
           cd /opt/app
+          # Always update to the latest main from the remote repo for each deploy
+          git remote set-url origin "$REPO_URL" || true
+          git fetch --all --prune || true
+          # Try to checkout main (or default branch) and hard reset to remote
+          (git rev-parse --verify main && git checkout -f main) || true
+          DEFAULT_BRANCH=$(git remote show origin | awk '/HEAD branch/ {print $NF}') || DEFAULT_BRANCH=main
+          git checkout -f "$DEFAULT_BRANCH" || true
+          git reset --hard "origin/$DEFAULT_BRANCH" || true
+
           mkdir -p /opt/app/letsencrypt /opt/app/certbot_challenges
           cat > .env <<EOF
           DOMAIN_NAME=$DOMAIN
@@ -128,13 +137,19 @@ jobs:
           AWS_REGION=$REGION
           DDB_REGION=$REGION
           EOF
+          # Pull remote images (nginx/certbot) and rebuild backend to pick up code changes
           /usr/local/bin/docker-compose pull || true
+          /usr/local/bin/docker-compose build --pull backend || true
+          # Obtain/renew certs (dns-route53)
           docker run --rm -e AWS_REGION=$REGION -e AWS_DEFAULT_REGION=$REGION \
             -v /opt/app/letsencrypt:/etc/letsencrypt -v /opt/app/certbot_challenges:/var/www/certbot \
             certbot/dns-route53 certonly --dns-route53 \
             -d $DOMAIN -d www.$DOMAIN -d $API_SUB.$DOMAIN -d www.$API_SUB.$DOMAIN \
             --non-interactive --agree-tos -m admin@$DOMAIN || true
-          /usr/local/bin/docker-compose up -d
+          # Restart stack with latest code/images
+          /usr/local/bin/docker-compose up -d --remove-orphans
+          # Reload nginx to ensure it picks up any config/cert changes immediately
+          docker exec ttt-nginx nginx -s reload || true
           EOS
 
           # Prepend variable exports so the script has values when executed on the instance
