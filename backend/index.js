@@ -380,8 +380,23 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     const email = value.email.toLowerCase();
     const row = await getUserByEmail(email);
     if (!row) return res.status(401).json({ error: 'Invalid credentials' });
-    const ok = bcrypt.compareSync(value.password, row.password_hash);
+
+    // Harden against legacy/partial user records without password hashes
+    const hash = row.password_hash;
+    if (!hash || typeof hash !== 'string' || hash.length < 20) {
+      // Treat as invalid credentials rather than throwing 500
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    let ok = false;
+    try {
+      ok = bcrypt.compareSync(value.password, hash);
+    } catch (e) {
+      // If bcrypt throws due to malformed hash, respond with 401 to avoid leaking details
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+
     const token = issueToken({ id: row.id, email: row.email });
     setAuthCookie(res, token);
     res.json({ ok: true, token, user: { id: row.id, email: row.email } });
