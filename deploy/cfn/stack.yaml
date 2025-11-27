@@ -146,6 +146,24 @@ Resources:
                   - route53:ChangeResourceRecordSets
                   - route53:GetChange
                 Resource: '*'
+        - PolicyName: DynamoDbAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:ListTables
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${Region}:${AccountId}:table/ttt-*'
+                  - !Sub 'arn:aws:dynamodb:${Region}:${AccountId}:table/ttt-*/index/*'
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
