@@ -317,9 +317,8 @@
       navigator.serviceWorker.register('sw.js').catch(()=>{});
     }
 
-    // Desktop browsers: do not keep push subscriptions. We only support phone notifications.
+    // Desktop browsers: hide the permission button by default, but allow testing if users manually enable it.
     if (!isMobile()) {
-      try { await unsubscribePush(); } catch {}
       if (elements.permissionBtn) elements.permissionBtn.style.display = 'none';
     } else {
       // On mobile: verify notification permission on every load; prompt if not granted
@@ -329,11 +328,7 @@
           setTimeout(() => { try { requestNotificationPermission(); } catch {} }, 800);
         }
       } catch {}
-      // If the app is not installed (not in standalone), proactively remove any existing push
-      // subscription so notifications don't appear under Chrome. Users will be prompted to install.
-      try {
-        if (!isStandalone()) { await unsubscribePush(); }
-      } catch {}
+      // Do not auto-unsubscribe when not installed; allow browser-based subscriptions for Android/Chrome.
     }
 
 
@@ -1429,8 +1424,14 @@
   async function ensurePushSubscribed(){
     // Ensure environment supports required APIs
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-    // Only allow subscriptions from the installed PWA so notifications originate from the app, not Chrome
-    try { if (!isStandalone()) return; } catch { return; }
+    // Allow subscriptions in browsers and installed PWA on most platforms.
+    // On iOS Safari, require installed PWA (standalone) due to APNs restrictions for web push.
+    try {
+      const ua = navigator.userAgent || navigator.vendor || '';
+      const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      const inStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || (window.navigator && window.navigator.standalone === true);
+      if (isIOS && !inStandalone) return;
+    } catch {}
     // Wait for the service worker to be active; fixes Android race conditions
     const reg = await (navigator.serviceWorker.ready.catch(() => navigator.serviceWorker.getRegistration()));
     if (!reg) return;
