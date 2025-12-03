@@ -160,11 +160,11 @@ await ensureTables().catch((e)=>{ console.error('DynamoDB ensureTables failed', 
 // Initialize VAPID keys from ENV → DynamoDB → file → generate, then configure webpush
 async function initVapid(){
   try {
-    // 1) ENV wins
+    // 1) ENV wins (already loaded into ACTIVE_*). If missing, try to load from external stores.
     if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
-      // 2) Try DynamoDB config table (ttt-config, key='vapid')
+      // 2) Try DynamoDB config table (best-effort). A failure here must NOT prevent file/gen fallbacks.
       try {
-        const { GetCommand, PutCommand } = await import('@aws-sdk/lib-dynamodb');
+        const { GetCommand } = await import('@aws-sdk/lib-dynamodb');
         const key = { TableName: TABLES.config || `${(process.env.DDB_TABLE_PREFIX||'ttt')}-config`, Key: { key: 'vapid' } };
         const r = await ddb.send(new GetCommand(key));
         const item = r.Item;
@@ -172,41 +172,43 @@ async function initVapid(){
           ACTIVE_PUBLIC_KEY = item.publicKey;
           ACTIVE_PRIVATE_KEY = item.privateKey;
         }
-        // If still missing, try file next; if we generate, persist to DDB too
-        if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
-          // 3) File fallback
-          if (fs.existsSync(VAPID_FILE)) {
-            try {
-              const parsed = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8')) || {};
-              if (parsed.publicKey && parsed.privateKey) {
-                ACTIVE_PUBLIC_KEY = parsed.publicKey;
-                ACTIVE_PRIVATE_KEY = parsed.privateKey;
-              }
-            } catch (e) {
-              console.warn('[push] Failed to read persisted VAPID file:', e?.message || e);
-            }
-          }
-          // 4) Generate new keys and persist to both DDB and file
-          if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
-            const gen = webpush.generateVAPIDKeys();
-            ACTIVE_PUBLIC_KEY = gen.publicKey;
-            ACTIVE_PRIVATE_KEY = gen.privateKey;
-            try {
-              const put = new PutCommand({ TableName: TABLES.config || `${(process.env.DDB_TABLE_PREFIX||'ttt')}-config`, Item: { key: 'vapid', publicKey: ACTIVE_PUBLIC_KEY, privateKey: ACTIVE_PRIVATE_KEY, updated_at: new Date().toISOString() } });
-              await ddb.send(put);
-            } catch (e) {
-              console.warn('[push] Failed to persist VAPID keys to DynamoDB:', e?.message || e);
-            }
-            try {
-              fs.writeFileSync(VAPID_FILE, JSON.stringify({ publicKey: ACTIVE_PUBLIC_KEY, privateKey: ACTIVE_PRIVATE_KEY }, null, 2));
-            } catch (e) {
-              console.warn('[push] Failed to persist VAPID keys to disk:', e?.message || e);
-            }
-            console.warn('[push] WEB_PUSH_* not set. Generated and persisted VAPID keys to DynamoDB and vapid.json.');
-          }
-        }
       } catch (e) {
-        console.warn('[push] DynamoDB VAPID init warning:', e?.message || e);
+        console.warn('[push] DynamoDB VAPID load warning:', e?.message || e);
+      }
+
+      // 3) File fallback (best-effort)
+      if ((!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) && fs.existsSync(VAPID_FILE)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf-8')) || {};
+          if (parsed.publicKey && parsed.privateKey) {
+            ACTIVE_PUBLIC_KEY = parsed.publicKey;
+            ACTIVE_PRIVATE_KEY = parsed.privateKey;
+          }
+        } catch (e) {
+          console.warn('[push] Failed to read persisted VAPID file:', e?.message || e);
+        }
+      }
+
+      // 4) Generate new keys if still missing (always succeeds in-memory)
+      if (!ACTIVE_PUBLIC_KEY || !ACTIVE_PRIVATE_KEY) {
+        const gen = webpush.generateVAPIDKeys();
+        ACTIVE_PUBLIC_KEY = gen.publicKey;
+        ACTIVE_PRIVATE_KEY = gen.privateKey;
+        console.warn('[push] WEB_PUSH_* not set. Generated new VAPID keys.');
+        // 4a) Persist to DynamoDB (best-effort)
+        try {
+          const { PutCommand } = await import('@aws-sdk/lib-dynamodb');
+          const put = new PutCommand({ TableName: TABLES.config || `${(process.env.DDB_TABLE_PREFIX||'ttt')}-config`, Item: { key: 'vapid', publicKey: ACTIVE_PUBLIC_KEY, privateKey: ACTIVE_PRIVATE_KEY, updated_at: new Date().toISOString() } });
+          await ddb.send(put);
+        } catch (e) {
+          console.warn('[push] Failed to persist VAPID keys to DynamoDB:', e?.message || e);
+        }
+        // 4b) Persist to disk (best-effort)
+        try {
+          fs.writeFileSync(VAPID_FILE, JSON.stringify({ publicKey: ACTIVE_PUBLIC_KEY, privateKey: ACTIVE_PRIVATE_KEY }, null, 2));
+        } catch (e) {
+          console.warn('[push] Failed to persist VAPID keys to disk:', e?.message || e);
+        }
       }
     }
 
